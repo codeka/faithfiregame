@@ -4,6 +4,7 @@ use glam::Mat4;
 pub enum NodeData {
     None,
     Triangle,
+    Terrain,
 }
 
 #[derive(Debug, Clone)]

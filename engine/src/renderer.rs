@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -6,7 +7,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
-use crate::camera::{Camera, CameraUniform};
+use crate::camera::{Camera, CameraController, CameraUniform};
 use crate::scene::{Node, NodeData};
 
 #[repr(C)]
@@ -44,6 +45,17 @@ const VERTICES: &[Vertex] = &[
     },
 ];
 
+#[derive(Debug, Clone, Default)]
+pub struct InputState {
+    pub w_pressed: bool,
+    pub a_pressed: bool,
+    pub s_pressed: bool,
+    pub d_pressed: bool,
+    pub right_mouse_pressed: bool,
+    pub mouse_delta: (f32, f32),
+    pub scroll_delta: f32,
+}
+
 pub struct EngineState {
     pub window: Arc<Window>,
     surface: wgpu::Surface<'static>,
@@ -59,8 +71,16 @@ pub struct EngineState {
     model_bind_group: wgpu::BindGroup,
     model_buffer_capacity: usize,
     vertex_buffer: wgpu::Buffer,
+    
+    // Terrain resources
+    terrain_vertex_buffer: wgpu::Buffer,
+    terrain_index_buffer: wgpu::Buffer,
+    terrain_index_count: u32,
+
     pub camera: Camera,
     pub scene_root: Node,
+    pub camera_target: glam::Vec3,
+    pub camera_controller: CameraController,
 }
 
 impl EngineState {
@@ -236,6 +256,57 @@ impl EngineState {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        // ------------------ Terrain Generation ------------------
+        let mut terrain_vertices = Vec::with_capacity(256 * 256);
+        for y in 0..256 {
+            for x in 0..256 {
+                let r: f32 = rand::random();
+                let g: f32 = rand::random();
+                let b: f32 = rand::random();
+                terrain_vertices.push(Vertex {
+                    position: [x as f32, y as f32, 0.0],
+                    color: [r, g, b],
+                });
+            }
+        }
+
+        let terrain_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Terrain Vertex Buffer"),
+            contents: bytemuck::cast_slice(&terrain_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let mut terrain_indices = Vec::with_capacity(255 * 255 * 6);
+        for y in 0..255 {
+            for x in 0..255 {
+                let r0 = y * 256 + x;
+                let r1 = (y + 1) * 256 + x;
+                // Triangle 1
+                terrain_indices.push(r0 as u32);
+                terrain_indices.push((r0 + 1) as u32);
+                terrain_indices.push(r1 as u32);
+                // Triangle 2
+                terrain_indices.push((r0 + 1) as u32);
+                terrain_indices.push((r1 + 1) as u32);
+                terrain_indices.push(r1 as u32);
+            }
+        }
+
+        let terrain_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Terrain Index Buffer"),
+            contents: bytemuck::cast_slice(&terrain_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let terrain_index_count = terrain_indices.len() as u32;
+
+        // Initialize Camera target & controller from camera fields
+        let camera_target = camera.target;
+        let offset = camera.eye - camera.target;
+        let distance = offset.length().clamp(10.0, 1500.0);
+        let pitch = (offset.z / distance).asin().to_degrees();
+        let yaw = offset.y.atan2(offset.x).to_degrees();
+        let camera_controller = CameraController::new(yaw, pitch, distance);
+
         Self {
             window,
             surface,
@@ -251,8 +322,13 @@ impl EngineState {
             model_bind_group,
             model_buffer_capacity,
             vertex_buffer,
+            terrain_vertex_buffer,
+            terrain_index_buffer,
+            terrain_index_count,
             camera,
             scene_root,
+            camera_target,
+            camera_controller,
         }
     }
 
@@ -266,8 +342,9 @@ impl EngineState {
         }
     }
 
-    pub fn update(&mut self) {
-        // Simple update: recalculate camera uniform
+    pub fn update(&mut self, dt: f32, input: &mut InputState) {
+        self.camera_controller.update_camera(&mut self.camera, &mut self.camera_target, input, dt);
+        
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&self.camera);
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[camera_uniform]));
@@ -369,8 +446,8 @@ impl EngineState {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.05,
-                            g: 0.05,
+                            r: 0.2,
+                            g: 0.1,
                             b: 0.1,
                             a: 1.0,
                         }),
@@ -385,13 +462,25 @@ impl EngineState {
 
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
             for (i, cmd) in commands.iter().enumerate() {
-                if cmd.node_data == NodeData::Triangle {
-                    let dynamic_offset = (i * entry_size) as u32;
-                    render_pass.set_bind_group(1, &self.model_bind_group, &[dynamic_offset]);
-                    render_pass.draw(0..3, 0..1);
+                let dynamic_offset = (i * entry_size) as u32;
+                render_pass.set_bind_group(1, &self.model_bind_group, &[dynamic_offset]);
+                
+                match cmd.node_data {
+                    NodeData::Triangle => {
+                        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                        render_pass.draw(0..3, 0..1);
+                    }
+                    NodeData::Terrain => {
+                        render_pass.set_vertex_buffer(0, self.terrain_vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            self.terrain_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..self.terrain_index_count, 0, 0..1);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -408,6 +497,9 @@ pub struct EngineApp {
     scene_root: Node,
     camera: Camera,
     state: Option<EngineState>,
+    input_state: InputState,
+    last_cursor_pos: Option<(f64, f64)>,
+    last_frame_inst: std::time::Instant,
 }
 
 impl EngineApp {
@@ -417,6 +509,9 @@ impl EngineApp {
             scene_root,
             camera,
             state: None,
+            input_state: InputState::default(),
+            last_cursor_pos: None,
+            last_frame_inst: std::time::Instant::now(),
         }
     }
 }
@@ -434,6 +529,7 @@ impl ApplicationHandler for EngineApp {
                 self.camera.clone(),
             ));
             self.state = Some(state);
+            self.last_frame_inst = std::time::Instant::now();
         }
     }
 
@@ -454,8 +550,54 @@ impl ApplicationHandler for EngineApp {
             WindowEvent::Resized(physical_size) => {
                 state.resize(physical_size);
             }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if let winit::keyboard::PhysicalKey::Code(key_code) = event.physical_key {
+                    let is_pressed = event.state.is_pressed();
+                    match key_code {
+                        winit::keyboard::KeyCode::KeyW => self.input_state.w_pressed = is_pressed,
+                        winit::keyboard::KeyCode::KeyA => self.input_state.a_pressed = is_pressed,
+                        winit::keyboard::KeyCode::KeyS => self.input_state.s_pressed = is_pressed,
+                        winit::keyboard::KeyCode::KeyD => self.input_state.d_pressed = is_pressed,
+                        _ => {}
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state: mouse_state, button, .. } => {
+                if button == winit::event::MouseButton::Right {
+                    self.input_state.right_mouse_pressed = mouse_state.is_pressed();
+                    if !mouse_state.is_pressed() {
+                        self.last_cursor_pos = None;
+                    }
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                if self.input_state.right_mouse_pressed {
+                    if let Some((last_x, last_y)) = self.last_cursor_pos {
+                        let dx = (position.x - last_x) as f32;
+                        let dy = (position.y - last_y) as f32;
+                        self.input_state.mouse_delta.0 += dx;
+                        self.input_state.mouse_delta.1 += dy;
+                    }
+                    self.last_cursor_pos = Some((position.x, position.y));
+                } else {
+                    self.last_cursor_pos = None;
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let scroll = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => (pos.y / 120.0) as f32,
+                };
+                self.input_state.scroll_delta += scroll;
+            }
             WindowEvent::RedrawRequested => {
-                state.update();
+                let dt = self.last_frame_inst.elapsed().as_secs_f32();
+                self.last_frame_inst = std::time::Instant::now();
+                
+                // Clamp dt to avoid massive spikes
+                let dt = dt.min(0.1);
+
+                state.update(dt, &mut self.input_state);
                 if let Err(e) = state.render() {
                     log::error!("Render error: {:?}", e);
                 }
