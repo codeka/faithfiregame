@@ -156,4 +156,66 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
 
     expect(decorationCalls).toEqual(['free_move']);
   });
+
+  it('shows Asset list only in Place mode and Transform controls only in Move/Free Move/Rotate modes', () => {
+    const root = fixture.nativeElement as HTMLElement;
+
+    // 1. Place mode: Asset list present, Transform controls & Delete Selected absent
+    expect(root.querySelector('.asset-list')).not.toBeNull();
+    expect(root.querySelector('input[name="propRotationX"]')).toBeNull();
+    expect(root.querySelector('input[name="propScale"]')).toBeNull();
+    expect(root.querySelector('input[name="propCastShadow"]')).toBeNull();
+    expect(root.querySelector('.btn-danger')).toBeNull();
+
+    // 2. Non-Place modes with no selection: Asset list absent, Transform controls rendered & disabled
+    for (const key of ['2', '3', '4']) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key }));
+      fixture.detectChanges();
+
+      expect(root.querySelector('.asset-list')).toBeNull();
+      const rotX = root.querySelector('input[name="propRotationX"]') as HTMLInputElement | null;
+      const scale = root.querySelector('input[name="propScale"]') as HTMLInputElement | null;
+      const shadow = root.querySelector('input[name="propCastShadow"]') as HTMLInputElement | null;
+      const delBtn = root.querySelector('.btn-danger') as HTMLButtonElement | null;
+
+      expect(rotX?.disabled).toBe(true);
+      expect(scale?.disabled).toBe(true);
+      expect(shadow?.disabled).toBe(true);
+      expect(delBtn?.disabled).toBe(true);
+    }
+
+    // 3. Non-Place mode with a selected prop: Transform controls enabled, Asset list still absent
+    statusSig.update((s) =>
+      s
+        ? {
+            ...s,
+            selectedProp: {
+              id: 1001,
+              assetId: 'rock_boulder',
+              position: [10, 2, 15],
+              rotationDeg: [15, 90, 0],
+              scale: 1.5,
+              castShadow: false,
+            },
+          }
+        : s,
+    );
+    fixture.detectChanges();
+
+    expect(root.querySelector('.asset-list')).toBeNull();
+    expect((root.querySelector('input[name="propRotationX"]') as HTMLInputElement).disabled).toBe(false);
+    expect((root.querySelector('input[name="propScale"]') as HTMLInputElement).disabled).toBe(false);
+    expect((root.querySelector('input[name="propCastShadow"]') as HTMLInputElement).disabled).toBe(false);
+    expect((root.querySelector('.btn-danger') as HTMLButtonElement).disabled).toBe(false);
+
+    // 4. Returning to Place mode restores Asset list and removes Transform controls even when a prop is selected
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }));
+    fixture.detectChanges();
+
+    expect(root.querySelector('.asset-list')).not.toBeNull();
+    expect(root.querySelector('input[name="propRotationX"]')).toBeNull();
+    expect(root.querySelector('input[name="propScale"]')).toBeNull();
+    expect(root.querySelector('input[name="propCastShadow"]')).toBeNull();
+    expect(root.querySelector('.btn-danger')).toBeNull();
+  });
 });

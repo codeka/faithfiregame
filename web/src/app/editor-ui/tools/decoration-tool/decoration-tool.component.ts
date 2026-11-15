@@ -1,5 +1,4 @@
 import { Component, computed, inject } from '@angular/core';
-import { FormsModule } from '@angular/forms';
 import { EngineService } from '../../../engine.service';
 import { EditorStateService } from '../../editor-state.service';
 
@@ -13,7 +12,7 @@ export const DECORATION_SUBMODES = [
 @Component({
   selector: 'app-decoration-tool',
   standalone: true,
-  imports: [FormsModule],
+  imports: [],
   templateUrl: './decoration-tool.component.html',
   styleUrls: ['../../editor-controls.css', './decoration-tool.component.css'],
 })
@@ -37,34 +36,36 @@ export class DecorationToolComponent {
   ];
 
   readonly activeRotationDeg = computed<[number, number, number]>(() => {
-    const s = this.engine.status();
-    if (!s) return [0, 0, 0];
-    const raw = s.selectedProp ? s.selectedProp.rotationDeg : s.previewRotationDeg;
+    const sel = this.selectedProp();
+    if (!sel) return [0, 0, 0];
     const norm = (deg: number) => ((Math.round(deg) % 360) + 360) % 360;
-    return [norm(raw[0]), norm(raw[1]), norm(raw[2])];
+    return [norm(sel.rotationDeg[0]), norm(sel.rotationDeg[1]), norm(sel.rotationDeg[2])];
   });
 
   readonly activeScale = computed(() => {
-    const s = this.engine.status();
-    if (!s) return 1;
-    return Number((s.selectedProp ? s.selectedProp.scale : s.previewScale).toFixed(2));
+    const sel = this.selectedProp();
+    if (!sel) return 1;
+    return Number(sel.scale.toFixed(2));
   });
 
   readonly activeCastShadow = computed(() => {
-    const s = this.engine.status();
-    if (!s) return true;
-    return s.selectedProp ? s.selectedProp.castShadow : s.previewCastShadow;
+    const sel = this.selectedProp();
+    if (!sel) return true;
+    return sel.castShadow;
   });
 
-  onRotationAxisChange(axis: 0 | 1 | 2, deg: number): void {
-    this.engine.setPropRotationAxisDeg(axis, Number(deg));
+  onRotationAxisInput(axis: 0 | 1 | 2, ev: Event): void {
+    if (!this.selectedProp()) return;
+    this.engine.setPropRotationAxisDeg(axis, (ev.target as HTMLInputElement).valueAsNumber);
   }
 
-  onScaleChange(scale: number): void {
-    this.engine.setPropScale(Number(scale));
+  onScaleInput(ev: Event): void {
+    if (!this.selectedProp()) return;
+    this.engine.setPropScale((ev.target as HTMLInputElement).valueAsNumber);
   }
 
-  onCastShadowChange(castShadow: boolean): void {
-    this.engine.setPropCastShadow(Boolean(castShadow));
+  onCastShadowChange(ev: Event): void {
+    if (!this.selectedProp()) return;
+    this.engine.setPropCastShadow((ev.target as HTMLInputElement).checked);
   }
 }

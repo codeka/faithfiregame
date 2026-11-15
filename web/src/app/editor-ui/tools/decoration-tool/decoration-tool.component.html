@@ -17,105 +17,114 @@
   </div>
 </div>
 
-<div class="tool-section">
-  <span class="section-label">Asset</span>
-  <div class="asset-list">
-    @for (item of state.catalog(); track item.id) {
-      <button
-        type="button"
-        class="btn btn-sm asset-btn"
-        [class.active]="state.selectedAssetId() === item.id"
-        (click)="state.selectAsset(item.id)"
-      >
-        <span>{{ item.name }}</span>
-        <span class="asset-cat">{{ item.category }}</span>
-      </button>
-    }
-  </div>
-</div>
-
-<div class="tool-section">
-  <span class="section-label">
-    @if (selectedProp(); as sel) {
-      Transform · Selected #{{ sel.id }}
-    } @else {
-      Transform · Preview
-    }
-  </span>
-  @if (selectedProp(); as sel) {
-    <div class="pos-readout">
-      X {{ sel.position[0].toFixed(2) }} · Y {{ sel.position[1].toFixed(2) }} · Z {{ sel.position[2].toFixed(2) }}
+@if (activeSubmode() === 'place') {
+  <div class="tool-section">
+    <span class="section-label">Asset</span>
+    <div class="asset-list">
+      @for (item of state.catalog(); track item.id) {
+        <button
+          type="button"
+          class="btn btn-sm asset-btn"
+          [class.active]="state.selectedAssetId() === item.id"
+          (click)="state.selectAsset(item.id)"
+        >
+          <span>{{ item.name }}</span>
+          <span class="asset-cat">{{ item.category }}</span>
+        </button>
+      }
     </div>
-  }
-  @for (rotAxis of rotationAxes; track rotAxis.axis) {
-    <label class="slider-field {{ rotAxis.accentClass }}">
+  </div>
+
+  <div class="toolbox-hint">1–4: Mode · Click terrain to place · Q/E: Yaw</div>
+} @else {
+  <div class="tool-section">
+    <span class="section-label">
+      @if (selectedProp(); as sel) {
+        Transform · Selected #{{ sel.id }}
+      } @else {
+        Transform · No Selection
+      }
+    </span>
+    <div class="pos-readout" [class.muted]="!selectedProp()">
+      @if (selectedProp(); as sel) {
+        X {{ sel.position[0].toFixed(2) }} · Y {{ sel.position[1].toFixed(2) }} · Z {{ sel.position[2].toFixed(2) }}
+      } @else {
+        Click a decoration to select
+      }
+    </div>
+    @for (rotAxis of rotationAxes; track rotAxis.axis) {
+      <label class="slider-field {{ rotAxis.accentClass }}" [class.disabled]="!selectedProp()">
+        <span class="slider-head">
+          <span class="axis-tag">{{ rotAxis.label }}</span>
+          <span>{{ activeRotationDeg()[rotAxis.axis] }}°</span>
+        </span>
+        <input
+          type="range"
+          [attr.name]="rotAxis.name"
+          class="{{ rotAxis.accentClass }}"
+          min="0"
+          max="359"
+          step="1"
+          [disabled]="!selectedProp()"
+          [value]="activeRotationDeg()[rotAxis.axis]"
+          (input)="onRotationAxisInput(rotAxis.axis, $event)"
+        />
+      </label>
+    }
+    <label class="slider-field" [class.disabled]="!selectedProp()">
       <span class="slider-head">
-        <span class="axis-tag">{{ rotAxis.label }}</span>
-        <span>{{ activeRotationDeg()[rotAxis.axis] }}°</span>
+        <span>Scale</span>
+        <span>{{ activeScale().toFixed(2) }}×</span>
       </span>
       <input
         type="range"
-        [name]="rotAxis.name"
-        class="{{ rotAxis.accentClass }}"
-        min="0"
-        max="359"
-        step="1"
-        [ngModel]="activeRotationDeg()[rotAxis.axis]"
-        (ngModelChange)="onRotationAxisChange(rotAxis.axis, $event)"
+        name="propScale"
+        min="0.4"
+        max="2.5"
+        step="0.1"
+        [disabled]="!selectedProp()"
+        [value]="activeScale()"
+        (input)="onScaleInput($event)"
       />
     </label>
-  }
-  <label class="slider-field">
-    <span class="slider-head">
-      <span>Scale</span>
-      <span>{{ activeScale().toFixed(2) }}×</span>
-    </span>
-    <input
-      type="range"
-      name="propScale"
-      min="0.4"
-      max="2.5"
-      step="0.1"
-      [ngModel]="activeScale()"
-      (ngModelChange)="onScaleChange($event)"
-    />
-  </label>
-  <label class="checkbox-field">
-    <input
-      type="checkbox"
-      name="propCastShadow"
-      [ngModel]="activeCastShadow()"
-      (ngModelChange)="onCastShadowChange($event)"
-    />
-    <span>Cast Shadow</span>
-  </label>
-  <div class="action-row">
-    <button
-      type="button"
-      class="btn btn-sm"
-      (click)="engine.resetPropRotation()"
-    >
-      Reset Rotation
-    </button>
-    @if (selectedProp()) {
+    <label class="checkbox-field" [class.disabled]="!selectedProp()">
+      <input
+        type="checkbox"
+        name="propCastShadow"
+        [disabled]="!selectedProp()"
+        [checked]="activeCastShadow()"
+        (change)="onCastShadowChange($event)"
+      />
+      <span>Cast Shadow</span>
+    </label>
+    <div class="action-row">
       <button
         type="button"
         class="btn btn-sm"
+        [disabled]="!selectedProp()"
+        (click)="engine.resetPropRotation()"
+      >
+        Reset Rotation
+      </button>
+      <button
+        type="button"
+        class="btn btn-sm"
+        [disabled]="!selectedProp()"
         (click)="engine.snapSelectedPropToTerrain()"
       >
         Snap to Terrain
       </button>
-    }
+    </div>
   </div>
-</div>
 
-<button
-  type="button"
-  class="btn btn-sm btn-danger"
-  [disabled]="!selectedProp()"
-  (click)="engine.deleteSelectedProp()"
->
-  Delete Selected
-</button>
+  <button
+    type="button"
+    class="btn btn-sm btn-danger"
+    [disabled]="!selectedProp()"
+    (click)="engine.deleteSelectedProp()"
+  >
+    Delete Selected
+  </button>
 
-<div class="toolbox-hint">1–4: Mode · Drag gizmo/rings · Q/E: Yaw · Del: Remove</div>
+  <div class="toolbox-hint">1–4: Mode · Drag gizmo/rings · Q/E: Yaw · Del: Remove</div>
+}

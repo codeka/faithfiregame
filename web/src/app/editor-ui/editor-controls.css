@@ -140,6 +140,16 @@
   cursor: pointer;
 }
 
+.slider-field.disabled,
+.checkbox-field.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.checkbox-field.disabled input[type='checkbox'] {
+  cursor: default;
+}
+
 .toolbox-hint {
   font-size: 11px;
   color: #94a3b8;
