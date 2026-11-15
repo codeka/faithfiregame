@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::str::FromStr;
 
 use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
@@ -13,8 +12,8 @@ pub struct SqliteStorage {
 
 impl SqliteStorage {
     pub async fn open(db_path: &Path) -> anyhow::Result<Self> {
-        let url = format!("sqlite://{}", db_path.to_string_lossy());
-        let opts = SqliteConnectOptions::from_str(&url)?
+        let opts = SqliteConnectOptions::new()
+            .filename(db_path)
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal);
         let pool = SqlitePoolOptions::new()
