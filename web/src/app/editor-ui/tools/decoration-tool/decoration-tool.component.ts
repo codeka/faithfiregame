@@ -50,11 +50,21 @@ export class DecorationToolComponent {
     return Number((s.selectedProp ? s.selectedProp.scale : s.previewScale).toFixed(2));
   });
 
+  readonly activeCastShadow = computed(() => {
+    const s = this.engine.status();
+    if (!s) return true;
+    return s.selectedProp ? s.selectedProp.castShadow : s.previewCastShadow;
+  });
+
   onRotationAxisChange(axis: 0 | 1 | 2, deg: number): void {
     this.engine.setPropRotationAxisDeg(axis, Number(deg));
   }
 
   onScaleChange(scale: number): void {
     this.engine.setPropScale(Number(scale));
+  }
+
+  onCastShadowChange(castShadow: boolean): void {
+    this.engine.setPropCastShadow(Boolean(castShadow));
   }
 }

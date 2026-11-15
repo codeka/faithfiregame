@@ -265,6 +265,15 @@ impl EngineHandle {
     }
 
     #[cfg(feature = "editor")]
+    pub fn set_selected_prop_cast_shadow(&self, cast_shadow: bool) {
+        let now_ms = browser_now_ms();
+        self.inner
+            .borrow_mut()
+            .editor
+            .set_selected_or_preview_cast_shadow(cast_shadow, now_ms);
+    }
+
+    #[cfg(feature = "editor")]
     pub fn delete_selected_prop(&self) {
         let now_ms = web_sys::window()
             .and_then(|w| w.performance())

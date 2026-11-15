@@ -13,9 +13,13 @@ impl EditorState {
         renderer.begin_shadow_pass(camera);
         if self.active_area.kind == AreaKind::Outside {
             for tile in self.outside_tiles.values() {
+                renderer.draw_terrain_shadow(&tile.gpu);
+            }
+            for tile in self.outside_tiles.values() {
                 self.draw_prop_shadows(renderer, &tile.vis.props);
             }
         } else if let Some(inside) = &self.inside_area {
+            renderer.draw_terrain_shadow(&inside.gpu);
             self.draw_prop_shadows(renderer, &inside.vis.props);
         }
     }
@@ -65,6 +69,7 @@ impl EditorState {
                     position: hit.to_array(),
                     rotation: self.preview_rotation,
                     scale: [self.preview_scale; 3],
+                    cast_shadow: self.preview_cast_shadow,
                 };
                 renderer.draw_prop(camera, mesh, &ghost, Vec4::new(0.65, 1.0, 0.78, 0.60));
                 renderer.draw_selection_ring(camera, &ghost, 1.1 * self.preview_scale);
@@ -102,6 +107,9 @@ impl EditorState {
 
     fn draw_prop_shadows(&self, renderer: &Renderer, props: &[PropPlacement]) {
         for prop in props {
+            if !prop.cast_shadow {
+                continue;
+            }
             if let Some(mesh) = self.prop_meshes.get(&prop.asset_id) {
                 renderer.draw_prop_shadow(mesh, prop);
             }

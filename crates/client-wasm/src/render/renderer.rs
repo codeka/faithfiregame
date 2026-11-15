@@ -84,8 +84,9 @@ impl Renderer {
             gl.viewport(0, 0, self.shadow_map.size, self.shadow_map.size);
             gl.color_mask(false, false, false, false);
             gl.depth_mask(true);
+            gl.disable(glow::CULL_FACE);
             gl.enable(glow::POLYGON_OFFSET_FILL);
-            gl.polygon_offset(1.5, 2.5);
+            gl.polygon_offset(2.2, 4.0);
             gl.clear(glow::DEPTH_BUFFER_BIT);
 
             gl.use_program(Some(self.shadow_map.prog));
@@ -120,10 +121,27 @@ impl Renderer {
         self.draw_mesh_shadow(mesh, &model);
     }
 
+    /// Renders a terrain chunk (whose vertices are already in world space) into the active shadow depth map.
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_terrain_shadow(&self, mesh: &TerrainMeshGpu) {
+        unsafe {
+            let gl = &self.gl;
+            gl.uniform_matrix_4_f32_slice(
+                self.shadow_map.u_model_loc.as_ref(),
+                false,
+                Mat4::IDENTITY.as_ref(),
+            );
+            gl.bind_vertex_array(Some(mesh.vao));
+            gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_INT, 0);
+            gl.bind_vertex_array(None);
+        }
+    }
+
     pub fn begin_frame(&self, width: i32, height: i32) {
         unsafe {
             let gl = &self.gl;
             gl.disable(glow::POLYGON_OFFSET_FILL);
+            gl.enable(glow::CULL_FACE);
             gl.color_mask(true, true, true, true);
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
             gl.viewport(0, 0, width.max(1), height.max(1));

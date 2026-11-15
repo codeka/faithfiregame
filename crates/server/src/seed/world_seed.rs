@@ -91,6 +91,7 @@ fn seed_main_outside_area(world_dir: &Path) -> anyhow::Result<()> {
                         position: [32.0, 0.0, 22.0],
                         rotation: [0.0, 0.0, 0.0],
                         scale: [1.0, 1.0, 1.0],
+                        cast_shadow: true,
                     },
                     PropPlacement {
                         id: 2,
@@ -98,6 +99,7 @@ fn seed_main_outside_area(world_dir: &Path) -> anyhow::Result<()> {
                         position: [20.0, 0.4, 18.0],
                         rotation: [0.0, 0.7, 0.0],
                         scale: [1.1, 1.1, 1.1],
+                        cast_shadow: true,
                     },
                     PropPlacement {
                         id: 3,
@@ -105,6 +107,7 @@ fn seed_main_outside_area(world_dir: &Path) -> anyhow::Result<()> {
                         position: [44.0, 0.0, 26.0],
                         rotation: [0.0, 2.1, 0.0],
                         scale: [1.0, 1.0, 1.0],
+                        cast_shadow: true,
                     },
                     PropPlacement {
                         id: 4,
@@ -112,6 +115,7 @@ fn seed_main_outside_area(world_dir: &Path) -> anyhow::Result<()> {
                         position: [24.0, 0.0, 42.0],
                         rotation: [0.0, 1.2, 0.0],
                         scale: [1.0, 1.0, 1.0],
+                        cast_shadow: true,
                     },
                     PropPlacement {
                         id: 5,
@@ -119,6 +123,7 @@ fn seed_main_outside_area(world_dir: &Path) -> anyhow::Result<()> {
                         position: [38.0, 0.0, 38.0],
                         rotation: [0.0, 0.4, 0.0],
                         scale: [1.0, 1.0, 1.0],
+                        cast_shadow: true,
                     },
                 ];
             }
@@ -170,6 +175,7 @@ fn seed_village_shop_inside_area(world_dir: &Path) -> anyhow::Result<()> {
         position: [12.0, 0.0, 6.0],
         rotation: [0.0, 0.0, 0.0],
         scale: [1.0, 1.0, 1.0],
+        cast_shadow: true,
     });
     vis.recompute_slope_walkability();
     let sim = compute_inside_sim_from_vis(&vis, None);

@@ -28,14 +28,14 @@ uniform vec3 u_sun_dir;
 uniform float u_shadow_texel;
 
 float sample_shadow(vec3 world_pos, vec3 normal) {
-    vec4 light_clip = u_light_view_proj * vec4(world_pos + normal * 0.025, 1.0);
+    vec4 light_clip = u_light_view_proj * vec4(world_pos + normal * 0.06, 1.0);
     vec3 proj = (light_clip.xyz / light_clip.w) * 0.5 + 0.5;
     if (proj.x <= 0.0 || proj.x >= 1.0 || proj.y <= 0.0 || proj.y >= 1.0 || proj.z <= 0.0 || proj.z >= 1.0) {
         return 1.0;
     }
 
     float ndotl = clamp(dot(normal, u_sun_dir), 0.0, 1.0);
-    float bias = mix(0.0009, 0.00025, ndotl);
+    float bias = mix(0.0014, 0.0003, ndotl);
     float ref_depth = proj.z - bias;
 
     float sum = 0.0;

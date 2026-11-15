@@ -46,6 +46,37 @@ pub struct PropPlacement {
     pub position: [f32; 3],
     pub rotation: [f32; 3],
     pub scale: [f32; 3],
+    pub cast_shadow: bool,
+}
+
+pub(crate) fn decode_exact<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, postcard::Error> {
+    let (value, rest) = postcard::take_from_bytes::<T>(bytes)?;
+    if !rest.is_empty() {
+        return Err(postcard::Error::SerdeDeCustom);
+    }
+    Ok(value)
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PropPlacementV2 {
+    pub id: u64,
+    pub asset_id: String,
+    pub position: [f32; 3],
+    pub rotation: [f32; 3],
+    pub scale: [f32; 3],
+}
+
+impl From<PropPlacementV2> for PropPlacement {
+    fn from(v2: PropPlacementV2) -> Self {
+        Self {
+            id: v2.id,
+            asset_id: v2.asset_id,
+            position: v2.position,
+            rotation: v2.rotation,
+            scale: v2.scale,
+            cast_shadow: true,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -65,6 +96,7 @@ impl From<LegacyPropPlacement> for PropPlacement {
             position: legacy.position,
             rotation: [0.0, legacy.rotation_y, 0.0],
             scale: legacy.scale,
+            cast_shadow: true,
         }
     }
 }

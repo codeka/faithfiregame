@@ -37,6 +37,7 @@ pub struct EditorState {
     pub active_asset_id: String,
     pub preview_rotation: [f32; 3],
     pub preview_scale: f32,
+    pub preview_cast_shadow: bool,
     pub selected_prop_id: Option<u64>,
     pub dragging_prop: bool,
     pub hovered_rotate_axis: Option<GizmoAxis>,
@@ -84,6 +85,7 @@ impl EditorState {
             active_asset_id: "pine_tree".to_owned(),
             preview_rotation: [0.0; 3],
             preview_scale: 1.0,
+            preview_cast_shadow: true,
             selected_prop_id: None,
             dragging_prop: false,
             hovered_rotate_axis: None,
@@ -412,6 +414,7 @@ impl EditorState {
             position: p.position,
             rotation_deg: p.rotation.map(|r| r.to_degrees().rem_euclid(360.0)),
             scale: p.scale[0],
+            cast_shadow: p.cast_shadow,
         });
 
         EditorStatusSnapshot {
@@ -446,6 +449,7 @@ impl EditorState {
                 .preview_rotation
                 .map(|r| r.to_degrees().rem_euclid(360.0)),
             preview_scale: self.preview_scale,
+            preview_cast_shadow: self.preview_cast_shadow,
         }
     }
 }

@@ -20,6 +20,7 @@ function baseStatus(tool: EditorStatus['tool'] = 'decoration'): EditorStatus {
     selectedProp: null,
     previewRotationDeg: [0, 0, 0],
     previewScale: 1,
+    previewCastShadow: true,
   };
 }
 
@@ -73,6 +74,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
       setPropRotationAxisDeg: () => {},
       resetPropRotation: () => {},
       setPropScale: () => {},
+      setPropCastShadow: () => {},
       deleteSelectedProp: () => {},
       saveNow: () => {},
     };

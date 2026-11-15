@@ -25,6 +25,7 @@ export interface SelectedPropInfo {
   position: [number, number, number];
   rotationDeg: [number, number, number];
   scale: number;
+  castShadow: boolean;
 }
 
 export interface EditorStatus {
@@ -43,6 +44,7 @@ export interface EditorStatus {
   selectedProp: SelectedPropInfo | null;
   previewRotationDeg: [number, number, number];
   previewScale: number;
+  previewCastShadow: boolean;
 }
 
 export function formatAreaKind(meta: AreaMetadata): string {
@@ -166,6 +168,11 @@ export class EngineService implements OnDestroy {
 
   setPropScale(scale: number): void {
     this.handle?.set_selected_prop_scale(scale);
+    this.refreshStatus();
+  }
+
+  setPropCastShadow(castShadow: boolean): void {
+    this.handle?.set_selected_prop_cast_shadow(castShadow);
     this.refreshStatus();
   }
 

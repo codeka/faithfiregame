@@ -121,6 +121,25 @@
   margin: 0;
 }
 
+.checkbox-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: #dbe4f0;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+}
+
+.checkbox-field input[type='checkbox'] {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: #3182ce;
+  cursor: pointer;
+}
+
 .toolbox-hint {
   font-size: 11px;
   color: #94a3b8;

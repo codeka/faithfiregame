@@ -31,6 +31,7 @@ impl EditorState {
                             position: hit.to_array(),
                             rotation: self.preview_rotation,
                             scale: [self.preview_scale; 3],
+                            cast_shadow: self.preview_cast_shadow,
                         };
                         if self.insert_prop(placement) {
                             self.selected_prop_id = Some(id);
@@ -301,6 +302,16 @@ impl EditorState {
             }
         } else {
             self.preview_scale = s;
+        }
+    }
+
+    pub fn set_selected_or_preview_cast_shadow(&mut self, cast_shadow: bool, now_ms: f64) {
+        if let Some(id) = self.selected_prop_id {
+            if self.modify_prop(id, |p| p.cast_shadow = cast_shadow) {
+                self.mark_unsaved(now_ms);
+            }
+        } else {
+            self.preview_cast_shadow = cast_shadow;
         }
     }
 

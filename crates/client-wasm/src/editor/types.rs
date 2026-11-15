@@ -59,6 +59,7 @@ pub struct SelectedPropInfo {
     pub position: [f32; 3],
     pub rotation_deg: [f32; 3],
     pub scale: f32,
+    pub cast_shadow: bool,
 }
 
 #[derive(Serialize)]
@@ -79,4 +80,5 @@ pub struct EditorStatusSnapshot {
     pub selected_prop: Option<SelectedPropInfo>,
     pub preview_rotation_deg: [f32; 3],
     pub preview_scale: f32,
+    pub preview_cast_shadow: bool,
 }

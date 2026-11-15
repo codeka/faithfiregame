@@ -80,6 +80,15 @@
       (ngModelChange)="onScaleChange($event)"
     />
   </label>
+  <label class="checkbox-field">
+    <input
+      type="checkbox"
+      name="propCastShadow"
+      [ngModel]="activeCastShadow()"
+      (ngModelChange)="onCastShadowChange($event)"
+    />
+    <span>Cast Shadow</span>
+  </label>
   <div class="action-row">
     <button
       type="button"

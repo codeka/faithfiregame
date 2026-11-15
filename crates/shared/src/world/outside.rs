@@ -64,9 +64,18 @@ impl TileVisData {
         }
     }
 
-    /// Decodes a postcard-encoded tile visual payload, falling back to legacy single-axis
-    /// `rotation_y` prop records so existing world files load cleanly.
+    /// Decodes a postcard-encoded tile visual payload, falling back across prior `v2`
+    /// (`rotation: [f32; 3]`, no `cast_shadow`) and legacy `v1` (`rotation_y`) prop records
+    /// so existing world files load cleanly.
     pub fn from_postcard_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
+        #[derive(Deserialize)]
+        struct TileVisDataV2 {
+            walkable: WalkMask,
+            heights: Vec<f32>,
+            splat_map: Vec<u32>,
+            props: Vec<super::types::PropPlacementV2>,
+        }
+
         #[derive(Deserialize)]
         struct LegacyTileVisData {
             walkable: WalkMask,
@@ -75,14 +84,22 @@ impl TileVisData {
             props: Vec<super::types::LegacyPropPlacement>,
         }
 
-        match postcard::from_bytes::<Self>(bytes) {
+        match super::types::decode_exact::<Self>(bytes) {
             Ok(vis) => Ok(vis),
-            Err(primary_err) => postcard::from_bytes::<LegacyTileVisData>(bytes)
-                .map(|legacy| Self {
-                    walkable: legacy.walkable,
-                    heights: legacy.heights,
-                    splat_map: legacy.splat_map,
-                    props: legacy.props.into_iter().map(Into::into).collect(),
+            Err(primary_err) => super::types::decode_exact::<TileVisDataV2>(bytes)
+                .map(|v2| Self {
+                    walkable: v2.walkable,
+                    heights: v2.heights,
+                    splat_map: v2.splat_map,
+                    props: v2.props.into_iter().map(Into::into).collect(),
+                })
+                .or_else(|_| {
+                    super::types::decode_exact::<LegacyTileVisData>(bytes).map(|legacy| Self {
+                        walkable: legacy.walkable,
+                        heights: legacy.heights,
+                        splat_map: legacy.splat_map,
+                        props: legacy.props.into_iter().map(Into::into).collect(),
+                    })
                 })
                 .map_err(|_| primary_err),
         }
@@ -178,5 +195,69 @@ mod tests {
         let decoded = TileVisData::from_postcard_bytes(&bytes).unwrap();
         assert_eq!(decoded.props.len(), 1);
         assert_eq!(decoded.props[0].rotation, [0.0, 1.25, 0.0]);
+        assert!(decoded.props[0].cast_shadow);
+    }
+
+    #[test]
+    fn v2_and_v3_tile_vis_decoding_and_cast_shadow_roundtrip() {
+        #[derive(Serialize)]
+        struct V2Prop {
+            id: u64,
+            asset_id: String,
+            position: [f32; 3],
+            rotation: [f32; 3],
+            scale: [f32; 3],
+        }
+        #[derive(Serialize)]
+        struct V2Tile {
+            walkable: WalkMask,
+            heights: Vec<f32>,
+            splat_map: Vec<u32>,
+            props: Vec<V2Prop>,
+        }
+
+        let base = TileVisData::flat_default();
+        let v2 = V2Tile {
+            walkable: base.walkable,
+            heights: base.heights.clone(),
+            splat_map: base.splat_map.clone(),
+            props: vec![
+                V2Prop {
+                    id: 10,
+                    asset_id: "boulder".to_owned(),
+                    position: [15.0, 2.0, 20.0],
+                    rotation: [0.3, 0.8, 0.1],
+                    scale: [1.0, 1.0, 1.0],
+                },
+                V2Prop {
+                    id: 11,
+                    asset_id: "ruin_stone".to_owned(),
+                    position: [22.0, 0.0, 25.0],
+                    rotation: [0.0, 1.5, 0.0],
+                    scale: [1.2, 1.2, 1.2],
+                },
+            ],
+        };
+
+        let v2_bytes = postcard::to_allocvec(&v2).unwrap();
+        let decoded_v2 = TileVisData::from_postcard_bytes(&v2_bytes).unwrap();
+        assert_eq!(decoded_v2.props.len(), 2);
+        assert_eq!(decoded_v2.props[0].rotation, [0.3, 0.8, 0.1]);
+        assert!(decoded_v2.props[0].cast_shadow);
+        assert!(decoded_v2.props[1].cast_shadow);
+
+        let mut v3 = TileVisData::flat_default();
+        v3.props.push(PropPlacement {
+            id: 12,
+            asset_id: "boulder".to_owned(),
+            position: [18.0, 3.0, 19.0],
+            rotation: [0.0, 0.5, 0.0],
+            scale: [1.0, 1.0, 1.0],
+            cast_shadow: false,
+        });
+        let v3_bytes = postcard::to_allocvec(&v3).unwrap();
+        let decoded_v3 = TileVisData::from_postcard_bytes(&v3_bytes).unwrap();
+        assert_eq!(decoded_v3.props.len(), 1);
+        assert!(!decoded_v3.props[0].cast_shadow);
     }
 }

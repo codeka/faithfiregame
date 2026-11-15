@@ -105,9 +105,20 @@ impl InsideVisData {
         }
     }
 
-    /// Decodes a postcard-encoded inside visual payload, falling back to legacy single-axis
-    /// `rotation_y` prop records so existing interior world files load cleanly.
+    /// Decodes a postcard-encoded inside visual payload, falling back across prior `v2`
+    /// (`rotation: [f32; 3]`, no `cast_shadow`) and legacy `v1` (`rotation_y`) prop records
+    /// so existing interior world files load cleanly.
     pub fn from_postcard_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
+        #[derive(Deserialize)]
+        struct InsideVisDataV2 {
+            width: u32,
+            length: u32,
+            walkable: Vec<u64>,
+            heights: Vec<f32>,
+            splat_map: Vec<u32>,
+            props: Vec<super::types::PropPlacementV2>,
+        }
+
         #[derive(Deserialize)]
         struct LegacyInsideVisData {
             width: u32,
@@ -118,16 +129,26 @@ impl InsideVisData {
             props: Vec<super::types::LegacyPropPlacement>,
         }
 
-        match postcard::from_bytes::<Self>(bytes) {
+        match super::types::decode_exact::<Self>(bytes) {
             Ok(vis) => Ok(vis),
-            Err(primary_err) => postcard::from_bytes::<LegacyInsideVisData>(bytes)
-                .map(|legacy| Self {
-                    width: legacy.width,
-                    length: legacy.length,
-                    walkable: legacy.walkable,
-                    heights: legacy.heights,
-                    splat_map: legacy.splat_map,
-                    props: legacy.props.into_iter().map(Into::into).collect(),
+            Err(primary_err) => super::types::decode_exact::<InsideVisDataV2>(bytes)
+                .map(|v2| Self {
+                    width: v2.width,
+                    length: v2.length,
+                    walkable: v2.walkable,
+                    heights: v2.heights,
+                    splat_map: v2.splat_map,
+                    props: v2.props.into_iter().map(Into::into).collect(),
+                })
+                .or_else(|_| {
+                    super::types::decode_exact::<LegacyInsideVisData>(bytes).map(|legacy| Self {
+                        width: legacy.width,
+                        length: legacy.length,
+                        walkable: legacy.walkable,
+                        heights: legacy.heights,
+                        splat_map: legacy.splat_map,
+                        props: legacy.props.into_iter().map(Into::into).collect(),
+                    })
                 })
                 .map_err(|_| primary_err),
         }
