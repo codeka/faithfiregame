@@ -8,6 +8,17 @@ use super::state::EditorState;
 use super::types::{DecorationSubMode, EditorTool};
 
 impl EditorState {
+    pub fn render_shadows(&self, renderer: &mut Renderer, camera: &Camera) {
+        renderer.begin_shadow_pass(camera);
+        if self.active_area.kind == AreaKind::Outside {
+            for tile in self.outside_tiles.values() {
+                self.draw_prop_shadows(renderer, &tile.vis.props);
+            }
+        } else if let Some(inside) = &self.inside_area {
+            self.draw_prop_shadows(renderer, &inside.vis.props);
+        }
+    }
+
     pub fn render(&self, renderer: &Renderer, camera: &Camera) {
         let show_brush = self.hover_world.is_some()
             && matches!(self.tool, EditorTool::Heightmap | EditorTool::Texture);
@@ -56,6 +67,14 @@ impl EditorState {
                 };
                 renderer.draw_prop(camera, mesh, &ghost, Vec4::new(0.65, 1.0, 0.78, 0.60));
                 renderer.draw_selection_ring(camera, &ghost, 1.1 * self.preview_scale);
+            }
+        }
+    }
+
+    fn draw_prop_shadows(&self, renderer: &Renderer, props: &[PropPlacement]) {
+        for prop in props {
+            if let Some(mesh) = self.prop_meshes.get(&prop.asset_id) {
+                renderer.draw_prop_shadow(mesh, prop);
             }
         }
     }

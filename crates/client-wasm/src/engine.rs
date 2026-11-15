@@ -60,6 +60,7 @@ pub(crate) fn step_frame(inner: &Rc<RefCell<EngineInner>>, time_ms: f64) {
             } = &mut *st;
             editor_cam.update(camera, input, dt);
             editor.update(&renderer.gl, camera, editor_cam, input, dt, time_ms);
+            editor.render_shadows(renderer, camera);
             renderer.begin_frame(cw, ch);
             editor.render(renderer, camera);
 
@@ -81,6 +82,7 @@ pub(crate) fn step_frame(inner: &Rc<RefCell<EngineInner>>, time_ms: f64) {
                 ..
             } = &mut *st;
             gameplay_cam.update(camera, input, dt);
+            renderer.begin_shadow_pass(camera);
             renderer.begin_frame(cw, ch);
         }
 

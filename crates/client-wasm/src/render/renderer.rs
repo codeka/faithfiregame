@@ -9,6 +9,7 @@ use super::prop_mesh::{PropMeshGpu, create_selection_ring_mesh, prop_model_matri
 use super::shaders::{
     LINE_FRAG, LINE_VERT, PROP_FRAG, PROP_VERT, TERRAIN_FRAG, TERRAIN_VERT, compile_program,
 };
+use super::shadow_map::{ShadowMapGpu, compute_light_space_matrix, sun_direction};
 use super::terrain_mesh::{BrushOverlay, TerrainMeshGpu};
 
 pub struct Renderer {
@@ -19,6 +20,9 @@ pub struct Renderer {
     tex_array: glow::Texture,
     ring_vao: glow::VertexArray,
     ring_vert_count: i32,
+    shadow_map: ShadowMapGpu,
+    light_view_proj: Mat4,
+    pub sun_dir: Vec3,
     pub fog_start: f32,
     pub fog_end: f32,
     pub fog_color: [f32; 3],
@@ -31,6 +35,7 @@ impl Renderer {
         let line_prog = compile_program(&gl, LINE_VERT, LINE_FRAG)?;
         let tex_array = create_terrain_texture_array(&gl)?;
         let (ring_vao, ring_vert_count) = create_selection_ring_mesh(&gl)?;
+        let shadow_map = ShadowMapGpu::new(&gl)?;
 
         unsafe {
             gl.enable(glow::DEPTH_TEST);
@@ -47,19 +52,94 @@ impl Renderer {
             tex_array,
             ring_vao,
             ring_vert_count,
+            shadow_map,
+            light_view_proj: Mat4::IDENTITY,
+            sun_dir: sun_direction(),
             fog_start: 140.0,
             fog_end: 240.0,
             fog_color: [0.56, 0.72, 0.86],
         })
     }
 
+    /// Binds and clears the directional shadow depth map FBO for shadow-caster draws.
+    pub fn begin_shadow_pass(&mut self, camera: &Camera) {
+        self.light_view_proj = compute_light_space_matrix(camera, self.shadow_map.size);
+        unsafe {
+            let gl = &self.gl;
+            // Unbind TEXTURE2 before binding the shadow FBO to avoid WebGL2 feedback loops.
+            gl.active_texture(glow::TEXTURE2);
+            gl.bind_texture(glow::TEXTURE_2D, None);
+
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.shadow_map.fbo));
+            gl.viewport(0, 0, self.shadow_map.size, self.shadow_map.size);
+            gl.color_mask(false, false, false, false);
+            gl.depth_mask(true);
+            gl.enable(glow::POLYGON_OFFSET_FILL);
+            gl.polygon_offset(1.5, 2.5);
+            gl.clear(glow::DEPTH_BUFFER_BIT);
+
+            gl.use_program(Some(self.shadow_map.prog));
+            gl.uniform_matrix_4_f32_slice(
+                self.shadow_map.u_light_vp_loc.as_ref(),
+                false,
+                self.light_view_proj.as_ref(),
+            );
+        }
+    }
+
+    /// Renders any static prop or dynamic entity mesh into the active shadow depth map.
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_mesh_shadow(&self, mesh: &PropMeshGpu, model: &Mat4) {
+        unsafe {
+            let gl = &self.gl;
+            gl.uniform_matrix_4_f32_slice(
+                self.shadow_map.u_model_loc.as_ref(),
+                false,
+                model.as_ref(),
+            );
+            gl.bind_vertex_array(Some(mesh.vao));
+            gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_SHORT, 0);
+            gl.bind_vertex_array(None);
+        }
+    }
+
+    /// Renders a placed world decoration into the active shadow depth map.
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_prop_shadow(&self, mesh: &PropMeshGpu, placement: &PropPlacement) {
+        let model = prop_model_matrix(placement);
+        self.draw_mesh_shadow(mesh, &model);
+    }
+
     pub fn begin_frame(&self, width: i32, height: i32) {
         unsafe {
-            self.gl.viewport(0, 0, width.max(1), height.max(1));
-            self.gl
-                .clear_color(self.fog_color[0], self.fog_color[1], self.fog_color[2], 1.0);
-            self.gl
-                .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+            let gl = &self.gl;
+            gl.disable(glow::POLYGON_OFFSET_FILL);
+            gl.color_mask(true, true, true, true);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            gl.viewport(0, 0, width.max(1), height.max(1));
+            gl.clear_color(self.fog_color[0], self.fog_color[1], self.fog_color[2], 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+        }
+    }
+
+    unsafe fn bind_shadow_uniforms(&self, prog: glow::Program) {
+        unsafe {
+            let gl = &self.gl;
+            let loc = |name| gl.get_uniform_location(prog, name);
+            gl.uniform_matrix_4_f32_slice(
+                loc("u_light_view_proj").as_ref(),
+                false,
+                self.light_view_proj.as_ref(),
+            );
+            let sun = self.sun_dir.normalize_or_zero();
+            gl.uniform_3_f32(loc("u_sun_dir").as_ref(), sun.x, sun.y, sun.z);
+            gl.uniform_1_f32(
+                loc("u_shadow_texel").as_ref(),
+                1.0 / (self.shadow_map.size.max(1) as f32),
+            );
+            gl.active_texture(glow::TEXTURE2);
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.shadow_map.depth_tex));
+            gl.uniform_1_i32(loc("u_shadow_map").as_ref(), 2);
         }
     }
 
@@ -116,15 +196,18 @@ impl Renderer {
             gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(self.tex_array));
             gl.uniform_1_i32(loc("u_tex_array").as_ref(), 1);
 
+            self.bind_shadow_uniforms(self.terrain_prog);
+
             gl.bind_vertex_array(Some(mesh.vao));
             gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_INT, 0);
             gl.bind_vertex_array(None);
         }
     }
 
-    pub fn draw_prop(&self, camera: &Camera, mesh: &PropMeshGpu, placement: &PropPlacement, tint: Vec4) {
+    /// Renders any static prop or dynamic entity mesh with directional shadow receiving.
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_mesh(&self, camera: &Camera, mesh: &PropMeshGpu, model: &Mat4, tint: Vec4) {
         let vp = camera.view_proj_matrix();
-        let model = prop_model_matrix(placement);
         unsafe {
             let gl = &self.gl;
             gl.use_program(Some(self.prop_prog));
@@ -143,10 +226,17 @@ impl Renderer {
                 self.fog_color[2],
             );
 
+            self.bind_shadow_uniforms(self.prop_prog);
+
             gl.bind_vertex_array(Some(mesh.vao));
             gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_SHORT, 0);
             gl.bind_vertex_array(None);
         }
+    }
+
+    pub fn draw_prop(&self, camera: &Camera, mesh: &PropMeshGpu, placement: &PropPlacement, tint: Vec4) {
+        let model = prop_model_matrix(placement);
+        self.draw_mesh(camera, mesh, &model, tint);
     }
 
     pub fn draw_selection_ring(&self, camera: &Camera, placement: &PropPlacement, radius: f32) {

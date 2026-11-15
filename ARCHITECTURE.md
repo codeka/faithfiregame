@@ -56,7 +56,7 @@ faith-and-fire/
 │           ├── engine.rs       # EngineInner state & frame loop
 │           ├── input/          # state.rs, dom.rs (keyboard/mouse listeners)
 │           ├── camera/         # projection.rs, controller.rs, gameplay_camera.rs, editor_camera.rs
-│           ├── render/         # renderer.rs, shaders.rs, terrain_mesh.rs, prop_mesh.rs, procedural_textures.rs
+│           ├── render/         # renderer.rs, shaders.rs, shadow_map.rs, terrain_mesh.rs, prop_mesh.rs, procedural_textures.rs
 │           ├── glb_loader.rs   # Binary .glb scene-graph mesh parser
 │           ├── net/            # ws_client.rs, http.rs
 │           └── editor/         # #[cfg(feature = "editor")] state.rs, types.rs, terrain_ops.rs,
