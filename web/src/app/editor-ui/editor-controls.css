@@ -81,6 +81,27 @@
   gap: 6px;
 }
 
+.option-grid .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
+.key-hint {
+  color: #8b9bb4;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.btn.active .key-hint {
+  color: rgba(255, 255, 255, 0.68);
+}
+
 .slider-field {
   display: flex;
   flex-direction: column;

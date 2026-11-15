@@ -3,6 +3,13 @@ import { FormsModule } from '@angular/forms';
 import { EngineService } from '../../../engine.service';
 import { EditorStateService } from '../../editor-state.service';
 
+export const HEIGHT_MODES = [
+  { id: 'raise', label: 'Raise', shortcut: '1' },
+  { id: 'lower', label: 'Lower', shortcut: '2' },
+  { id: 'smooth', label: 'Smooth', shortcut: '3' },
+  { id: 'flatten', label: 'Flatten', shortcut: '4' },
+] as const;
+
 @Component({
   selector: 'app-heightmap-tool',
   standalone: true,
@@ -14,12 +21,7 @@ export class HeightmapToolComponent {
   readonly engine = inject(EngineService);
   readonly state = inject(EditorStateService);
 
-  readonly modes: readonly ('raise' | 'lower' | 'smooth' | 'flatten')[] = [
-    'raise',
-    'lower',
-    'smooth',
-    'flatten',
-  ];
+  readonly modes = HEIGHT_MODES;
 
   readonly activeHeightMode = computed(() => this.engine.status()?.heightMode ?? 'raise');
 }

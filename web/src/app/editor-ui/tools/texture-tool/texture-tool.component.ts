@@ -3,6 +3,13 @@ import { FormsModule } from '@angular/forms';
 import { EngineService } from '../../../engine.service';
 import { EditorStateService } from '../../editor-state.service';
 
+export const TEXTURE_LAYERS = [
+  { index: 0, label: 'Grass', swatch: '#4a8f3d', shortcut: '1' },
+  { index: 1, label: 'Dirt', swatch: '#8b623f', shortcut: '2' },
+  { index: 2, label: 'Rock', swatch: '#787e88', shortcut: '3' },
+  { index: 3, label: 'Sand', swatch: '#d7be7a', shortcut: '4' },
+] as const;
+
 @Component({
   selector: 'app-texture-tool',
   standalone: true,
@@ -16,10 +23,5 @@ export class TextureToolComponent {
 
   readonly activeTexLayer = computed(() => this.engine.status()?.textureLayer ?? 1);
 
-  readonly textureLayers = [
-    { index: 0, label: 'Grass', swatch: '#4a8f3d' },
-    { index: 1, label: 'Dirt', swatch: '#8b623f' },
-    { index: 2, label: 'Rock', swatch: '#787e88' },
-    { index: 3, label: 'Sand', swatch: '#d7be7a' },
-  ];
+  readonly textureLayers = TEXTURE_LAYERS;
 }

@@ -3,6 +3,13 @@ import { FormsModule } from '@angular/forms';
 import { EngineService } from '../../../engine.service';
 import { EditorStateService } from '../../editor-state.service';
 
+export const DECORATION_SUBMODES = [
+  { id: 'place', label: 'Place', shortcut: '1' },
+  { id: 'move', label: 'Move', shortcut: '2' },
+  { id: 'free_move', label: 'Free Move', shortcut: '3' },
+  { id: 'rotate', label: 'Rotate', shortcut: '4' },
+] as const;
+
 @Component({
   selector: 'app-decoration-tool',
   standalone: true,
@@ -14,12 +21,7 @@ export class DecorationToolComponent {
   readonly engine = inject(EngineService);
   readonly state = inject(EditorStateService);
 
-  readonly submodes: readonly { id: 'place' | 'move' | 'free_move' | 'rotate'; label: string }[] = [
-    { id: 'place', label: 'Place' },
-    { id: 'move', label: 'Move' },
-    { id: 'free_move', label: 'Free Move' },
-    { id: 'rotate', label: 'Rotate' },
-  ];
+  readonly submodes = DECORATION_SUBMODES;
   readonly activeSubmode = computed(() => this.engine.status()?.decorationSubmode ?? 'place');
   readonly selectedProp = computed(() => this.engine.status()?.selectedProp ?? null);
 

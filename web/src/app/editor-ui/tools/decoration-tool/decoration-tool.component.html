@@ -10,7 +10,8 @@
         [class.active]="activeSubmode() === sub.id"
         (click)="engine.setDecorationSubmode(sub.id)"
       >
-        {{ sub.label }}
+        <span class="key-hint">{{ sub.shortcut }}</span>
+        <span>{{ sub.label }}</span>
       </button>
     }
   </div>
@@ -108,4 +109,4 @@
   Delete Selected
 </button>
 
-<div class="toolbox-hint">Drag X/Y/Z gizmo or rings · Q/E: Yaw · Del: Remove</div>
+<div class="toolbox-hint">1–4: Mode · Drag gizmo/rings · Q/E: Yaw · Del: Remove</div>

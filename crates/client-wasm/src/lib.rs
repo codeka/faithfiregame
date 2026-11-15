@@ -195,6 +195,7 @@ impl EngineHandle {
             "flatten" => HeightMode::Flatten,
             _ => HeightMode::Raise,
         };
+        st.editor.flatten_target_y = None;
     }
 
     #[cfg(feature = "editor")]
@@ -221,6 +222,7 @@ impl EngineHandle {
             "rotate" => DecorationSubMode::Rotate,
             _ => DecorationSubMode::Place,
         };
+        st.editor.dragging_prop = false;
         st.editor.gizmo_drag = None;
         st.editor.hovered_gizmo_axis = None;
         st.editor.rotate_drag = None;

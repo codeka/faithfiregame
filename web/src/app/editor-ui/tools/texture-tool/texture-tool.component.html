@@ -6,12 +6,13 @@
     @for (layer of textureLayers; track layer.index) {
       <button
         type="button"
-        class="btn btn-sm swatch-btn"
+        class="btn btn-sm"
         [class.active]="activeTexLayer() === layer.index"
         (click)="engine.setTextureLayer(layer.index)"
       >
+        <span class="key-hint">{{ layer.shortcut }}</span>
         <span class="swatch" [style.background]="layer.swatch"></span>
-        {{ layer.label }}
+        <span>{{ layer.label }}</span>
       </button>
     }
   </div>
@@ -51,4 +52,4 @@
   </label>
 </div>
 
-<div class="toolbox-hint">Drag on terrain to blend material.</div>
+<div class="toolbox-hint">1–4: Material · Drag on terrain to blend.</div>

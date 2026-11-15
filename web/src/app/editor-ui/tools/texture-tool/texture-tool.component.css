@@ -4,15 +4,10 @@
   gap: 12px;
 }
 
-.swatch-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
 .swatch {
   width: 10px;
   height: 10px;
   border-radius: 2px;
   border: 1px solid rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
 }

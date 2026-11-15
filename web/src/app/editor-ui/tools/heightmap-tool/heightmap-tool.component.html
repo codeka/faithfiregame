@@ -3,14 +3,15 @@
 <div class="tool-section">
   <span class="section-label">Sculpt Mode</span>
   <div class="option-grid">
-    @for (mode of modes; track mode) {
+    @for (mode of modes; track mode.id) {
       <button
         type="button"
         class="btn btn-sm"
-        [class.active]="activeHeightMode() === mode"
-        (click)="engine.setHeightMode(mode)"
+        [class.active]="activeHeightMode() === mode.id"
+        (click)="engine.setHeightMode(mode.id)"
       >
-        {{ mode[0].toUpperCase() + mode.slice(1) }}
+        <span class="key-hint">{{ mode.shortcut }}</span>
+        <span>{{ mode.label }}</span>
       </button>
     }
   </div>
@@ -50,4 +51,4 @@
   </label>
 </div>
 
-<div class="toolbox-hint">Drag on terrain to sculpt height.</div>
+<div class="toolbox-hint">1–4: Sculpt Mode · Drag on terrain to sculpt.</div>
