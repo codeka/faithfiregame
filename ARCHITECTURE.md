@@ -61,13 +61,14 @@ faith-and-fire/
 │           ├── net/            # ws_client.rs, http.rs
 │           └── editor/         # #[cfg(feature = "editor")] state.rs, types.rs, terrain_ops.rs,
 │                               # heightmap_tool.rs, texture_tool.rs, decoration_tool.rs, scene_render.rs, io.rs
+├── scripts/                    # Tooling scripts (build-wasm.ps1, backup-world.ps1)
 ├── web/                        # Angular (TypeScript) frontend shell
 │   └── src/
 │       └── app/
 │           ├── game-canvas/    # Hosts <canvas> and initializes WASM module
 │           ├── hud/            # Action bars, target frame, inventory, chat, trade modals
 │           └── editor-ui/      # Dev-only Angular editor panels (stripped in prod builds)
-└── world/                      # Authoritative world data & static assets
+└── world/                      # Gitignored runtime/authored world data (seeded on boot; backed up via scripts/backup-world.ps1)
     ├── assets/                 # Shared .glb models and terrain textures
     └── areas/
         ├── <outside_area>/

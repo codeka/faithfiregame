@@ -4,6 +4,7 @@
 /web/dist/
 /web/public/wasm/
 /web/src/app/wasm/
+/world/
 *.db
 *.db-shm
 *.db-wal
