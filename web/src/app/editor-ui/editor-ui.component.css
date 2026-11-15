@@ -3,10 +3,16 @@
   inset: 0;
   pointer-events: none;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .toolbar {
   pointer-events: auto;
+  width: 100%;
+  box-sizing: border-box;
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -107,17 +113,101 @@
   border: 1px solid rgba(255, 255, 255, 0.4);
 }
 
-.slider-label {
-  display: inline-flex;
+.toolbox {
+  pointer-events: auto;
+  width: 248px;
+  box-sizing: border-box;
+  margin: 10px 0 10px 10px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(16, 20, 28, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+}
+
+.toolbox-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #f6ad55;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tool-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.option-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.submode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.asset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.asset-btn {
+  display: flex;
   align-items: center;
-  gap: 5px;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.asset-cat {
+  font-size: 10px;
+  opacity: 0.65;
+  text-transform: capitalize;
+}
+
+.slider-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   font-size: 11px;
   color: #cbd5e0;
   font-variant-numeric: tabular-nums;
 }
 
-.slider-label input[type='range'] {
-  width: 72px;
+.slider-head {
+  display: flex;
+  justify-content: space-between;
+}
+
+.slider-field input[type='range'] {
+  width: 100%;
+  margin: 0;
+}
+
+.toolbox-hint {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.35;
 }
 
 .coord-pill,

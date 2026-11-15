@@ -33,6 +33,16 @@ export class EditorUiComponent implements OnInit {
 
   readonly status = this.engine.status;
   readonly activeTool = computed(() => this.status()?.tool ?? 'heightmap');
+  readonly activeToolTitle = computed(() => {
+    switch (this.activeTool()) {
+      case 'heightmap':
+        return 'Heightmap Brush';
+      case 'texture':
+        return 'Texture Brush';
+      case 'decoration':
+        return 'Decorations';
+    }
+  });
   readonly activeHeightMode = computed(() => this.status()?.heightMode ?? 'raise');
   readonly activeTexLayer = computed(() => this.status()?.textureLayer ?? 1);
   readonly activeDecSubmode = computed(() => this.status()?.decorationSubmode ?? 'place');

@@ -64,142 +64,6 @@
       </button>
     </div>
 
-    <div class="divider"></div>
-
-    <!-- Contextual Tool Controls -->
-    @if (activeTool() === 'heightmap') {
-      <div class="group">
-        @for (mode of ['raise', 'lower', 'smooth', 'flatten']; track mode) {
-          <button
-            type="button"
-            class="btn btn-sm"
-            [class.active]="activeHeightMode() === mode"
-            (click)="engine.setHeightMode($any(mode))"
-          >
-            {{ mode[0].toUpperCase() + mode.slice(1) }}
-          </button>
-        }
-        <label class="slider-label">
-          Radius {{ brushRadius().toFixed(1) }}m
-          <input
-            type="range"
-            name="heightBrushRadius"
-            min="1"
-            max="16"
-            step="0.5"
-            [ngModel]="brushRadius()"
-            (ngModelChange)="onRadiusChange($event)"
-          />
-        </label>
-        <label class="slider-label">
-          Strength {{ brushStrength().toFixed(1) }}
-          <input
-            type="range"
-            name="heightBrushStrength"
-            min="0.5"
-            max="12"
-            step="0.5"
-            [ngModel]="brushStrength()"
-            (ngModelChange)="onStrengthChange($event)"
-          />
-        </label>
-      </div>
-    } @else if (activeTool() === 'texture') {
-      <div class="group">
-        @for (layer of textureLayers; track layer.index) {
-          <button
-            type="button"
-            class="btn btn-sm swatch-btn"
-            [class.active]="activeTexLayer() === layer.index"
-            (click)="engine.setTextureLayer(layer.index)"
-          >
-            <span class="swatch" [style.background]="layer.swatch"></span>
-            {{ layer.label }}
-          </button>
-        }
-        <label class="slider-label">
-          Radius {{ brushRadius().toFixed(1) }}m
-          <input
-            type="range"
-            name="texBrushRadius"
-            min="1"
-            max="16"
-            step="0.5"
-            [ngModel]="brushRadius()"
-            (ngModelChange)="onRadiusChange($event)"
-          />
-        </label>
-        <label class="slider-label">
-          Strength {{ brushStrength().toFixed(1) }}
-          <input
-            type="range"
-            name="texBrushStrength"
-            min="0.5"
-            max="12"
-            step="0.5"
-            [ngModel]="brushStrength()"
-            (ngModelChange)="onStrengthChange($event)"
-          />
-        </label>
-      </div>
-    } @else {
-      <div class="group">
-        <select
-          class="select"
-          name="decorationAsset"
-          aria-label="Decoration Asset"
-          [ngModel]="selectedAssetId()"
-          (ngModelChange)="onAssetChange($event)"
-        >
-          @for (item of catalog(); track item.id) {
-            <option [value]="item.id">{{ item.name }}</option>
-          }
-        </select>
-        @for (sub of ['place', 'move', 'rotate']; track sub) {
-          <button
-            type="button"
-            class="btn btn-sm"
-            [class.active]="activeDecSubmode() === sub"
-            (click)="engine.setDecorationSubmode($any(sub))"
-          >
-            {{ sub[0].toUpperCase() + sub.slice(1) }}
-          </button>
-        }
-        <label class="slider-label">
-          Angle {{ activeRotationDeg() }}°
-          <input
-            type="range"
-            name="propRotation"
-            min="0"
-            max="359"
-            step="5"
-            [ngModel]="activeRotationDeg()"
-            (ngModelChange)="onRotationChange($event)"
-          />
-        </label>
-        <label class="slider-label">
-          Scale {{ activeScale() }}×
-          <input
-            type="range"
-            name="propScale"
-            min="0.4"
-            max="2.5"
-            step="0.1"
-            [ngModel]="activeScale()"
-            (ngModelChange)="onScaleChange($event)"
-          />
-        </label>
-        <button
-          type="button"
-          class="btn btn-sm btn-danger"
-          [disabled]="!status()?.selectedProp"
-          (click)="engine.deleteSelectedProp()"
-        >
-          Delete
-        </button>
-      </div>
-    }
-
     <!-- Status & Save -->
     <div class="group right-group">
       <span class="hint">WASD / Arrows: Pan · Mid-Drag: Orbit · Wheel: Zoom</span>
@@ -219,6 +83,201 @@
   @if (engine.initError(); as err) {
     <div class="error-banner">Engine initialization failed: {{ err }}</div>
   }
+
+  <aside class="toolbox" aria-label="Tool Controls">
+    <div class="toolbox-title">{{ activeToolTitle() }}</div>
+
+    @if (activeTool() === 'heightmap') {
+      <div class="tool-section">
+        <span class="section-label">Sculpt Mode</span>
+        <div class="option-grid">
+          @for (mode of ['raise', 'lower', 'smooth', 'flatten']; track mode) {
+            <button
+              type="button"
+              class="btn btn-sm"
+              [class.active]="activeHeightMode() === mode"
+              (click)="engine.setHeightMode($any(mode))"
+            >
+              {{ mode[0].toUpperCase() + mode.slice(1) }}
+            </button>
+          }
+        </div>
+      </div>
+
+      <div class="tool-section">
+        <span class="section-label">Brush</span>
+        <label class="slider-field">
+          <span class="slider-head">
+            <span>Radius</span>
+            <span>{{ brushRadius().toFixed(1) }} m</span>
+          </span>
+          <input
+            type="range"
+            name="heightBrushRadius"
+            min="1"
+            max="16"
+            step="0.5"
+            [ngModel]="brushRadius()"
+            (ngModelChange)="onRadiusChange($event)"
+          />
+        </label>
+        <label class="slider-field">
+          <span class="slider-head">
+            <span>Strength</span>
+            <span>{{ brushStrength().toFixed(1) }}</span>
+          </span>
+          <input
+            type="range"
+            name="heightBrushStrength"
+            min="0.5"
+            max="12"
+            step="0.5"
+            [ngModel]="brushStrength()"
+            (ngModelChange)="onStrengthChange($event)"
+          />
+        </label>
+      </div>
+
+      <div class="toolbox-hint">Drag on terrain to sculpt height.</div>
+    } @else if (activeTool() === 'texture') {
+      <div class="tool-section">
+        <span class="section-label">Material Layer</span>
+        <div class="option-grid">
+          @for (layer of textureLayers; track layer.index) {
+            <button
+              type="button"
+              class="btn btn-sm swatch-btn"
+              [class.active]="activeTexLayer() === layer.index"
+              (click)="engine.setTextureLayer(layer.index)"
+            >
+              <span class="swatch" [style.background]="layer.swatch"></span>
+              {{ layer.label }}
+            </button>
+          }
+        </div>
+      </div>
+
+      <div class="tool-section">
+        <span class="section-label">Brush</span>
+        <label class="slider-field">
+          <span class="slider-head">
+            <span>Radius</span>
+            <span>{{ brushRadius().toFixed(1) }} m</span>
+          </span>
+          <input
+            type="range"
+            name="texBrushRadius"
+            min="1"
+            max="16"
+            step="0.5"
+            [ngModel]="brushRadius()"
+            (ngModelChange)="onRadiusChange($event)"
+          />
+        </label>
+        <label class="slider-field">
+          <span class="slider-head">
+            <span>Strength</span>
+            <span>{{ brushStrength().toFixed(1) }}</span>
+          </span>
+          <input
+            type="range"
+            name="texBrushStrength"
+            min="0.5"
+            max="12"
+            step="0.5"
+            [ngModel]="brushStrength()"
+            (ngModelChange)="onStrengthChange($event)"
+          />
+        </label>
+      </div>
+
+      <div class="toolbox-hint">Drag on terrain to blend material.</div>
+    } @else {
+      <div class="tool-section">
+        <span class="section-label">Mode</span>
+        <div class="submode-grid">
+          @for (sub of ['place', 'move', 'rotate']; track sub) {
+            <button
+              type="button"
+              class="btn btn-sm"
+              [class.active]="activeDecSubmode() === sub"
+              (click)="engine.setDecorationSubmode($any(sub))"
+            >
+              {{ sub[0].toUpperCase() + sub.slice(1) }}
+            </button>
+          }
+        </div>
+      </div>
+
+      <div class="tool-section">
+        <span class="section-label">Asset</span>
+        <div class="asset-list">
+          @for (item of catalog(); track item.id) {
+            <button
+              type="button"
+              class="btn btn-sm asset-btn"
+              [class.active]="selectedAssetId() === item.id"
+              (click)="onAssetChange(item.id)"
+            >
+              <span>{{ item.name }}</span>
+              <span class="asset-cat">{{ item.category }}</span>
+            </button>
+          }
+        </div>
+      </div>
+
+      <div class="tool-section">
+        <span class="section-label">
+          @if (status()?.selectedProp; as sel) {
+            Transform · Selected #{{ sel.id }}
+          } @else {
+            Transform · Preview
+          }
+        </span>
+        <label class="slider-field">
+          <span class="slider-head">
+            <span>Angle</span>
+            <span>{{ activeRotationDeg() }}°</span>
+          </span>
+          <input
+            type="range"
+            name="propRotation"
+            min="0"
+            max="359"
+            step="5"
+            [ngModel]="activeRotationDeg()"
+            (ngModelChange)="onRotationChange($event)"
+          />
+        </label>
+        <label class="slider-field">
+          <span class="slider-head">
+            <span>Scale</span>
+            <span>{{ activeScale().toFixed(2) }}×</span>
+          </span>
+          <input
+            type="range"
+            name="propScale"
+            min="0.4"
+            max="2.5"
+            step="0.1"
+            [ngModel]="activeScale()"
+            (ngModelChange)="onScaleChange($event)"
+          />
+        </label>
+      </div>
+
+      <button
+        type="button"
+        class="btn btn-sm btn-danger"
+        [disabled]="!status()?.selectedProp"
+        (click)="engine.deleteSelectedProp()"
+      >
+        Delete Selected
+      </button>
+
+      <div class="toolbox-hint">Q / E: Rotate · Del: Remove selected</div>
+    }
+  </aside>
 
   @if (showNewAreaModal()) {
     <div class="modal-backdrop" (click)="showNewAreaModal.set(false)">
