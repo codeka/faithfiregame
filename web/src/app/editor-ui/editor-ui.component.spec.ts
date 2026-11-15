@@ -223,11 +223,13 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     dupBtn.click();
     expect(duplicateCalls).toBe(1);
 
-    // 4. Returning to Place mode restores Asset list and removes Transform controls even when a prop is selected
+    // 4. Returning to Place mode restores Asset list, shows preview yaw hint, and removes Transform controls even when a prop is selected
+    statusSig.update((s) => (s ? { ...s, previewRotationDeg: [0, 135.4, 0] } : s));
     window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }));
     fixture.detectChanges();
 
     expect(root.querySelector('.asset-list')).not.toBeNull();
+    expect(root.querySelector('.toolbox-hint')?.textContent).toContain('Q/E: Rotate (135°)');
     expect(root.querySelector('input[name="propRotationX"]')).toBeNull();
     expect(root.querySelector('input[name="propScale"]')).toBeNull();
     expect(root.querySelector('input[name="propCastShadow"]')).toBeNull();

@@ -257,12 +257,61 @@ impl EditorState {
         }
     }
 
+    pub(super) fn handle_decoration_hotkeys(&mut self, input: &InputState, dt: f32, now_ms: f64) {
+        let rot_speed = 2.0 * dt;
+        let mut delta_rot = 0.0;
+        if input.is_key_down("KeyQ") {
+            delta_rot -= rot_speed;
+        }
+        if input.is_key_down("KeyE") {
+            delta_rot += rot_speed;
+        }
+
+        match self.decoration_submode {
+            DecorationSubMode::Place => {
+                if delta_rot.abs() > 0.0 {
+                    self.preview_rotation[1] =
+                        (self.preview_rotation[1] + delta_rot).rem_euclid(std::f32::consts::TAU);
+                }
+            }
+            DecorationSubMode::Move
+            | DecorationSubMode::FreeMove
+            | DecorationSubMode::Rotate => {
+                if delta_rot.abs() > 0.0 {
+                    if let Some(id) = self.selected_prop_id {
+                        self.rotate_prop_by(id, delta_rot, now_ms);
+                    }
+                }
+                if input.is_key_down("Delete") || input.is_key_down("Backspace") {
+                    self.delete_selected_prop(now_ms);
+                }
+            }
+        }
+    }
+
     pub(super) fn rotate_prop_by(&mut self, prop_id: u64, delta_rad: f32, now_ms: f64) {
         if self.modify_prop(prop_id, |p| {
             p.rotation[1] = (p.rotation[1] + delta_rad).rem_euclid(std::f32::consts::TAU);
         }) {
             self.mark_unsaved(now_ms);
         }
+    }
+
+    fn edit_selected_or_preview(
+        &mut self,
+        now_ms: f64,
+        mutate_prop: impl FnMut(&mut PropPlacement),
+        mutate_preview: impl FnOnce(&mut Self),
+    ) {
+        if self.decoration_submode != DecorationSubMode::Place {
+            if let Some(id) = self.selected_prop_id {
+                if self.modify_prop(id, mutate_prop) {
+                    self.mark_unsaved(now_ms);
+                }
+                return;
+            }
+        }
+        mutate_preview(self);
     }
 
     pub fn set_selected_or_preview_rotation_axis_deg(
@@ -275,44 +324,36 @@ impl EditorState {
             return;
         }
         let rad = degrees.to_radians().rem_euclid(std::f32::consts::TAU);
-        if let Some(id) = self.selected_prop_id {
-            if self.modify_prop(id, |p| p.rotation[axis] = rad) {
-                self.mark_unsaved(now_ms);
-            }
-        } else {
-            self.preview_rotation[axis] = rad;
-        }
+        self.edit_selected_or_preview(
+            now_ms,
+            |p| p.rotation[axis] = rad,
+            |st| st.preview_rotation[axis] = rad,
+        );
     }
 
     pub fn reset_selected_or_preview_rotation(&mut self, now_ms: f64) {
-        if let Some(id) = self.selected_prop_id {
-            if self.modify_prop(id, |p| p.rotation = [0.0; 3]) {
-                self.mark_unsaved(now_ms);
-            }
-        } else {
-            self.preview_rotation = [0.0; 3];
-        }
+        self.edit_selected_or_preview(
+            now_ms,
+            |p| p.rotation = [0.0; 3],
+            |st| st.preview_rotation = [0.0; 3],
+        );
     }
 
     pub fn set_selected_or_preview_scale(&mut self, scale: f32, now_ms: f64) {
         let s = scale.clamp(0.25, 4.0);
-        if let Some(id) = self.selected_prop_id {
-            if self.modify_prop(id, |p| p.scale = [s, s, s]) {
-                self.mark_unsaved(now_ms);
-            }
-        } else {
-            self.preview_scale = s;
-        }
+        self.edit_selected_or_preview(
+            now_ms,
+            |p| p.scale = [s, s, s],
+            |st| st.preview_scale = s,
+        );
     }
 
     pub fn set_selected_or_preview_cast_shadow(&mut self, cast_shadow: bool, now_ms: f64) {
-        if let Some(id) = self.selected_prop_id {
-            if self.modify_prop(id, |p| p.cast_shadow = cast_shadow) {
-                self.mark_unsaved(now_ms);
-            }
-        } else {
-            self.preview_cast_shadow = cast_shadow;
-        }
+        self.edit_selected_or_preview(
+            now_ms,
+            |p| p.cast_shadow = cast_shadow,
+            |st| st.preview_cast_shadow = cast_shadow,
+        );
     }
 
     pub fn snap_selected_prop_to_terrain(&mut self, now_ms: f64) {
@@ -534,6 +575,7 @@ fn compute_duplicate_offset(seed: u64, base_radius: f32) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::types::EditorTool;
 
     #[test]
     fn duplicate_offset_stays_within_bounds_and_varies_across_ids() {
@@ -548,6 +590,79 @@ mod tests {
                 assert_ne!((dx, dz), p, "offset should vary across prop ids");
             }
             prev = Some((dx, dz));
+        }
+    }
+
+    #[test]
+    fn place_mode_qe_rotates_preview_even_with_selected_prop_and_ignores_delete() {
+        let mut ed = EditorState::new();
+        ed.tool = EditorTool::Decoration;
+        ed.decoration_submode = DecorationSubMode::Place;
+        ed.selected_prop_id = Some(42);
+
+        let mut input = InputState::default();
+        input.keys.insert("KeyE".to_owned());
+        ed.handle_decoration_hotkeys(&input, 0.25, 1000.0);
+        assert!(
+            (ed.preview_rotation[1] - 0.5).abs() < 1e-5,
+            "E should rotate preview_rotation[1] forward in Place mode even with selected_prop_id"
+        );
+        assert_eq!(ed.save_state, "Saved");
+
+        input.keys.clear();
+        input.keys.insert("KeyQ".to_owned());
+        ed.handle_decoration_hotkeys(&input, 0.5, 1100.0);
+        let expected_wrap = (0.5f32 - 1.0).rem_euclid(std::f32::consts::TAU);
+        assert!(
+            (ed.preview_rotation[1] - expected_wrap).abs() < 1e-5,
+            "Q should rotate preview_rotation[1] left and wrap around TAU"
+        );
+        assert_eq!(ed.save_state, "Saved");
+
+        // Delete/Backspace should not clear selection while in Place mode.
+        input.keys.clear();
+        input.keys.insert("Delete".to_owned());
+        ed.handle_decoration_hotkeys(&input, 0.1, 1200.0);
+        assert_eq!(ed.selected_prop_id, Some(42));
+
+        // Explicit preview setters also update preview state while in Place mode.
+        ed.set_selected_or_preview_rotation_axis_deg(1, 90.0, 1300.0);
+        ed.set_selected_or_preview_scale(1.5, 1300.0);
+        ed.set_selected_or_preview_cast_shadow(false, 1300.0);
+        assert!((ed.preview_rotation[1] - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        assert!((ed.preview_scale - 1.5).abs() < 1e-5);
+        assert!(!ed.preview_cast_shadow);
+        assert_eq!(ed.save_state, "Saved");
+    }
+
+    #[test]
+    fn non_place_modes_do_not_mutate_preview_on_qe_and_allow_delete() {
+        for submode in [
+            DecorationSubMode::Move,
+            DecorationSubMode::FreeMove,
+            DecorationSubMode::Rotate,
+        ] {
+            let mut ed = EditorState::new();
+            ed.tool = EditorTool::Decoration;
+            ed.decoration_submode = submode;
+            ed.selected_prop_id = Some(42);
+            ed.preview_rotation[1] = 1.25;
+
+            let mut input = InputState::default();
+            input.keys.insert("KeyE".to_owned());
+            ed.handle_decoration_hotkeys(&input, 0.25, 1000.0);
+            assert!(
+                (ed.preview_rotation[1] - 1.25).abs() < 1e-5,
+                "preview_rotation should remain unchanged in {submode:?}"
+            );
+
+            input.keys.clear();
+            input.keys.insert("Delete".to_owned());
+            ed.handle_decoration_hotkeys(&input, 0.1, 1100.0);
+            assert_eq!(
+                ed.selected_prop_id, None,
+                "Delete should clear selected_prop_id in {submode:?}"
+            );
         }
     }
 }

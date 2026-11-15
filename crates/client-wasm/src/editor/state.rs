@@ -290,25 +290,7 @@ impl EditorState {
 
         // 3. Hotkeys for decoration mode (Q/E rotate, Delete removes selected prop)
         if self.tool == EditorTool::Decoration {
-            let rot_speed = 2.0 * dt;
-            let mut delta_rot = 0.0;
-            if input.is_key_down("KeyQ") {
-                delta_rot -= rot_speed;
-            }
-            if input.is_key_down("KeyE") {
-                delta_rot += rot_speed;
-            }
-            if delta_rot.abs() > 0.0 {
-                if let Some(id) = self.selected_prop_id {
-                    self.rotate_prop_by(id, delta_rot, now_ms);
-                } else {
-                    self.preview_rotation[1] =
-                        (self.preview_rotation[1] + delta_rot).rem_euclid(std::f32::consts::TAU);
-                }
-            }
-            if input.is_key_down("Delete") || input.is_key_down("Backspace") {
-                self.delete_selected_prop(now_ms);
-            }
+            self.handle_decoration_hotkeys(input, dt, now_ms);
         }
 
         // 4. Mouse tool interaction (ignore left-click while middle-mouse orbiting)

@@ -123,8 +123,9 @@ impl EditorState {
     fn draw_prop_list(&self, renderer: &Renderer, camera: &Camera, props: &[PropPlacement]) {
         for prop in props {
             if let Some(mesh) = self.prop_meshes.get(&prop.asset_id) {
-                let selected =
-                    self.tool == EditorTool::Decoration && self.selected_prop_id == Some(prop.id);
+                let selected = self.tool == EditorTool::Decoration
+                    && self.decoration_submode != DecorationSubMode::Place
+                    && self.selected_prop_id == Some(prop.id);
                 let tint = if selected {
                     Vec4::new(1.30, 1.18, 0.72, 1.0)
                 } else {

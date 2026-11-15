@@ -23,6 +23,10 @@ export class DecorationToolComponent {
   readonly submodes = DECORATION_SUBMODES;
   readonly activeSubmode = computed(() => this.engine.status()?.decorationSubmode ?? 'place');
   readonly selectedProp = computed(() => this.engine.status()?.selectedProp ?? null);
+  readonly previewYawDeg = computed(() => {
+    const deg = this.engine.status()?.previewRotationDeg[1] ?? 0;
+    return ((Math.round(deg) % 360) + 360) % 360;
+  });
 
   readonly rotationAxes: readonly {
     axis: 0 | 1 | 2;
