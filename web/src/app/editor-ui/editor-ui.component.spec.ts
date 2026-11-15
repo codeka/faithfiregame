@@ -1,6 +1,6 @@
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { EditorStatus, EngineService } from '../engine.service';
+import { EditorEngineService, EditorStatus } from './editor-engine.service';
 import { EditorUiComponent } from './editor-ui.component';
 
 function baseStatus(tool: EditorStatus['tool'] = 'decoration'): EditorStatus {
@@ -86,7 +86,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
 
     await TestBed.configureTestingModule({
       imports: [EditorUiComponent],
-      providers: [{ provide: EngineService, useValue: mockEngine }],
+      providers: [{ provide: EditorEngineService, useValue: mockEngine }],
     }).compileComponents();
 
     fixture = TestBed.createComponent(EditorUiComponent);

@@ -7,6 +7,7 @@ mod state;
 mod terrain_ops;
 mod texture_tool;
 mod types;
+mod wasm_api;
 
 pub use state::EditorState;
 #[allow(unused_imports)]
@@ -14,3 +15,4 @@ pub use types::{
     DecorationSubMode, EditorInsideState, EditorStatusSnapshot, EditorTileState, EditorTool,
     HeightMode, PendingSave, SelectedPropInfo,
 };
+pub use wasm_api::EditorEngineHandle;

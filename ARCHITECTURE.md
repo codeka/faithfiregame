@@ -59,7 +59,7 @@ faith-and-fire/
 │           ├── render/         # renderer.rs, shaders.rs, shadow_map.rs, gizmo_mesh.rs, terrain_mesh.rs, prop_mesh.rs, procedural_textures.rs
 │           ├── glb_loader.rs   # Binary .glb scene-graph mesh parser
 │           ├── net/            # ws_client.rs, http.rs
-│           └── editor/         # #[cfg(feature = "editor")] state.rs, types.rs, gizmo.rs, terrain_ops.rs,
+│           └── editor/         # #[cfg(feature = "editor")] state.rs, types.rs, wasm_api.rs, gizmo.rs, terrain_ops.rs,
 │                               # heightmap_tool.rs, texture_tool.rs, decoration_tool.rs, scene_render.rs, io.rs
 ├── scripts/                    # Tooling scripts (build_wasm.py, backup_world.py)
 ├── web/                        # Angular (TypeScript) frontend shell
@@ -67,7 +67,7 @@ faith-and-fire/
 │       └── app/
 │           ├── game-canvas/    # Hosts <canvas> and initializes WASM module
 │           ├── hud/            # Action bars, target frame, inventory, chat, trade modals
-│           └── editor-ui/      # Dev-only Angular editor shell: toolbar/, create-area-modal/, and tools/{heightmap-tool,texture-tool,decoration-tool}/ (stripped in prod builds)
+│           └── editor-ui/      # Dev-only Angular editor shell: editor-engine.service.ts, toolbar/, create-area-modal/, and tools/{heightmap-tool,texture-tool,decoration-tool}/ (stripped in prod builds)
 └── world/                      # Gitignored runtime/authored world data (seeded on boot; backed up via scripts/backup_world.py)
     ├── assets/                 # Shared .glb models and terrain textures
     └── areas/

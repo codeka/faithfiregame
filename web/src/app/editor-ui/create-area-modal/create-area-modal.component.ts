@@ -1,6 +1,6 @@
 import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { AreaMetadata } from '../../engine.service';
+import { AreaMetadata } from '../editor-engine.service';
 import { EditorStateService } from '../editor-state.service';
 
 @Component({

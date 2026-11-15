@@ -1,5 +1,5 @@
 import { Component, computed, inject } from '@angular/core';
-import { EngineService } from '../../../engine.service';
+import { EditorEngineService } from '../../editor-engine.service';
 import { EditorStateService } from '../../editor-state.service';
 
 export const DECORATION_SUBMODES = [
@@ -17,7 +17,7 @@ export const DECORATION_SUBMODES = [
   styleUrls: ['../../editor-controls.css', './decoration-tool.component.css'],
 })
 export class DecorationToolComponent {
-  readonly engine = inject(EngineService);
+  readonly engine = inject(EditorEngineService);
   readonly state = inject(EditorStateService);
 
   readonly submodes = DECORATION_SUBMODES;

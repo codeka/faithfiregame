@@ -1,9 +1,9 @@
 import { computed, effect, inject, Injectable, signal } from '@angular/core';
-import { AreaMetadata, AssetEntry, EngineService } from '../engine.service';
+import { AreaMetadata, AssetEntry, EditorEngineService } from './editor-engine.service';
 
 @Injectable()
 export class EditorStateService {
-  private readonly engine = inject(EngineService);
+  private readonly engine = inject(EditorEngineService);
 
   readonly areas = signal<AreaMetadata[]>([]);
   readonly catalog = signal<AssetEntry[]>([]);

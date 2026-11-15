@@ -1,5 +1,5 @@
 import { Component, inject, OnInit } from '@angular/core';
-import { EngineService } from '../engine.service';
+import { EditorEngineService } from './editor-engine.service';
 import { CreateAreaModalComponent } from './create-area-modal/create-area-modal.component';
 import { EditorStateService } from './editor-state.service';
 import { EditorToolbarComponent } from './toolbar/editor-toolbar.component';
@@ -54,7 +54,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
   },
 })
 export class EditorUiComponent implements OnInit {
-  readonly engine = inject(EngineService);
+  readonly engine = inject(EditorEngineService);
   readonly state = inject(EditorStateService);
 
   async ngOnInit(): Promise<void> {

@@ -1,6 +1,6 @@
 import { Component, computed, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { EngineService } from '../../../engine.service';
+import { EditorEngineService } from '../../editor-engine.service';
 import { EditorStateService } from '../../editor-state.service';
 
 export const HEIGHT_MODES = [
@@ -18,7 +18,7 @@ export const HEIGHT_MODES = [
   styleUrls: ['../../editor-controls.css', './heightmap-tool.component.css'],
 })
 export class HeightmapToolComponent {
-  readonly engine = inject(EngineService);
+  readonly engine = inject(EditorEngineService);
   readonly state = inject(EditorStateService);
 
   readonly modes = HEIGHT_MODES;

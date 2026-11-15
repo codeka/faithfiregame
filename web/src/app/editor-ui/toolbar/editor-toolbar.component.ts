@@ -1,6 +1,6 @@
 import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { AreaMetadata, EngineService, formatAreaKind } from '../../engine.service';
+import { AreaMetadata, EditorEngineService, formatAreaKind } from '../editor-engine.service';
 import { EditorStateService } from '../editor-state.service';
 
 @Component({
@@ -11,7 +11,7 @@ import { EditorStateService } from '../editor-state.service';
   styleUrls: ['../editor-controls.css', './editor-toolbar.component.css'],
 })
 export class EditorToolbarComponent {
-  readonly engine = inject(EngineService);
+  readonly engine = inject(EditorEngineService);
   readonly state = inject(EditorStateService);
 
   describeArea(meta: AreaMetadata): string {
