@@ -1,0 +1,15 @@
+[package]
+name = "shared"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+json-wire = ["dep:serde_json"]
+
+[dependencies]
+serde.workspace = true
+postcard.workspace = true
+serde_json = { workspace = true, optional = true }
+glam.workspace = true

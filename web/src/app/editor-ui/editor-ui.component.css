@@ -1,0 +1,205 @@
+.editor-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.toolbar {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(16, 20, 28, 0.92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.right-group {
+  margin-left: auto;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #f6ad55;
+  margin-right: 4px;
+}
+
+.divider {
+  width: 1px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.select,
+.field input,
+.field select {
+  background: #232a38;
+  color: #edf2f7;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.btn {
+  background: #252d3d;
+  color: #dbe4f0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: #303a4f;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn.active {
+  background: #3182ce;
+  border-color: #63b3ed;
+  color: #fff;
+}
+
+.btn-sm {
+  padding: 4px 8px;
+}
+
+.btn-primary {
+  background: #2b6cb0;
+  border-color: #4299e1;
+  color: #fff;
+}
+
+.btn-danger {
+  background: #742a2a;
+  border-color: #c53030;
+  color: #fed7d7;
+}
+
+.swatch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.slider-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #cbd5e0;
+}
+
+.slider-label input[type='range'] {
+  width: 72px;
+}
+
+.coord-pill,
+.save-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e0;
+}
+
+.save-badge.dirty {
+  background: rgba(237, 137, 54, 0.25);
+  color: #fbd38d;
+}
+
+.save-badge.error {
+  background: rgba(229, 62, 62, 0.28);
+  color: #feb2b2;
+}
+
+.hint {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.error-banner {
+  pointer-events: auto;
+  margin: 12px;
+  padding: 10px 14px;
+  background: #742a2a;
+  border: 1px solid #fc8181;
+  border-radius: 6px;
+}
+
+.modal-backdrop {
+  pointer-events: auto;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.58);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  width: 360px;
+  background: #1a202c;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modal h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #cbd5e0;
+}
+
+.dim-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.modal-error {
+  color: #feb2b2;
+  font-size: 12px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}

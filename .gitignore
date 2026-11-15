@@ -1,0 +1,9 @@
+/target/
+/web/node_modules/
+/web/.angular/
+/web/dist/
+/web/public/wasm/
+/web/src/app/wasm/
+*.db
+*.db-shm
+*.db-wal

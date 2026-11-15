@@ -1,0 +1,296 @@
+<div class="editor-overlay">
+  <header class="toolbar">
+    <!-- Area Switcher -->
+    <div class="group">
+      <span class="brand">Faith &amp; Fire Editor</span>
+      <select
+        class="select"
+        name="activeArea"
+        aria-label="Active Area"
+        [ngModel]="selectedAreaId()"
+        (ngModelChange)="onSelectArea($event)"
+      >
+        @for (area of areas(); track area.id) {
+          <option [value]="area.id">{{ describeArea(area) }}</option>
+        }
+      </select>
+      <button type="button" class="btn btn-secondary" (click)="openNewAreaModal()">+ Area</button>
+
+      @if (status(); as s) {
+        <span class="coord-pill">
+          @if (s.isOutside) {
+            Tile ({{ s.currentTile[0] }}, {{ s.currentTile[1] }})
+          } @else if (s.dimensions) {
+            {{ s.dimensions[0] }}×{{ s.dimensions[1] }}m
+          }
+          @if (s.cursorPos; as p) {
+            · {{ p[0].toFixed(1) }}, {{ p[1].toFixed(1) }}, {{ p[2].toFixed(1) }}
+          }
+        </span>
+      }
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Primary Tools -->
+    <div class="group">
+      <button
+        type="button"
+        class="btn"
+        [class.active]="activeTool() === 'heightmap'"
+        (click)="engine.setTool('heightmap')"
+      >
+        Heightmap
+      </button>
+      <button
+        type="button"
+        class="btn"
+        [class.active]="activeTool() === 'texture'"
+        (click)="engine.setTool('texture')"
+      >
+        Texture
+      </button>
+      <button
+        type="button"
+        class="btn"
+        [class.active]="activeTool() === 'decoration'"
+        (click)="engine.setTool('decoration')"
+      >
+        Decoration
+      </button>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Contextual Tool Controls -->
+    @if (activeTool() === 'heightmap') {
+      <div class="group">
+        @for (mode of ['raise', 'lower', 'smooth', 'flatten']; track mode) {
+          <button
+            type="button"
+            class="btn btn-sm"
+            [class.active]="activeHeightMode() === mode"
+            (click)="engine.setHeightMode($any(mode))"
+          >
+            {{ mode[0].toUpperCase() + mode.slice(1) }}
+          </button>
+        }
+        <label class="slider-label">
+          Radius {{ brushRadius().toFixed(1) }}m
+          <input
+            type="range"
+            name="heightBrushRadius"
+            min="1"
+            max="16"
+            step="0.5"
+            [ngModel]="brushRadius()"
+            (ngModelChange)="onRadiusChange($event)"
+          />
+        </label>
+        <label class="slider-label">
+          Strength {{ brushStrength().toFixed(1) }}
+          <input
+            type="range"
+            name="heightBrushStrength"
+            min="0.5"
+            max="12"
+            step="0.5"
+            [ngModel]="brushStrength()"
+            (ngModelChange)="onStrengthChange($event)"
+          />
+        </label>
+      </div>
+    } @else if (activeTool() === 'texture') {
+      <div class="group">
+        @for (layer of textureLayers; track layer.index) {
+          <button
+            type="button"
+            class="btn btn-sm swatch-btn"
+            [class.active]="activeTexLayer() === layer.index"
+            (click)="engine.setTextureLayer(layer.index)"
+          >
+            <span class="swatch" [style.background]="layer.swatch"></span>
+            {{ layer.label }}
+          </button>
+        }
+        <label class="slider-label">
+          Radius {{ brushRadius().toFixed(1) }}m
+          <input
+            type="range"
+            name="texBrushRadius"
+            min="1"
+            max="16"
+            step="0.5"
+            [ngModel]="brushRadius()"
+            (ngModelChange)="onRadiusChange($event)"
+          />
+        </label>
+        <label class="slider-label">
+          Strength {{ brushStrength().toFixed(1) }}
+          <input
+            type="range"
+            name="texBrushStrength"
+            min="0.5"
+            max="12"
+            step="0.5"
+            [ngModel]="brushStrength()"
+            (ngModelChange)="onStrengthChange($event)"
+          />
+        </label>
+      </div>
+    } @else {
+      <div class="group">
+        <select
+          class="select"
+          name="decorationAsset"
+          aria-label="Decoration Asset"
+          [ngModel]="selectedAssetId()"
+          (ngModelChange)="onAssetChange($event)"
+        >
+          @for (item of catalog(); track item.id) {
+            <option [value]="item.id">{{ item.name }}</option>
+          }
+        </select>
+        @for (sub of ['place', 'move', 'rotate']; track sub) {
+          <button
+            type="button"
+            class="btn btn-sm"
+            [class.active]="activeDecSubmode() === sub"
+            (click)="engine.setDecorationSubmode($any(sub))"
+          >
+            {{ sub[0].toUpperCase() + sub.slice(1) }}
+          </button>
+        }
+        <label class="slider-label">
+          Angle {{ activeRotationDeg() }}°
+          <input
+            type="range"
+            name="propRotation"
+            min="0"
+            max="359"
+            step="5"
+            [ngModel]="activeRotationDeg()"
+            (ngModelChange)="onRotationChange($event)"
+          />
+        </label>
+        <label class="slider-label">
+          Scale {{ activeScale() }}×
+          <input
+            type="range"
+            name="propScale"
+            min="0.4"
+            max="2.5"
+            step="0.1"
+            [ngModel]="activeScale()"
+            (ngModelChange)="onScaleChange($event)"
+          />
+        </label>
+        <button
+          type="button"
+          class="btn btn-sm btn-danger"
+          [disabled]="!status()?.selectedProp"
+          (click)="engine.deleteSelectedProp()"
+        >
+          Delete
+        </button>
+      </div>
+    }
+
+    <!-- Status & Save -->
+    <div class="group right-group">
+      <span class="hint">Arrows: Pan · Mid-Drag: Orbit · Wheel: Zoom</span>
+      @if (status(); as s) {
+        <span
+          class="save-badge"
+          [class.dirty]="s.saveState === 'Unsaved'"
+          [class.error]="s.saveState.includes('fail')"
+        >
+          {{ s.saveState }}
+        </span>
+      }
+      <button type="button" class="btn btn-primary" (click)="engine.saveNow()">Save</button>
+    </div>
+  </header>
+
+  @if (engine.initError(); as err) {
+    <div class="error-banner">Engine initialization failed: {{ err }}</div>
+  }
+
+  @if (showNewAreaModal()) {
+    <div class="modal-backdrop" (click)="showNewAreaModal.set(false)">
+      <div class="modal" (click)="$event.stopPropagation()">
+        <h3>Create New Area</h3>
+        <label class="field">
+          <span>Area ID (lowercase, no spaces)</span>
+          <input
+            type="text"
+            name="newAreaId"
+            placeholder="e.g. dark_forest or tavern"
+            [ngModel]="newAreaId()"
+            (ngModelChange)="newAreaId.set($event)"
+          />
+        </label>
+        <label class="field">
+          <span>Display Name</span>
+          <input
+            type="text"
+            name="newAreaName"
+            placeholder="e.g. Dark Forest"
+            [ngModel]="newAreaName()"
+            (ngModelChange)="newAreaName.set($event)"
+          />
+        </label>
+        <label class="field">
+          <span>Area Kind</span>
+          <select name="newAreaKind" [ngModel]="newAreaKind()" (ngModelChange)="newAreaKind.set($event)">
+            <option value="outside">Outside (64×64m Infinite Tile Grid)</option>
+            <option value="inside_ephemeral">Inside · Ephemeral (e.g. Shop)</option>
+            <option value="inside_permanent">Inside · Permanent (e.g. Player Home)</option>
+          </select>
+        </label>
+        @if (newAreaKind() !== 'outside') {
+          <div class="dim-row">
+            <label class="field">
+              <span>Width (m)</span>
+              <input
+                type="number"
+                name="newAreaWidth"
+                min="8"
+                max="256"
+                [ngModel]="newAreaWidth()"
+                (ngModelChange)="newAreaWidth.set($event)"
+              />
+            </label>
+            <label class="field">
+              <span>Length (m)</span>
+              <input
+                type="number"
+                name="newAreaLength"
+                min="8"
+                max="256"
+                [ngModel]="newAreaLength()"
+                (ngModelChange)="newAreaLength.set($event)"
+              />
+            </label>
+          </div>
+        }
+        @if (newAreaError(); as err) {
+          <div class="modal-error">{{ err }}</div>
+        }
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" (click)="showNewAreaModal.set(false)">
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            [disabled]="creatingArea()"
+            (click)="createNewArea()"
+          >
+            {{ creatingArea() ? 'Creating...' : 'Create Area' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+</div>
