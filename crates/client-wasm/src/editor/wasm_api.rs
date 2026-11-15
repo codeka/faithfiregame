@@ -66,7 +66,8 @@ impl EditorEngineHandle {
     }
 
     pub fn set_texture_layer(&self, layer: u32) {
-        self.inner.borrow_mut().editor.texture_layer = (layer as usize).min(3);
+        self.inner.borrow_mut().editor.texture_layer =
+            (layer as usize).min(shared::world::TERRAIN_MATERIAL_COUNT - 1);
     }
 
     pub fn set_decoration_submode(&self, submode: &str) {

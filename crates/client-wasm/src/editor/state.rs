@@ -189,7 +189,7 @@ impl EditorState {
         }
 
         let is_new_blank = vis_opt.is_none();
-        let mut vis = vis_opt.unwrap_or_else(TileVisData::flat_default);
+        let mut vis = vis_opt.unwrap_or_else(|| TileVisData::seeded_grass(&area_id, tx, ty));
 
         if let Some(max_id) = vis.props.iter().map(|p| p.id).max() {
             self.next_prop_id = self.next_prop_id.max(max_id + 1);
@@ -199,8 +199,14 @@ impl EditorState {
             self.copy_loaded_borders_into(tx, ty, &mut vis);
         }
 
-        if let Ok(gpu) = TerrainMeshGpu::new(gl, TILE_SIZE, TILE_SIZE, &vis.heights, &vis.splat_map)
-        {
+        if let Ok(gpu) = TerrainMeshGpu::new(
+            gl,
+            TILE_SIZE,
+            TILE_SIZE,
+            &vis.heights,
+            &vis.splat_ids,
+            &vis.splat_weights,
+        ) {
             self.outside_tiles.insert(
                 (tx, ty),
                 EditorTileState {
@@ -238,7 +244,8 @@ impl EditorState {
             vis.width as usize,
             vis.length as usize,
             &vis.heights,
-            &vis.splat_map,
+            &vis.splat_ids,
+            &vis.splat_weights,
         ) {
             let state = EditorInsideState {
                 vis,

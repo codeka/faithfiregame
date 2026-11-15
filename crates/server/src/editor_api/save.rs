@@ -5,8 +5,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use shared::protocol::ServerMessage;
 use shared::world::{
-    InsideSimData, InsideVisData, TILE_SIZE, TILE_VERTICES, TileSimData, TileVisData,
-    compute_inside_sim_from_vis, compute_sim_from_vis,
+    InsideSimData, InsideVisData, TileSimData, TileVisData, compute_inside_sim_from_vis,
+    compute_sim_from_vis,
 };
 
 use crate::net::{AppState, is_valid_area_id, parse_tile_coord};
@@ -25,7 +25,7 @@ pub async fn save_outside_tile(
     let mut vis = TileVisData::from_postcard_bytes(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid TileVisData: {e}")))?;
 
-    if vis.heights.len() != TILE_VERTICES * TILE_VERTICES || vis.splat_map.len() != TILE_SIZE * TILE_SIZE {
+    if !vis.has_valid_dimensions() {
         return Err((
             StatusCode::BAD_REQUEST,
             "unexpected TileVisData height/splat dimensions".to_owned(),
@@ -83,6 +83,13 @@ pub async fn save_inside_area(
 
     let mut vis = InsideVisData::from_postcard_bytes(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid InsideVisData: {e}")))?;
+
+    if !vis.has_valid_dimensions() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "unexpected InsideVisData height/splat dimensions".to_owned(),
+        ));
+    }
 
     vis.recompute_slope_walkability();
 

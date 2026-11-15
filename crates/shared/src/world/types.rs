@@ -109,14 +109,3 @@ pub struct AssetEntry {
     pub path: String,
     pub category: String,
 }
-
-/// Packs 4 RGBA8 texture-splat weights into a little-endian `u32` matching WebGL2 `RGBA8` byte layout.
-#[inline]
-pub const fn pack_splat(layer0: u8, layer1: u8, layer2: u8, layer3: u8) -> u32 {
-    u32::from_le_bytes([layer0, layer1, layer2, layer3])
-}
-
-#[inline]
-pub const fn unpack_splat(packed: u32) -> [u8; 4] {
-    packed.to_le_bytes()
-}

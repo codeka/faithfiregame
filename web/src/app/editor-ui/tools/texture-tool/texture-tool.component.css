@@ -4,6 +4,78 @@
   gap: 12px;
 }
 
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.material-count {
+  font-size: 10px;
+  color: #8b9bb4;
+  font-variant-numeric: tabular-nums;
+}
+
+.category-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pill-btn {
+  background: #1e2533;
+  color: #cbd5e0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pill-btn:hover:not(.active) {
+  background: #2b3549;
+}
+
+.pill-btn.active {
+  background: #3182ce;
+  border-color: #63b3ed;
+  color: #fff;
+}
+
+.material-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(275px, calc(100vh - 300px));
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+.material-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  flex-shrink: 0;
+}
+
+.material-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.mat-cat {
+  font-size: 10px;
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
 .swatch {
   width: 10px;
   height: 10px;

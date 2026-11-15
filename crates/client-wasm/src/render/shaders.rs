@@ -81,6 +81,7 @@ void main() {
 pub(super) const TERRAIN_FRAG: &str = concat!(
     r#"#version 300 es
 precision highp float;
+precision highp usampler2D;
 precision highp sampler2DArray;
 precision highp sampler2DShadow;
 
@@ -88,7 +89,8 @@ in vec3 v_world_pos;
 in vec3 v_normal;
 in vec2 v_uv;
 
-uniform sampler2D u_splat_tex;
+uniform usampler2D u_splat_ids;
+uniform sampler2D u_splat_weights;
 uniform sampler2DArray u_tex_array;
 uniform vec3 u_camera_pos;
 uniform vec3 u_tile_origin;
@@ -105,18 +107,38 @@ out vec4 frag_color;
 "#,
     shadow_sampler_glsl!(),
     r#"
+vec3 sample_splat_corner(ivec2 coord, vec2 world_uv, vec2 uv_dx, vec2 uv_dy) {
+    uvec4 ids = texelFetch(u_splat_ids, coord, 0);
+    vec4 w = texelFetch(u_splat_weights, coord, 0);
+    vec3 col = textureGrad(u_tex_array, vec3(world_uv, float(ids.x)), uv_dx, uv_dy).rgb * w.x;
+    if (w.y > 0.002) {
+        col += textureGrad(u_tex_array, vec3(world_uv, float(ids.y)), uv_dx, uv_dy).rgb * w.y;
+    }
+    if (w.z > 0.002) {
+        col += textureGrad(u_tex_array, vec3(world_uv, float(ids.z)), uv_dx, uv_dy).rgb * w.z;
+    }
+    if (w.w > 0.002) {
+        col += textureGrad(u_tex_array, vec3(world_uv, float(ids.w)), uv_dx, uv_dy).rgb * w.w;
+    }
+    float w_sum = max(w.x + w.y + w.z + w.w, 0.0001);
+    return col / w_sum;
+}
+
 void main() {
-    vec4 weights = texture(u_splat_tex, v_uv);
-    float sum_w = max(weights.r + weights.g + weights.b + weights.a, 0.0001);
-    weights /= sum_w;
-
     vec2 world_uv = v_world_pos.xz * 0.25;
-    vec3 c0 = texture(u_tex_array, vec3(world_uv, 0.0)).rgb;
-    vec3 c1 = texture(u_tex_array, vec3(world_uv, 1.0)).rgb;
-    vec3 c2 = texture(u_tex_array, vec3(world_uv, 2.0)).rgb;
-    vec3 c3 = texture(u_tex_array, vec3(world_uv, 3.0)).rgb;
+    vec2 uv_dx = dFdx(world_uv);
+    vec2 uv_dy = dFdy(world_uv);
 
-    vec3 albedo = c0 * weights.r + c1 * weights.g + c2 * weights.b + c3 * weights.a;
+    vec2 cell_pos = clamp(v_uv, 0.0, 1.0) * u_tile_size;
+    ivec2 max_cell = max(ivec2(round(u_tile_size)) - ivec2(1), ivec2(0));
+    ivec2 c00 = clamp(ivec2(floor(cell_pos)), ivec2(0), max_cell);
+    vec2 f = clamp(cell_pos - vec2(c00), 0.0, 1.0);
+
+    vec3 a00 = sample_splat_corner(c00, world_uv, uv_dx, uv_dy);
+    vec3 a10 = sample_splat_corner(c00 + ivec2(1, 0), world_uv, uv_dx, uv_dy);
+    vec3 a01 = sample_splat_corner(c00 + ivec2(0, 1), world_uv, uv_dx, uv_dy);
+    vec3 a11 = sample_splat_corner(c00 + ivec2(1, 1), world_uv, uv_dx, uv_dy);
+    vec3 albedo = mix(mix(a00, a10, f.x), mix(a01, a11, f.x), f.y);
 
     vec3 smooth_n = normalize(v_normal);
     vec3 geom_n = normalize(cross(dFdx(v_world_pos), dFdy(v_world_pos)));

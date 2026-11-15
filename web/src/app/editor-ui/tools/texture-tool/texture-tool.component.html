@@ -1,18 +1,44 @@
 <div class="toolbox-title">Texture Brush</div>
 
 <div class="tool-section">
-  <span class="section-label">Material Layer</span>
-  <div class="option-grid">
-    @for (layer of textureLayers; track layer.index) {
+  <div class="section-head">
+    <span class="section-label">Material</span>
+    <span class="material-count">
+      @if (filteredTextureLayers().length === textureLayers.length) {
+        {{ textureLayers.length }}
+      } @else {
+        {{ filteredTextureLayers().length }} / {{ textureLayers.length }}
+      }
+    </span>
+  </div>
+
+  <div class="category-pills">
+    @for (cat of categories; track cat) {
       <button
         type="button"
-        class="btn btn-sm"
+        class="pill-btn"
+        [class.active]="state.textureCategory() === cat"
+        (click)="state.setTextureCategory(cat)"
+      >
+        {{ cat }}
+      </button>
+    }
+  </div>
+
+  <div class="material-list">
+    @for (layer of filteredTextureLayers(); track layer.index) {
+      <button
+        type="button"
+        class="btn btn-sm material-btn"
         [class.active]="activeTexLayer() === layer.index"
         (click)="engine.setTextureLayer(layer.index)"
       >
-        <span class="key-hint">{{ layer.shortcut }}</span>
-        <span class="swatch" [style.background]="layer.swatch"></span>
-        <span>{{ layer.label }}</span>
+        <span class="material-main">
+          <span class="key-hint">{{ layer.shortcut }}</span>
+          <span class="swatch" [style.background]="layer.swatch"></span>
+          <span>{{ layer.label }}</span>
+        </span>
+        <span class="mat-cat">{{ layer.category }}</span>
       </button>
     }
   </div>
@@ -52,4 +78,4 @@
   </label>
 </div>
 
-<div class="toolbox-hint">1–4: Material · Drag on terrain to blend.</div>
+<div class="toolbox-hint">1–9: Material · Drag on terrain to blend.</div>

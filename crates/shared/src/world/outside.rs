@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use super::types::{EntitySpawn, PropPlacement, TriggerVolume, pack_splat};
+use super::splat::{
+    area_seed_from_id, convert_legacy_rgba_splat_grid, default_splat_ids, default_splat_weights,
+    grass_noise_splat_at,
+};
+use super::types::{EntitySpawn, PropPlacement, TriggerVolume};
 use super::walk_mask::{MAX_WALKABLE_SLOPE_DELTA, TILE_SIZE, TILE_VERTICES, WalkMask};
 
 /// Server-authoritative simulation payload for one 64m × 64m Outside tile (`sim.bin`).
@@ -30,19 +34,55 @@ pub struct TileVisData {
     pub walkable: WalkMask,
     /// `65 × 65` heightmap vertices (`vz * 65 + vx`) so adjacent tiles share border vertices.
     pub heights: Vec<f32>,
-    /// `64 × 64` RGBA8 packed splat weights (`z * 64 + x`).
-    pub splat_map: Vec<u32>,
+    /// `65 × 65` top-4 material IDs per terrain vertex (`vz * 65 + vx`).
+    pub splat_ids: Vec<[u8; 4]>,
+    /// `65 × 65` top-4 normalized `u8` blend weights per terrain vertex (`vz * 65 + vx`, sum = `255`).
+    pub splat_weights: Vec<[u8; 4]>,
     pub props: Vec<PropPlacement>,
 }
 
 impl TileVisData {
     pub fn flat_default() -> Self {
+        let verts = TILE_VERTICES * TILE_VERTICES;
         Self {
             walkable: WalkMask::all_walkable(),
-            heights: vec![0.0; TILE_VERTICES * TILE_VERTICES],
-            splat_map: vec![pack_splat(255, 0, 0, 0); TILE_SIZE * TILE_SIZE],
+            heights: vec![0.0; verts],
+            splat_ids: vec![default_splat_ids(); verts],
+            splat_weights: vec![default_splat_weights(); verts],
             props: Vec::new(),
         }
+    }
+
+    /// Generates a flat tile populated with seamless world-space 3-tone grass noise
+    /// (`MAT_GRASS`, `MAT_LIGHT_GRASS`, `MAT_DARK_GRASS`).
+    pub fn seeded_grass(area_id: &str, tx: i32, ty: i32) -> Self {
+        let verts = TILE_VERTICES * TILE_VERTICES;
+        let seed = area_seed_from_id(area_id);
+        let mut splat_ids = Vec::with_capacity(verts);
+        let mut splat_weights = Vec::with_capacity(verts);
+        for vz in 0..TILE_VERTICES {
+            let wz = ty * (TILE_SIZE as i32) + vz as i32;
+            for vx in 0..TILE_VERTICES {
+                let wx = tx * (TILE_SIZE as i32) + vx as i32;
+                let (ids, weights) = grass_noise_splat_at(seed, wx, wz);
+                splat_ids.push(ids);
+                splat_weights.push(weights);
+            }
+        }
+        Self {
+            walkable: WalkMask::all_walkable(),
+            heights: vec![0.0; verts],
+            splat_ids,
+            splat_weights,
+            props: Vec::new(),
+        }
+    }
+
+    pub fn has_valid_dimensions(&self) -> bool {
+        let verts = TILE_VERTICES * TILE_VERTICES;
+        self.heights.len() == verts
+            && self.splat_ids.len() == verts
+            && self.splat_weights.len() == verts
     }
 
     /// Recomputes `walkable` cells based on terrain slope across each 1m cell.
@@ -64,42 +104,46 @@ impl TileVisData {
         }
     }
 
-    /// Decodes a postcard-encoded tile visual payload, falling back across prior `v2`
-    /// (`rotation: [f32; 3]`, no `cast_shadow`) and legacy `v1` (`rotation_y`) prop records
-    /// so existing world files load cleanly.
+    /// Decodes a postcard-encoded tile visual payload, falling back across legacy `v3`
+    /// (`splat_map: Vec<u32>`), `v2` (`rotation: [f32; 3]`), and `v1` (`rotation_y`) formats
+    /// so existing world files migrate seamlessly.
     pub fn from_postcard_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
         #[derive(Deserialize)]
-        struct TileVisDataV2 {
+        struct LegacySplatTile<P> {
             walkable: WalkMask,
             heights: Vec<f32>,
             splat_map: Vec<u32>,
-            props: Vec<super::types::PropPlacementV2>,
+            props: Vec<P>,
         }
 
-        #[derive(Deserialize)]
-        struct LegacyTileVisData {
-            walkable: WalkMask,
-            heights: Vec<f32>,
-            splat_map: Vec<u32>,
-            props: Vec<super::types::LegacyPropPlacement>,
+        fn upgrade_legacy<P: Into<PropPlacement>>(old: LegacySplatTile<P>) -> TileVisData {
+            let (splat_ids, splat_weights) =
+                convert_legacy_rgba_splat_grid(&old.splat_map, TILE_SIZE, TILE_SIZE);
+            TileVisData {
+                walkable: old.walkable,
+                heights: old.heights,
+                splat_ids,
+                splat_weights,
+                props: old.props.into_iter().map(Into::into).collect(),
+            }
         }
 
         match super::types::decode_exact::<Self>(bytes) {
-            Ok(vis) => Ok(vis),
-            Err(primary_err) => super::types::decode_exact::<TileVisDataV2>(bytes)
-                .map(|v2| Self {
-                    walkable: v2.walkable,
-                    heights: v2.heights,
-                    splat_map: v2.splat_map,
-                    props: v2.props.into_iter().map(Into::into).collect(),
+            Ok(vis) if vis.has_valid_dimensions() => Ok(vis),
+            Ok(_) => Err(postcard::Error::SerdeDeCustom),
+            Err(primary_err) => super::types::decode_exact::<LegacySplatTile<PropPlacement>>(bytes)
+                .map(upgrade_legacy)
+                .or_else(|_| {
+                    super::types::decode_exact::<LegacySplatTile<super::types::PropPlacementV2>>(
+                        bytes,
+                    )
+                    .map(upgrade_legacy)
                 })
                 .or_else(|_| {
-                    super::types::decode_exact::<LegacyTileVisData>(bytes).map(|legacy| Self {
-                        walkable: legacy.walkable,
-                        heights: legacy.heights,
-                        splat_map: legacy.splat_map,
-                        props: legacy.props.into_iter().map(Into::into).collect(),
-                    })
+                    super::types::decode_exact::<LegacySplatTile<super::types::LegacyPropPlacement>>(
+                        bytes,
+                    )
+                    .map(upgrade_legacy)
                 })
                 .map_err(|_| primary_err),
         }
@@ -141,18 +185,22 @@ pub fn compute_sim_from_vis(vis: &TileVisData, existing: Option<&TileSimData>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::{MAT_BRICK, MAT_COBBLESTONE, MAT_DIRT, MAT_GRASS, pack_splat};
 
     #[test]
     fn tile_vis_and_sim_roundtrip() {
         let mut vis = TileVisData::flat_default();
         vis.heights[10 * TILE_VERTICES + 10] = 5.0;
+        vis.splat_ids[12 * TILE_VERTICES + 12] = [MAT_COBBLESTONE, MAT_BRICK, MAT_DIRT, 0];
+        vis.splat_weights[12 * TILE_VERTICES + 12] = [140, 80, 35, 0];
         vis.recompute_slope_walkability();
         assert!(!vis.walkable.get(10, 10));
         assert!(vis.walkable.get(0, 0));
 
         let bytes = postcard::to_allocvec(&vis).unwrap();
-        let decoded: TileVisData = postcard::from_bytes(&bytes).unwrap();
+        let decoded = TileVisData::from_postcard_bytes(&bytes).unwrap();
         assert_eq!(vis, decoded);
+        assert!(decoded.has_valid_dimensions());
 
         let sim = compute_sim_from_vis(&vis, None);
         assert!(!sim.walkable.get(10, 10));
@@ -160,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_tile_vis_decoding_preserves_rotation_y() {
+    fn legacy_tile_vis_decoding_migrates_splat_and_props() {
         #[derive(Serialize)]
         struct LegacyProp {
             id: u64,
@@ -178,10 +226,12 @@ mod tests {
         }
 
         let base = TileVisData::flat_default();
+        let mut legacy_splat = vec![pack_splat(255, 0, 0, 0); TILE_SIZE * TILE_SIZE];
+        legacy_splat[0] = pack_splat(0, 255, 0, 0);
         let legacy = LegacyTile {
             walkable: base.walkable,
             heights: base.heights,
-            splat_map: base.splat_map,
+            splat_map: legacy_splat,
             props: vec![LegacyProp {
                 id: 7,
                 asset_id: "ruin_stone".to_owned(),
@@ -193,13 +243,17 @@ mod tests {
 
         let bytes = postcard::to_allocvec(&legacy).unwrap();
         let decoded = TileVisData::from_postcard_bytes(&bytes).unwrap();
+        assert!(decoded.has_valid_dimensions());
+        assert_eq!(decoded.splat_ids[0], [MAT_DIRT, 0, 0, 0]);
+        assert_eq!(decoded.splat_weights[0], [255, 0, 0, 0]);
+        assert_eq!(decoded.splat_ids[10 * TILE_VERTICES + 10], [MAT_GRASS, 0, 0, 0]);
         assert_eq!(decoded.props.len(), 1);
         assert_eq!(decoded.props[0].rotation, [0.0, 1.25, 0.0]);
         assert!(decoded.props[0].cast_shadow);
     }
 
     #[test]
-    fn v2_and_v3_tile_vis_decoding_and_cast_shadow_roundtrip() {
+    fn v2_and_v3_tile_vis_decoding_migrate_splat_and_props() {
         #[derive(Serialize)]
         struct V2Prop {
             id: u64,
@@ -215,49 +269,111 @@ mod tests {
             splat_map: Vec<u32>,
             props: Vec<V2Prop>,
         }
+        #[derive(Serialize)]
+        struct V3Tile {
+            walkable: WalkMask,
+            heights: Vec<f32>,
+            splat_map: Vec<u32>,
+            props: Vec<PropPlacement>,
+        }
 
         let base = TileVisData::flat_default();
+        let legacy_splat = vec![pack_splat(255, 0, 0, 0); TILE_SIZE * TILE_SIZE];
         let v2 = V2Tile {
             walkable: base.walkable,
             heights: base.heights.clone(),
-            splat_map: base.splat_map.clone(),
-            props: vec![
-                V2Prop {
-                    id: 10,
-                    asset_id: "boulder".to_owned(),
-                    position: [15.0, 2.0, 20.0],
-                    rotation: [0.3, 0.8, 0.1],
-                    scale: [1.0, 1.0, 1.0],
-                },
-                V2Prop {
-                    id: 11,
-                    asset_id: "ruin_stone".to_owned(),
-                    position: [22.0, 0.0, 25.0],
-                    rotation: [0.0, 1.5, 0.0],
-                    scale: [1.2, 1.2, 1.2],
-                },
-            ],
+            splat_map: legacy_splat.clone(),
+            props: vec![V2Prop {
+                id: 10,
+                asset_id: "boulder".to_owned(),
+                position: [15.0, 2.0, 20.0],
+                rotation: [0.3, 0.8, 0.1],
+                scale: [1.0, 1.0, 1.0],
+            }],
         };
 
         let v2_bytes = postcard::to_allocvec(&v2).unwrap();
         let decoded_v2 = TileVisData::from_postcard_bytes(&v2_bytes).unwrap();
-        assert_eq!(decoded_v2.props.len(), 2);
+        assert!(decoded_v2.has_valid_dimensions());
+        assert_eq!(decoded_v2.props.len(), 1);
         assert_eq!(decoded_v2.props[0].rotation, [0.3, 0.8, 0.1]);
         assert!(decoded_v2.props[0].cast_shadow);
-        assert!(decoded_v2.props[1].cast_shadow);
 
-        let mut v3 = TileVisData::flat_default();
-        v3.props.push(PropPlacement {
-            id: 12,
-            asset_id: "boulder".to_owned(),
-            position: [18.0, 3.0, 19.0],
-            rotation: [0.0, 0.5, 0.0],
-            scale: [1.0, 1.0, 1.0],
-            cast_shadow: false,
-        });
+        let v3 = V3Tile {
+            walkable: base.walkable,
+            heights: base.heights,
+            splat_map: legacy_splat,
+            props: vec![PropPlacement {
+                id: 12,
+                asset_id: "boulder".to_owned(),
+                position: [18.0, 3.0, 19.0],
+                rotation: [0.0, 0.5, 0.0],
+                scale: [1.0, 1.0, 1.0],
+                cast_shadow: false,
+            }],
+        };
         let v3_bytes = postcard::to_allocvec(&v3).unwrap();
         let decoded_v3 = TileVisData::from_postcard_bytes(&v3_bytes).unwrap();
+        assert!(decoded_v3.has_valid_dimensions());
         assert_eq!(decoded_v3.props.len(), 1);
         assert!(!decoded_v3.props[0].cast_shadow);
+    }
+
+    #[test]
+    fn seeded_grass_tiles_blend_three_tones_and_match_across_borders() {
+        use crate::world::{MAT_DARK_GRASS, MAT_LIGHT_GRASS};
+
+        let t00 = TileVisData::seeded_grass("meadow_test", 0, 0);
+        assert!(t00.has_valid_dimensions());
+
+        let mut dominant_counts = [0usize; 6];
+        for i in 0..t00.splat_ids.len() {
+            let ids = t00.splat_ids[i];
+            let weights = t00.splat_weights[i];
+            let sum: u16 = weights.iter().map(|&w| w as u16).sum();
+            assert_eq!(sum, 255);
+            assert!(weights.windows(2).all(|w| w[0] >= w[1]));
+            for slot in 0..4 {
+                if weights[slot] > 0 {
+                    assert!(
+                        matches!(ids[slot], MAT_GRASS | MAT_LIGHT_GRASS | MAT_DARK_GRASS),
+                        "unexpected grass noise mat id {}",
+                        ids[slot]
+                    );
+                }
+            }
+            dominant_counts[ids[0] as usize] += 1;
+        }
+        assert!(dominant_counts[MAT_GRASS as usize] >= 400);
+        assert!(dominant_counts[MAT_LIGHT_GRASS as usize] >= 400);
+        assert!(dominant_counts[MAT_DARK_GRASS as usize] >= 400);
+
+        let t10 = TileVisData::seeded_grass("meadow_test", 1, 0);
+        let tm10 = TileVisData::seeded_grass("meadow_test", -1, 0);
+        for vz in 0..TILE_VERTICES {
+            let right_00 = vz * TILE_VERTICES + (TILE_VERTICES - 1);
+            let left_10 = vz * TILE_VERTICES;
+            assert_eq!(t00.splat_ids[right_00], t10.splat_ids[left_10]);
+            assert_eq!(t00.splat_weights[right_00], t10.splat_weights[left_10]);
+
+            let right_m10 = vz * TILE_VERTICES + (TILE_VERTICES - 1);
+            let left_00 = vz * TILE_VERTICES;
+            assert_eq!(tm10.splat_ids[right_m10], t00.splat_ids[left_00]);
+            assert_eq!(tm10.splat_weights[right_m10], t00.splat_weights[left_00]);
+        }
+
+        let t01 = TileVisData::seeded_grass("meadow_test", 0, 1);
+        let t0m1 = TileVisData::seeded_grass("meadow_test", 0, -1);
+        for vx in 0..TILE_VERTICES {
+            let bottom_00 = (TILE_VERTICES - 1) * TILE_VERTICES + vx;
+            let top_01 = vx;
+            assert_eq!(t00.splat_ids[bottom_00], t01.splat_ids[top_01]);
+            assert_eq!(t00.splat_weights[bottom_00], t01.splat_weights[top_01]);
+
+            let bottom_0m1 = (TILE_VERTICES - 1) * TILE_VERTICES + vx;
+            let top_00 = vx;
+            assert_eq!(t0m1.splat_ids[bottom_0m1], t00.splat_ids[top_00]);
+            assert_eq!(t0m1.splat_weights[bottom_0m1], t00.splat_weights[top_00]);
+        }
     }
 }

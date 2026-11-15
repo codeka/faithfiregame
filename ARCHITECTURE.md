@@ -40,7 +40,7 @@ faith-and-fire/
 │   ├── shared/                 # Pure Rust (compiles to native & wasm32-unknown-unknown)
 │   │   └── src/
 │   │       ├── protocol.rs     # ClientMessage, ServerMessage, PROTOCOL_VERSION
-│   │       ├── world/          # walk_mask.rs, types.rs, outside.rs, inside.rs
+│   │       ├── world/          # walk_mask.rs, splat.rs, types.rs, outside.rs, inside.rs
 │   │       └── pathfinding.rs  # 1m grid A* + Line-of-Sight (Theta* / string-pulling)
 │   ├── server/                 # Authoritative Rust game server
 │   │   └── src/
@@ -143,7 +143,7 @@ World files are serialized with `postcard` and split so the server never loads v
 - **`vis.bin` (Client Visual):**
   - `walkable: [u64; 64]` — Shared 64×64 walkability bitmask (512 bytes) for impassable cursor feedback, optional client-side ghost path previews, and editor walkability overlays.
   - `heights: Vec<f32>` — **65 × 65** heightmap vertices (4,225 floats) so adjacent 64m tiles share border vertices without terrain seams.
-  - `splat_map: Vec<u32>` — 64 × 64 terrain texture blend weights/indices.
+  - `splat_ids: Vec<[u8; 4]>`, `splat_weights: Vec<[u8; 4]>` — **65 × 65** vertex-aligned top-4 terrain material IDs and normalized blend weights (sum = `255`).
   - `props: Vec<PropPlacement>` — Static `.glb` prop references (`asset_id`, `position`, `rotation`, `scale`).
 - **Inside Area Schemas:** Fixed Inside areas (`Ephemeral` / `Permanent`) store arbitrary `(width, length)` walkability/elevation grids and prop placements (with terrain heightmaps/splatmaps optional when interiors are built purely from `.glb` meshes). **Generated** Inside areas transmit their assembled layout, `.glb` piece placements, and walkability grid to the client via `ServerMessage` upon entry.
 

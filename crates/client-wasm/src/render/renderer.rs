@@ -217,14 +217,18 @@ impl Renderer {
             );
 
             gl.active_texture(glow::TEXTURE0);
-            gl.bind_texture(glow::TEXTURE_2D, Some(mesh.splat_tex));
-            gl.uniform_1_i32(loc("u_splat_tex").as_ref(), 0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(mesh.splat_id_tex));
+            gl.uniform_1_i32(loc("u_splat_ids").as_ref(), 0);
 
             gl.active_texture(glow::TEXTURE1);
-            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(self.tex_array));
-            gl.uniform_1_i32(loc("u_tex_array").as_ref(), 1);
+            gl.bind_texture(glow::TEXTURE_2D, Some(mesh.splat_weight_tex));
+            gl.uniform_1_i32(loc("u_splat_weights").as_ref(), 1);
 
             self.bind_shadow_uniforms(self.terrain_prog);
+
+            gl.active_texture(glow::TEXTURE3);
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(self.tex_array));
+            gl.uniform_1_i32(loc("u_tex_array").as_ref(), 3);
 
             gl.bind_vertex_array(Some(mesh.vao));
             gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_INT, 0);

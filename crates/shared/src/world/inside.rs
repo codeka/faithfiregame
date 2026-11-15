@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use super::types::{EntitySpawn, PropPlacement, TriggerVolume, pack_splat};
+use super::splat::{
+    area_seed_from_id, convert_legacy_rgba_splat_grid, default_splat_ids, default_splat_weights,
+    grass_noise_splat_at,
+};
+use super::types::{EntitySpawn, PropPlacement, TriggerVolume};
 use super::walk_mask::MAX_WALKABLE_SLOPE_DELTA;
 
 /// Server-authoritative simulation payload for an arbitrary-size Inside area (`sim.bin`).
@@ -37,8 +41,10 @@ pub struct InsideVisData {
     pub walkable: Vec<u64>,
     /// Optional `(width + 1) × (length + 1)` heightmap vertices; empty when purely `.glb`-authored.
     pub heights: Vec<f32>,
-    /// Optional `width × length` splat map; empty when purely `.glb`-authored.
-    pub splat_map: Vec<u32>,
+    /// Optional `(width + 1) × (length + 1)` top-4 material IDs per vertex; empty when `.glb`-authored.
+    pub splat_ids: Vec<[u8; 4]>,
+    /// Optional `(width + 1) × (length + 1)` top-4 normalized `u8` weights (sum = `255`).
+    pub splat_weights: Vec<[u8; 4]>,
     pub props: Vec<PropPlacement>,
 }
 
@@ -51,9 +57,46 @@ impl InsideVisData {
             length,
             walkable: vec![u64::MAX; cells.div_ceil(64)],
             heights: vec![0.0; verts],
-            splat_map: vec![pack_splat(255, 0, 0, 0); cells],
+            splat_ids: vec![default_splat_ids(); verts],
+            splat_weights: vec![default_splat_weights(); verts],
             props: Vec::new(),
         }
+    }
+
+    /// Generates an Inside terrain populated with 3-tone grass noise
+    /// (`MAT_GRASS`, `MAT_LIGHT_GRASS`, `MAT_DARK_GRASS`).
+    pub fn seeded_grass(area_id: &str, width: u32, length: u32) -> Self {
+        let cells = (width as usize) * (length as usize);
+        let vw = width as usize + 1;
+        let vh = length as usize + 1;
+        let verts = vw * vh;
+        let seed = area_seed_from_id(area_id);
+        let mut splat_ids = Vec::with_capacity(verts);
+        let mut splat_weights = Vec::with_capacity(verts);
+        for vz in 0..vh {
+            for vx in 0..vw {
+                let (ids, weights) = grass_noise_splat_at(seed, vx as i32, vz as i32);
+                splat_ids.push(ids);
+                splat_weights.push(weights);
+            }
+        }
+        Self {
+            width,
+            length,
+            walkable: vec![u64::MAX; cells.div_ceil(64)],
+            heights: vec![0.0; verts],
+            splat_ids,
+            splat_weights,
+            props: Vec::new(),
+        }
+    }
+
+    pub fn has_valid_dimensions(&self) -> bool {
+        let verts = (self.width as usize + 1) * (self.length as usize + 1);
+        let heights_ok = self.heights.is_empty() || self.heights.len() == verts;
+        let splat_ok = (self.splat_ids.is_empty() && self.splat_weights.is_empty())
+            || (self.splat_ids.len() == verts && self.splat_weights.len() == verts);
+        heights_ok && splat_ok
     }
 
     pub fn get_walkable(&self, x: usize, z: usize) -> bool {
@@ -105,52 +148,57 @@ impl InsideVisData {
         }
     }
 
-    /// Decodes a postcard-encoded inside visual payload, falling back across prior `v2`
-    /// (`rotation: [f32; 3]`, no `cast_shadow`) and legacy `v1` (`rotation_y`) prop records
-    /// so existing interior world files load cleanly.
+    /// Decodes a postcard-encoded inside visual payload, falling back across prior `v3`
+    /// (`splat_map: Vec<u32>`), `v2` (`rotation: [f32; 3]`), and legacy `v1` (`rotation_y`) formats
+    /// so existing interior world files migrate seamlessly.
     pub fn from_postcard_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
         #[derive(Deserialize)]
-        struct InsideVisDataV2 {
+        struct LegacySplatInside<P> {
             width: u32,
             length: u32,
             walkable: Vec<u64>,
             heights: Vec<f32>,
             splat_map: Vec<u32>,
-            props: Vec<super::types::PropPlacementV2>,
+            props: Vec<P>,
         }
 
-        #[derive(Deserialize)]
-        struct LegacyInsideVisData {
-            width: u32,
-            length: u32,
-            walkable: Vec<u64>,
-            heights: Vec<f32>,
-            splat_map: Vec<u32>,
-            props: Vec<super::types::LegacyPropPlacement>,
+        fn upgrade_legacy<P: Into<PropPlacement>>(old: LegacySplatInside<P>) -> InsideVisData {
+            let (splat_ids, splat_weights) = convert_legacy_rgba_splat_grid(
+                &old.splat_map,
+                old.width as usize,
+                old.length as usize,
+            );
+            InsideVisData {
+                width: old.width,
+                length: old.length,
+                walkable: old.walkable,
+                heights: old.heights,
+                splat_ids,
+                splat_weights,
+                props: old.props.into_iter().map(Into::into).collect(),
+            }
         }
 
         match super::types::decode_exact::<Self>(bytes) {
-            Ok(vis) => Ok(vis),
-            Err(primary_err) => super::types::decode_exact::<InsideVisDataV2>(bytes)
-                .map(|v2| Self {
-                    width: v2.width,
-                    length: v2.length,
-                    walkable: v2.walkable,
-                    heights: v2.heights,
-                    splat_map: v2.splat_map,
-                    props: v2.props.into_iter().map(Into::into).collect(),
-                })
-                .or_else(|_| {
-                    super::types::decode_exact::<LegacyInsideVisData>(bytes).map(|legacy| Self {
-                        width: legacy.width,
-                        length: legacy.length,
-                        walkable: legacy.walkable,
-                        heights: legacy.heights,
-                        splat_map: legacy.splat_map,
-                        props: legacy.props.into_iter().map(Into::into).collect(),
+            Ok(vis) if vis.has_valid_dimensions() => Ok(vis),
+            Ok(_) => Err(postcard::Error::SerdeDeCustom),
+            Err(primary_err) => {
+                super::types::decode_exact::<LegacySplatInside<PropPlacement>>(bytes)
+                    .map(upgrade_legacy)
+                    .or_else(|_| {
+                        super::types::decode_exact::<LegacySplatInside<super::types::PropPlacementV2>>(
+                            bytes,
+                        )
+                        .map(upgrade_legacy)
                     })
-                })
-                .map_err(|_| primary_err),
+                    .or_else(|_| {
+                        super::types::decode_exact::<
+                            LegacySplatInside<super::types::LegacyPropPlacement>,
+                        >(bytes)
+                        .map(upgrade_legacy)
+                    })
+                    .map_err(|_| primary_err)
+            }
         }
     }
 }
@@ -185,5 +233,46 @@ pub fn compute_inside_sim_from_vis(
         elevation,
         triggers: existing.map(|s| s.triggers.clone()).unwrap_or_default(),
         spawns: existing.map(|s| s.spawns.clone()).unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::{MAT_COBBLESTONE, MAT_DIRT, pack_splat};
+
+    #[test]
+    fn inside_vis_roundtrip_and_legacy_splat_migration() {
+        let mut vis = InsideVisData::flat_default(4, 4);
+        vis.splat_ids[0] = [MAT_COBBLESTONE, 0, 0, 0];
+        vis.splat_weights[0] = [255, 0, 0, 0];
+        assert!(vis.has_valid_dimensions());
+
+        let bytes = postcard::to_allocvec(&vis).unwrap();
+        let decoded = InsideVisData::from_postcard_bytes(&bytes).unwrap();
+        assert_eq!(vis, decoded);
+
+        #[derive(Serialize)]
+        struct LegacyV3Inside {
+            width: u32,
+            length: u32,
+            walkable: Vec<u64>,
+            heights: Vec<f32>,
+            splat_map: Vec<u32>,
+            props: Vec<PropPlacement>,
+        }
+        let legacy = LegacyV3Inside {
+            width: 4,
+            length: 4,
+            walkable: vec![u64::MAX; 1],
+            heights: vec![0.0; 25],
+            splat_map: vec![pack_splat(0, 255, 0, 0); 16],
+            props: Vec::new(),
+        };
+        let legacy_bytes = postcard::to_allocvec(&legacy).unwrap();
+        let migrated = InsideVisData::from_postcard_bytes(&legacy_bytes).unwrap();
+        assert!(migrated.has_valid_dimensions());
+        assert_eq!(migrated.splat_ids[0], [MAT_DIRT, 0, 0, 0]);
+        assert_eq!(migrated.splat_weights[0], [255, 0, 0, 0]);
     }
 }

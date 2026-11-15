@@ -104,7 +104,7 @@ pub async fn create_area(
             let tile_dir = area_dir.join("0,0");
             fs::create_dir_all(&tile_dir)
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            let vis = TileVisData::flat_default();
+            let vis = TileVisData::seeded_grass(&meta.id, 0, 0);
             let sim = TileSimData::flat_default();
             fs::write(
                 tile_dir.join("vis.bin"),
@@ -121,7 +121,7 @@ pub async fn create_area(
         }
         AreaKind::Inside(_) => {
             let (w, l) = meta.dimensions.unwrap_or((32, 32));
-            let vis = InsideVisData::flat_default(w, l);
+            let vis = InsideVisData::seeded_grass(&meta.id, w, l);
             let sim = InsideSimData::flat_default(w, l);
             fs::write(
                 area_dir.join("vis.bin"),

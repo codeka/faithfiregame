@@ -2,6 +2,7 @@ use glam::Vec3;
 use shared::world::{AreaKind, TILE_SIZE, TILE_VERTICES, TileVisData};
 
 use super::state::EditorState;
+use super::types::{EditorInsideState, EditorTileState};
 
 impl EditorState {
     pub(super) fn raycast_terrain(&self, orig: Vec3, dir: Vec3) -> Option<Vec3> {
@@ -67,7 +68,13 @@ impl EditorState {
         }
     }
 
-    pub(super) fn sample_vertex_height(&self, wx: i32, wz: i32) -> Option<f32> {
+    fn lookup_vertex<T: Copy>(
+        &self,
+        wx: i32,
+        wz: i32,
+        from_outside: impl Fn(&EditorTileState, usize) -> T,
+        from_inside: impl Fn(&EditorInsideState, usize) -> Option<T>,
+    ) -> Option<T> {
         if self.active_area.kind == AreaKind::Outside {
             // Check canonical tile owning cell/vertex first, then fall back to border neighbor
             let tx = wx.div_euclid(TILE_SIZE as i32);
@@ -75,7 +82,7 @@ impl EditorState {
             let vx = wx.rem_euclid(TILE_SIZE as i32) as usize;
             let vz = wz.rem_euclid(TILE_SIZE as i32) as usize;
             if let Some(tile) = self.outside_tiles.get(&(tx, ty)) {
-                return Some(tile.vis.heights[vz * TILE_VERTICES + vx]);
+                return Some(from_outside(tile, vz * TILE_VERTICES + vx));
             }
             // Handle right/bottom boundary vertices (vx == 64 or vz == 64)
             let alt_tx = if vx == 0 { tx - 1 } else { tx };
@@ -85,7 +92,7 @@ impl EditorState {
                     let avx = (wx - cand_tx * TILE_SIZE as i32) as usize;
                     let avz = (wz - cand_ty * TILE_SIZE as i32) as usize;
                     if avx < TILE_VERTICES && avz < TILE_VERTICES {
-                        return Some(tile.vis.heights[avz * TILE_VERTICES + avx]);
+                        return Some(from_outside(tile, avz * TILE_VERTICES + avx));
                     }
                 }
             }
@@ -96,10 +103,33 @@ impl EditorState {
             if wx < 0 || wz < 0 || wx > w || wz > l {
                 return None;
             }
-            Some(inside.vis.heights[wz as usize * (w as usize + 1) + wx as usize])
+            from_inside(inside, wz as usize * (w as usize + 1) + wx as usize)
         } else {
             None
         }
+    }
+
+    pub(super) fn sample_vertex_height(&self, wx: i32, wz: i32) -> Option<f32> {
+        self.lookup_vertex(
+            wx,
+            wz,
+            |t, i| t.vis.heights[i],
+            |ins, i| ins.vis.heights.get(i).copied(),
+        )
+    }
+
+    pub(super) fn sample_vertex_splat(&self, wx: i32, wz: i32) -> Option<([u8; 4], [u8; 4])> {
+        self.lookup_vertex(
+            wx,
+            wz,
+            |t, i| (t.vis.splat_ids[i], t.vis.splat_weights[i]),
+            |ins, i| {
+                Some((
+                    ins.vis.splat_ids.get(i).copied()?,
+                    ins.vis.splat_weights.get(i).copied()?,
+                ))
+            },
+        )
     }
 
     pub(super) fn copy_loaded_borders_into(&self, tx: i32, ty: i32, vis: &mut TileVisData) {
@@ -108,8 +138,15 @@ impl EditorState {
         for vz in 0..TILE_VERTICES {
             for vx in 0..TILE_VERTICES {
                 if vx == 0 || vx == TILE_SIZE || vz == 0 || vz == TILE_SIZE {
-                    if let Some(h) = self.sample_vertex_height(ox + vx as i32, oz + vz as i32) {
-                        vis.heights[vz * TILE_VERTICES + vx] = h;
+                    let wx = ox + vx as i32;
+                    let wz = oz + vz as i32;
+                    let idx = vz * TILE_VERTICES + vx;
+                    if let Some(h) = self.sample_vertex_height(wx, wz) {
+                        vis.heights[idx] = h;
+                    }
+                    if let Some((ids, weights)) = self.sample_vertex_splat(wx, wz) {
+                        vis.splat_ids[idx] = ids;
+                        vis.splat_weights[idx] = weights;
                     }
                 }
             }

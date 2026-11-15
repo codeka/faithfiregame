@@ -14,6 +14,7 @@ export class EditorStateService {
   readonly selectedAssetId = signal<string>('pine_tree');
   readonly assetSearch = signal<string>('');
   readonly assetCategory = signal<string>('All');
+  readonly textureCategory = signal<string>('All');
   readonly showNewAreaModal = signal<boolean>(false);
 
   readonly status = this.engine.status;
@@ -128,6 +129,10 @@ export class EditorStateService {
 
   setAssetCategory(category: string): void {
     this.assetCategory.set(category);
+  }
+
+  setTextureCategory(category: string): void {
+    this.textureCategory.set(category);
   }
 
   openNewAreaModal(): void {

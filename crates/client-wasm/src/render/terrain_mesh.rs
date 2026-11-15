@@ -1,11 +1,13 @@
 use glam::Vec3;
 use glow::HasContext;
+use shared::world::{default_splat_ids, default_splat_weights};
 
 pub struct TerrainMeshGpu {
     pub(super) vao: glow::VertexArray,
     vbo: glow::Buffer,
     ebo: glow::Buffer,
-    pub(super) splat_tex: glow::Texture,
+    pub(super) splat_id_tex: glow::Texture,
+    pub(super) splat_weight_tex: glow::Texture,
     pub(super) index_count: i32,
     pub(super) width: usize,
     pub(super) length: usize,
@@ -17,13 +19,15 @@ impl TerrainMeshGpu {
         width: usize,
         length: usize,
         heights: &[f32],
-        splat: &[u32],
+        splat_ids: &[[u8; 4]],
+        splat_weights: &[[u8; 4]],
     ) -> Result<Self, String> {
         unsafe {
             let vao = gl.create_vertex_array()?;
             let vbo = gl.create_buffer()?;
             let ebo = gl.create_buffer()?;
-            let splat_tex = gl.create_texture()?;
+            let splat_id_tex = gl.create_texture()?;
+            let splat_weight_tex = gl.create_texture()?;
 
             let mut indices: Vec<u32> = Vec::with_capacity(width * length * 6);
             let vw = width + 1;
@@ -53,18 +57,22 @@ impl TerrainMeshGpu {
             gl.vertex_attrib_pointer_f32(2, 2, glow::FLOAT, false, stride, 24);
             gl.bind_vertex_array(None);
 
-            gl.bind_texture(glow::TEXTURE_2D, Some(splat_tex));
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            // Both splat textures use NEAREST + CLAMP_TO_EDGE; integer RGBA8UI requires NEAREST in WebGL2.
+            for tex in [splat_id_tex, splat_weight_tex] {
+                gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
+                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
+                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            }
             gl.bind_texture(glow::TEXTURE_2D, None);
 
             let mesh = Self {
                 vao,
                 vbo,
                 ebo,
-                splat_tex,
+                splat_id_tex,
+                splat_weight_tex,
                 index_count: indices.len() as i32,
                 width,
                 length,
@@ -72,7 +80,7 @@ impl TerrainMeshGpu {
 
             let default_normals = vec![[0.0, 1.0, 0.0]; (width + 1) * (length + 1)];
             mesh.upload_vertices(gl, 0.0, 0.0, heights, &default_normals);
-            mesh.upload_splat(gl, splat);
+            mesh.upload_splat(gl, splat_ids, splat_weights);
             Ok(mesh)
         }
     }
@@ -116,23 +124,55 @@ impl TerrainMeshGpu {
         }
     }
 
-    pub fn upload_splat(&self, gl: &glow::Context, splat: &[u32]) {
-        let mut rgba = Vec::with_capacity(self.width * self.length * 4);
-        for &packed in splat {
-            rgba.extend_from_slice(&packed.to_le_bytes());
-        }
+    pub fn upload_splat(
+        &self,
+        gl: &glow::Context,
+        splat_ids: &[[u8; 4]],
+        splat_weights: &[[u8; 4]],
+    ) {
+        let tex_w = (self.width + 1) as i32;
+        let tex_h = (self.length + 1) as i32;
+        let expected = (self.width + 1) * (self.length + 1);
+
+        let fallback_ids;
+        let fallback_weights;
+        let (id_slice, weight_slice) =
+            if splat_ids.len() == expected && splat_weights.len() == expected {
+                (splat_ids, splat_weights)
+            } else {
+                fallback_ids = vec![default_splat_ids(); expected];
+                fallback_weights = vec![default_splat_weights(); expected];
+                (fallback_ids.as_slice(), fallback_weights.as_slice())
+            };
+
+        let id_bytes: Vec<u8> = id_slice.iter().flat_map(|c| *c).collect();
+        let weight_bytes: Vec<u8> = weight_slice.iter().flat_map(|c| *c).collect();
+
         unsafe {
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.splat_tex));
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.splat_id_tex));
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA8UI as i32,
+                tex_w,
+                tex_h,
+                0,
+                glow::RGBA_INTEGER,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(&id_bytes)),
+            );
+
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.splat_weight_tex));
             gl.tex_image_2d(
                 glow::TEXTURE_2D,
                 0,
                 glow::RGBA8 as i32,
-                self.width as i32,
-                self.length as i32,
+                tex_w,
+                tex_h,
                 0,
                 glow::RGBA,
                 glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(Some(&rgba)),
+                glow::PixelUnpackData::Slice(Some(&weight_bytes)),
             );
             gl.bind_texture(glow::TEXTURE_2D, None);
         }
@@ -143,7 +183,8 @@ impl TerrainMeshGpu {
             gl.delete_vertex_array(self.vao);
             gl.delete_buffer(self.vbo);
             gl.delete_buffer(self.ebo);
-            gl.delete_texture(self.splat_tex);
+            gl.delete_texture(self.splat_id_tex);
+            gl.delete_texture(self.splat_weight_tex);
         }
     }
 }

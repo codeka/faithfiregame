@@ -2,8 +2,9 @@ use std::fs;
 use std::path::Path;
 
 use shared::world::{
-    AreaKind, AreaMetadata, AssetEntry, InsideKind, InsideVisData, PropPlacement, TILE_SIZE,
-    TILE_VERTICES, TileVisData, compute_inside_sim_from_vis, compute_sim_from_vis, pack_splat,
+    AreaKind, AreaMetadata, AssetEntry, InsideKind, InsideVisData, MAT_COBBLESTONE, MAT_DIRT,
+    PropPlacement, TILE_VERTICES, TileVisData, blend_splat_sample, compute_inside_sim_from_vis,
+    compute_sim_from_vis,
 };
 
 use super::decorations::starter_decoration_assets;
@@ -71,7 +72,7 @@ fn seed_main_outside_area(world_dir: &Path) -> anyhow::Result<()> {
     // Seed the initial 3x3 Outside window (-1..=1, -1..=1) centered on (0, 0).
     for ty in -1..=1 {
         for tx in -1..=1 {
-            let mut vis = TileVisData::flat_default();
+            let mut vis = TileVisData::seeded_grass("main", tx, ty);
 
             // Gentle welcoming features on starter tile (0, 0) while keeping center spawn (32, 32) flat.
             if tx == 0 && ty == 0 {
@@ -88,12 +89,19 @@ fn seed_main_outside_area(world_dir: &Path) -> anyhow::Result<()> {
                 }
 
                 // A subtle dirt path leading south-east from spawn (32, 32)
-                for z in 24..44 {
-                    for x in 29..36 {
-                        let d = ((x as f32 - 32.0).abs() / 3.0).min(1.0);
-                        let dirt = ((1.0 - d) * 210.0) as u8;
-                        let grass = 255u8.saturating_sub(dirt);
-                        vis.splat_map[z * TILE_SIZE + x] = pack_splat(grass, dirt, 0, 0);
+                for vz in 24..=44 {
+                    for vx in 29..=36 {
+                        let d = ((vx as f32 - 32.0).abs() / 3.0).min(1.0);
+                        let dirt = (1.0 - d) * 0.82;
+                        let idx = vz * TILE_VERTICES + vx;
+                        let (ids, weights) = blend_splat_sample(
+                            vis.splat_ids[idx],
+                            vis.splat_weights[idx],
+                            MAT_DIRT,
+                            dirt,
+                        );
+                        vis.splat_ids[idx] = ids;
+                        vis.splat_weights[idx] = weights;
                     }
                 }
 
@@ -172,14 +180,15 @@ fn seed_village_shop_inside_area(world_dir: &Path) -> anyhow::Result<()> {
     fs::write(&area_bin, postcard::to_allocvec(&meta)?)?;
 
     let mut vis = InsideVisData::flat_default(w, l);
-    for z in 0..l as usize {
-        for x in 0..w as usize {
-            let border = x < 2 || z < 2 || x >= (w as usize - 2) || z >= (l as usize - 2);
-            vis.splat_map[z * w as usize + x] = if border {
-                pack_splat(0, 0, 255, 0) // Rock floor border
-            } else {
-                pack_splat(0, 255, 0, 0) // Dirt/plank interior floor
-            };
+    let vw = w as usize + 1;
+    let vh = l as usize + 1;
+    for vz in 0..vh {
+        for vx in 0..vw {
+            let border = vx <= 2 || vz <= 2 || vx >= (w as usize - 2) || vz >= (l as usize - 2);
+            let mat = if border { MAT_COBBLESTONE } else { MAT_DIRT };
+            let idx = vz * vw + vx;
+            vis.splat_ids[idx] = [mat, 0, 0, 0];
+            vis.splat_weights[idx] = [255, 0, 0, 0];
         }
     }
     vis.props.push(PropPlacement {

@@ -121,12 +121,14 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     statusSig.set(baseStatus('texture'));
     fixture.detectChanges();
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }));
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: '2' }));
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: '3' }));
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: '4' }));
+    const matButtons = (fixture.nativeElement as HTMLElement).querySelectorAll('.material-btn');
+    expect(matButtons.length).toBe(9);
 
-    expect(textureCalls).toEqual([0, 1, 2, 3]);
+    for (const key of ['1', '2', '3', '4', '5', '6', '7', '8', '9']) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key }));
+    }
+
+    expect(textureCalls).toEqual([0, 4, 5, 6, 1, 3, 2, 7, 8]);
   });
 
   it('ignores text/number inputs, modifiers, and open modal, while allowing range sliders', () => {
@@ -301,5 +303,61 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }));
     fixture.detectChanges();
     expect(assetNames()).toEqual(['Tall Cliff Pillar']);
+  });
+
+  it('groups texture materials by category pills while preserving internal material indices', () => {
+    statusSig.set(baseStatus('texture'));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const matNames = () =>
+      Array.from(root.querySelectorAll('.material-btn .material-main span:last-child')).map((s) =>
+        s.textContent?.trim(),
+      );
+    const pills = () => Array.from(root.querySelectorAll('.pill-btn')) as HTMLButtonElement[];
+
+    expect(pills().map((p) => p.textContent?.trim())).toEqual(['All', 'Grass', 'Earth', 'Stone']);
+    expect(matNames()).toEqual([
+      'Grass',
+      'Light Grass',
+      'Dark Grass',
+      'Patchy Grass',
+      'Dirt',
+      'Sand',
+      'Rock',
+      'Cobblestone',
+      'Brick',
+    ]);
+    expect(root.querySelector('.material-count')?.textContent?.trim()).toBe('9');
+
+    // Filter to Grass and click Light Grass (internal index 4)
+    pills().find((p) => p.textContent?.trim() === 'Grass')?.click();
+    fixture.detectChanges();
+    expect(matNames()).toEqual(['Grass', 'Light Grass', 'Dark Grass', 'Patchy Grass']);
+    expect(root.querySelector('.material-count')?.textContent?.trim()).toBe('4 / 9');
+    (root.querySelectorAll('.material-btn')[1] as HTMLButtonElement).click();
+    expect(textureCalls.at(-1)).toBe(4);
+
+    // Filter to Earth and click Dirt (internal index 1)
+    pills().find((p) => p.textContent?.trim() === 'Earth')?.click();
+    fixture.detectChanges();
+    expect(matNames()).toEqual(['Dirt', 'Sand']);
+    expect(root.querySelector('.material-count')?.textContent?.trim()).toBe('2 / 9');
+    (root.querySelectorAll('.material-btn')[0] as HTMLButtonElement).click();
+    expect(textureCalls.at(-1)).toBe(1);
+
+    // Filter to Stone, click Cobblestone (internal index 7), verify persistence across tool switch
+    pills().find((p) => p.textContent?.trim() === 'Stone')?.click();
+    fixture.detectChanges();
+    expect(matNames()).toEqual(['Rock', 'Cobblestone', 'Brick']);
+    expect(root.querySelector('.material-count')?.textContent?.trim()).toBe('3 / 9');
+    (root.querySelectorAll('.material-btn')[1] as HTMLButtonElement).click();
+    expect(textureCalls.at(-1)).toBe(7);
+
+    statusSig.set(baseStatus('heightmap'));
+    fixture.detectChanges();
+    statusSig.set(baseStatus('texture'));
+    fixture.detectChanges();
+    expect(matNames()).toEqual(['Rock', 'Cobblestone', 'Brick']);
   });
 });

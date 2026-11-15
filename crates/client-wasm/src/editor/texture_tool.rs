@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use shared::world::{AreaKind, TILE_SIZE, pack_splat, unpack_splat};
+use shared::world::{AreaKind, TERRAIN_MATERIAL_COUNT, TILE_SIZE, TILE_VERTICES, blend_splat_sample};
 
 use crate::input::InputState;
 
@@ -22,33 +22,52 @@ impl EditorState {
         };
 
         let r = self.brush_radius.max(0.5);
-        let min_cx = (hit.x - r).floor() as i32;
-        let max_cx = (hit.x + r).floor() as i32;
-        let min_cz = (hit.z - r).floor() as i32;
-        let max_cz = (hit.z + r).floor() as i32;
+        let min_wx = (hit.x - r).floor() as i32;
+        let max_wx = (hit.x + r).ceil() as i32;
+        let min_wz = (hit.z - r).floor() as i32;
+        let max_wz = (hit.z + r).ceil() as i32;
         let strength = (self.brush_strength * 0.45 * dt).clamp(0.02, 0.85);
-        let layer = self.texture_layer.min(3);
+        let target_mat = self.texture_layer.min(TERRAIN_MATERIAL_COUNT - 1) as u8;
+
+        // Precompute new vertex splats in world grid coordinates so shared tile borders stay 100% locked.
+        let mut updates: Vec<(i32, i32, [u8; 4], [u8; 4])> = Vec::new();
+        for wz in min_wz..=max_wz {
+            for wx in min_wx..=max_wx {
+                let dx = wx as f32 - hit.x;
+                let dz = wz as f32 - hit.z;
+                let dist = (dx * dx + dz * dz).sqrt();
+                if dist > r {
+                    continue;
+                }
+                let alpha = (1.0 - dist / r).powi(2) * strength;
+                let Some((ids, weights)) = self.sample_vertex_splat(wx, wz) else {
+                    continue;
+                };
+                let (new_ids, new_weights) = blend_splat_sample(ids, weights, target_mat, alpha);
+                updates.push((wx, wz, new_ids, new_weights));
+            }
+        }
+
+        if updates.is_empty() {
+            return;
+        }
 
         if self.active_area.kind == AreaKind::Outside {
             let mut touched: HashSet<(i32, i32)> = HashSet::new();
-            for cz in min_cz..=max_cz {
-                for cx in min_cx..=max_cx {
-                    let dx = (cx as f32 + 0.5) - hit.x;
-                    let dz = (cz as f32 + 0.5) - hit.z;
-                    let dist = (dx * dx + dz * dz).sqrt();
-                    if dist > r {
-                        continue;
-                    }
-                    let alpha = (1.0 - dist / r).powi(2) * strength;
-                    let tx = cx.div_euclid(TILE_SIZE as i32);
-                    let ty = cz.div_euclid(TILE_SIZE as i32);
-                    let lx = cx.rem_euclid(TILE_SIZE as i32) as usize;
-                    let lz = cz.rem_euclid(TILE_SIZE as i32) as usize;
-
-                    if let Some(tile) = self.outside_tiles.get_mut(&(tx, ty)) {
-                        let idx = lz * TILE_SIZE + lx;
-                        tile.vis.splat_map[idx] =
-                            blend_splat(tile.vis.splat_map[idx], layer, alpha);
+            for (wx, wz, new_ids, new_weights) in updates {
+                for (&(tx, ty), tile) in &mut self.outside_tiles {
+                    let ox = tx * TILE_SIZE as i32;
+                    let oz = ty * TILE_SIZE as i32;
+                    if wx >= ox
+                        && wx <= ox + TILE_SIZE as i32
+                        && wz >= oz
+                        && wz <= oz + TILE_SIZE as i32
+                    {
+                        let vx = (wx - ox) as usize;
+                        let vz = (wz - oz) as usize;
+                        let idx = vz * TILE_VERTICES + vx;
+                        tile.vis.splat_ids[idx] = new_ids;
+                        tile.vis.splat_weights[idx] = new_weights;
                         tile.dirty = true;
                         touched.insert((tx, ty));
                     }
@@ -56,62 +75,35 @@ impl EditorState {
             }
             for key in touched {
                 if let Some(tile) = self.outside_tiles.get(&key) {
-                    tile.gpu.upload_splat(gl, &tile.vis.splat_map);
+                    tile.gpu
+                        .upload_splat(gl, &tile.vis.splat_ids, &tile.vis.splat_weights);
                 }
                 self.mark_unsaved(now_ms);
             }
         } else if let Some(inside) = &mut self.inside_area {
             let w = inside.vis.width as i32;
             let l = inside.vis.length as i32;
+            let vw = w as usize + 1;
+            let expected = vw * (l as usize + 1);
+            if inside.vis.splat_ids.len() != expected || inside.vis.splat_weights.len() != expected {
+                return;
+            }
             let mut changed = false;
-            for cz in min_cz.max(0)..=max_cz.min(l - 1) {
-                for cx in min_cx.max(0)..=max_cx.min(w - 1) {
-                    let dx = (cx as f32 + 0.5) - hit.x;
-                    let dz = (cz as f32 + 0.5) - hit.z;
-                    let dist = (dx * dx + dz * dz).sqrt();
-                    if dist > r {
-                        continue;
-                    }
-                    let alpha = (1.0 - dist / r).powi(2) * strength;
-                    let idx = cz as usize * w as usize + cx as usize;
-                    inside.vis.splat_map[idx] =
-                        blend_splat(inside.vis.splat_map[idx], layer, alpha);
+            for (wx, wz, new_ids, new_weights) in updates {
+                if wx >= 0 && wx <= w && wz >= 0 && wz <= l {
+                    let idx = wz as usize * vw + wx as usize;
+                    inside.vis.splat_ids[idx] = new_ids;
+                    inside.vis.splat_weights[idx] = new_weights;
                     changed = true;
                 }
             }
             if changed {
                 inside.dirty = true;
-                inside.gpu.upload_splat(gl, &inside.vis.splat_map);
+                inside
+                    .gpu
+                    .upload_splat(gl, &inside.vis.splat_ids, &inside.vis.splat_weights);
                 self.mark_unsaved(now_ms);
             }
         }
     }
-}
-
-fn blend_splat(packed: u32, target_layer: usize, alpha: f32) -> u32 {
-    let raw = unpack_splat(packed);
-    let mut w = [
-        raw[0] as f32 / 255.0,
-        raw[1] as f32 / 255.0,
-        raw[2] as f32 / 255.0,
-        raw[3] as f32 / 255.0,
-    ];
-    for (i, val) in w.iter_mut().enumerate() {
-        let goal = if i == target_layer { 1.0 } else { 0.0 };
-        *val += (goal - *val) * alpha;
-    }
-    let sum: f32 = w.iter().sum();
-    if sum > 1e-4 {
-        for val in &mut w {
-            *val /= sum;
-        }
-    } else {
-        w = [1.0, 0.0, 0.0, 0.0];
-    }
-    pack_splat(
-        (w[0].clamp(0.0, 1.0) * 255.0).round() as u8,
-        (w[1].clamp(0.0, 1.0) * 255.0).round() as u8,
-        (w[2].clamp(0.0, 1.0) * 255.0).round() as u8,
-        (w[3].clamp(0.0, 1.0) * 255.0).round() as u8,
-    )
 }
