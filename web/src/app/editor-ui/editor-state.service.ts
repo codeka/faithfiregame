@@ -12,10 +12,39 @@ export class EditorStateService {
   readonly brushRadius = signal<number>(4.5);
   readonly brushStrength = signal<number>(3.5);
   readonly selectedAssetId = signal<string>('pine_tree');
+  readonly assetSearch = signal<string>('');
+  readonly assetCategory = signal<string>('All');
   readonly showNewAreaModal = signal<boolean>(false);
 
   readonly status = this.engine.status;
   readonly activeTool = computed(() => this.status()?.tool ?? 'heightmap');
+
+  readonly assetCategories = computed<readonly string[]>(() => {
+    const seen = new Set<string>();
+    const cats: string[] = ['All'];
+    for (const item of this.catalog()) {
+      if (item.category && !seen.has(item.category)) {
+        seen.add(item.category);
+        cats.push(item.category);
+      }
+    }
+    return cats;
+  });
+
+  readonly filteredCatalog = computed<readonly AssetEntry[]>(() => {
+    const cat = this.assetCategory();
+    const tokens = this.assetSearch().trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return this.catalog().filter((item) => {
+      if (cat !== 'All' && item.category !== cat) {
+        return false;
+      }
+      if (tokens.length === 0) {
+        return true;
+      }
+      const haystack = `${item.name} ${item.category} ${item.id}`.toLowerCase();
+      return tokens.every((t) => haystack.includes(t));
+    });
+  });
 
   private syncedInitialArea = false;
 
@@ -55,6 +84,9 @@ export class EditorStateService {
       if (resp.ok) {
         const list = (await resp.json()) as AssetEntry[];
         this.catalog.set(list);
+        if (this.assetCategory() !== 'All' && !list.some((a) => a.category === this.assetCategory())) {
+          this.assetCategory.set('All');
+        }
         if (list.length > 0 && !list.some((a) => a.id === this.selectedAssetId())) {
           this.selectedAssetId.set(list[0].id);
           this.engine.setDecorationAsset(list[0].id);
@@ -88,6 +120,14 @@ export class EditorStateService {
   selectAsset(assetId: string): void {
     this.selectedAssetId.set(assetId);
     this.engine.setDecorationAsset(assetId);
+  }
+
+  setAssetSearch(query: string): void {
+    this.assetSearch.set(query);
+  }
+
+  setAssetCategory(category: string): void {
+    this.assetCategory.set(category);
   }
 
   openNewAreaModal(): void {

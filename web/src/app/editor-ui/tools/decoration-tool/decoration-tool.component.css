@@ -4,10 +4,96 @@
   gap: 12px;
 }
 
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.asset-count {
+  font-size: 10px;
+  color: #8b9bb4;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1a202c;
+  color: #edf2f7;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  padding: 5px 24px 5px 8px;
+  font-size: 12px;
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: #63b3ed;
+}
+
+.search-input::placeholder {
+  color: #718096;
+}
+
+.search-clear {
+  position: absolute;
+  right: 4px;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 5px;
+  cursor: pointer;
+}
+
+.search-clear:hover {
+  color: #edf2f7;
+}
+
+.category-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pill-btn {
+  background: #1e2533;
+  color: #cbd5e0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pill-btn:hover:not(.active) {
+  background: #2b3549;
+}
+
+.pill-btn.active {
+  background: #3182ce;
+  border-color: #63b3ed;
+  color: #fff;
+}
+
 .asset-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  max-height: min(280px, calc(100vh - 340px));
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
 }
 
 .asset-btn {
@@ -15,6 +101,14 @@
   align-items: center;
   justify-content: space-between;
   text-align: left;
+  flex-shrink: 0;
+}
+
+.empty-assets {
+  font-size: 11px;
+  color: #94a3b8;
+  padding: 8px 6px;
+  text-align: center;
 }
 
 .asset-cat {
@@ -71,4 +165,10 @@ input[type='range'].axis-y {
 
 input[type='range'].axis-z {
   accent-color: #3b82f6;
+}
+
+.prop-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }

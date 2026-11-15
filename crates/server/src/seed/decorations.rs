@@ -1,16 +1,19 @@
 use glam::Vec3;
 
 use super::mesh_builder::MeshBuilder;
+use super::rocks::{build_rock_boulder_glb, build_rock_cluster_glb, extra_rock_decoration_assets};
 
 pub(super) fn starter_decoration_assets() -> Vec<(&'static str, &'static str, &'static str, Vec<u8>)> {
-    vec![
+    let mut out = vec![
         ("pine_tree", "Pine Tree", "Nature", build_pine_tree_glb()),
         ("oak_tree", "Oak Tree", "Nature", build_oak_tree_glb()),
         ("rock_boulder", "Boulder", "Rocks", build_rock_boulder_glb()),
         ("rock_cluster", "Rock Cluster", "Rocks", build_rock_cluster_glb()),
         ("bush", "Bush", "Nature", build_bush_glb()),
         ("ruin_stone", "Ruin Stone", "Props", build_ruin_stone_glb()),
-    ]
+    ];
+    out.extend(extra_rock_decoration_assets());
+    out
 }
 
 fn build_pine_tree_glb() -> Vec<u8> {
@@ -43,26 +46,6 @@ fn build_oak_tree_glb() -> Vec<u8> {
     mb.to_glb_bytes()
 }
 
-fn build_rock_boulder_glb() -> Vec<u8> {
-    let mut mb = MeshBuilder::new();
-    let stone1 = [0.50, 0.51, 0.54, 1.0];
-    let stone2 = [0.42, 0.44, 0.47, 1.0];
-    mb.add_ellipsoid(Vec3::new(0.0, 0.55, 0.0), Vec3::new(1.15, 0.78, 0.95), 4, 7, stone1);
-    mb.add_ellipsoid(Vec3::new(0.55, 0.38, 0.48), Vec3::new(0.62, 0.48, 0.55), 3, 6, stone2);
-    mb.to_glb_bytes()
-}
-
-fn build_rock_cluster_glb() -> Vec<u8> {
-    let mut mb = MeshBuilder::new();
-    let stone1 = [0.48, 0.49, 0.52, 1.0];
-    let stone2 = [0.56, 0.55, 0.53, 1.0];
-    let stone3 = [0.39, 0.40, 0.43, 1.0];
-    mb.add_ellipsoid(Vec3::new(-0.35, 0.45, -0.2), Vec3::new(0.85, 0.65, 0.75), 4, 6, stone1);
-    mb.add_ellipsoid(Vec3::new(0.55, 0.32, 0.35), Vec3::new(0.65, 0.45, 0.55), 4, 6, stone2);
-    mb.add_ellipsoid(Vec3::new(0.15, 0.22, -0.65), Vec3::new(0.48, 0.34, 0.44), 3, 6, stone3);
-    mb.to_glb_bytes()
-}
-
 fn build_bush_glb() -> Vec<u8> {
     let mut mb = MeshBuilder::new();
     let bush1 = [0.19, 0.48, 0.17, 1.0];
@@ -81,4 +64,27 @@ fn build_ruin_stone_glb() -> Vec<u8> {
     mb.add_frustum(Vec3::new(0.0, 0.35, 0.0), 2.15, 0.52, 0.42, 4, stone);
     mb.add_frustum(Vec3::new(0.0, 0.35, 0.52), 0.65, 0.32, 0.26, 4, trim);
     mb.to_glb_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    #[test]
+    fn starter_catalog_has_14_unique_assets_with_valid_glb_headers() {
+        let assets = starter_decoration_assets();
+        assert_eq!(assets.len(), 14);
+        assert_eq!(assets.iter().filter(|a| a.2 == "Rocks").count(), 10);
+
+        let mut ids = HashSet::new();
+        for (id, _, _, glb) in &assets {
+            assert!(ids.insert(*id), "duplicate starter asset id: {id}");
+            assert!(glb.len() >= 12);
+            assert_eq!(&glb[0..4], b"glTF", "missing glTF header for {id}");
+            let total_len = u32::from_le_bytes(glb[8..12].try_into().unwrap()) as usize;
+            assert_eq!(total_len, glb.len(), "mismatched GLB total length for {id}");
+        }
+    }
 }

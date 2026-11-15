@@ -68,4 +68,21 @@ export class DecorationToolComponent {
     if (!this.selectedProp()) return;
     this.engine.setPropCastShadow((ev.target as HTMLInputElement).checked);
   }
+
+  onSearchInput(ev: Event): void {
+    this.state.setAssetSearch((ev.target as HTMLInputElement).value);
+  }
+
+  clearSearch(): void {
+    this.state.setAssetSearch('');
+  }
+
+  onSearchEscape(ev: Event): void {
+    if (this.state.assetSearch().length > 0) {
+      ev.stopPropagation();
+      this.state.setAssetSearch('');
+    } else {
+      (ev.target as HTMLInputElement).blur();
+    }
+  }
 }

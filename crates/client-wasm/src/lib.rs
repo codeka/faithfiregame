@@ -274,6 +274,12 @@ impl EngineHandle {
     }
 
     #[cfg(feature = "editor")]
+    pub fn duplicate_selected_prop(&self) {
+        let now_ms = browser_now_ms();
+        self.inner.borrow_mut().editor.duplicate_selected_prop(now_ms);
+    }
+
+    #[cfg(feature = "editor")]
     pub fn delete_selected_prop(&self) {
         let now_ms = web_sys::window()
             .and_then(|w| w.performance())

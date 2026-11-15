@@ -176,6 +176,11 @@ export class EngineService implements OnDestroy {
     this.refreshStatus();
   }
 
+  duplicateSelectedProp(): void {
+    this.handle?.duplicate_selected_prop();
+    this.refreshStatus();
+  }
+
   deleteSelectedProp(): void {
     this.handle?.delete_selected_prop();
     this.refreshStatus();

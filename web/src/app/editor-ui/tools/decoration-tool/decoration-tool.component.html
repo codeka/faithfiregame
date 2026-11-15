@@ -19,9 +19,57 @@
 
 @if (activeSubmode() === 'place') {
   <div class="tool-section">
-    <span class="section-label">Asset</span>
+    <div class="section-head">
+      <span class="section-label">Asset</span>
+      <span class="asset-count">
+        @if (state.filteredCatalog().length === state.catalog().length) {
+          {{ state.catalog().length }}
+        } @else {
+          {{ state.filteredCatalog().length }} / {{ state.catalog().length }}
+        }
+      </span>
+    </div>
+
+    <div class="search-box">
+      <input
+        type="text"
+        name="assetSearch"
+        class="search-input"
+        placeholder="Search assets…"
+        autocomplete="off"
+        [value]="state.assetSearch()"
+        (input)="onSearchInput($event)"
+        (keydown.escape)="onSearchEscape($event)"
+      />
+      @if (state.assetSearch()) {
+        <button
+          type="button"
+          class="search-clear"
+          aria-label="Clear search"
+          (click)="clearSearch()"
+        >
+          ×
+        </button>
+      }
+    </div>
+
+    @if (state.assetCategories().length > 2) {
+      <div class="category-pills">
+        @for (cat of state.assetCategories(); track cat) {
+          <button
+            type="button"
+            class="pill-btn"
+            [class.active]="state.assetCategory() === cat"
+            (click)="state.setAssetCategory(cat)"
+          >
+            {{ cat }}
+          </button>
+        }
+      </div>
+    }
+
     <div class="asset-list">
-      @for (item of state.catalog(); track item.id) {
+      @for (item of state.filteredCatalog(); track item.id) {
         <button
           type="button"
           class="btn btn-sm asset-btn"
@@ -31,6 +79,8 @@
           <span>{{ item.name }}</span>
           <span class="asset-cat">{{ item.category }}</span>
         </button>
+      } @empty {
+        <div class="empty-assets">No matching assets</div>
       }
     </div>
   </div>
@@ -117,14 +167,24 @@
     </div>
   </div>
 
-  <button
-    type="button"
-    class="btn btn-sm btn-danger"
-    [disabled]="!selectedProp()"
-    (click)="engine.deleteSelectedProp()"
-  >
-    Delete Selected
-  </button>
+  <div class="prop-actions">
+    <button
+      type="button"
+      class="btn btn-sm btn-duplicate"
+      [disabled]="!selectedProp()"
+      (click)="engine.duplicateSelectedProp()"
+    >
+      Duplicate Selected
+    </button>
+    <button
+      type="button"
+      class="btn btn-sm btn-danger"
+      [disabled]="!selectedProp()"
+      (click)="engine.deleteSelectedProp()"
+    >
+      Delete Selected
+    </button>
+  </div>
 
   <div class="toolbox-hint">1–4: Mode · Drag gizmo/rings · Q/E: Yaw · Del: Remove</div>
 }

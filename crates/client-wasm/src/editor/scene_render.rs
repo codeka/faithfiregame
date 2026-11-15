@@ -72,7 +72,11 @@ impl EditorState {
                     cast_shadow: self.preview_cast_shadow,
                 };
                 renderer.draw_prop(camera, mesh, &ghost, Vec4::new(0.65, 1.0, 0.78, 0.60));
-                renderer.draw_selection_ring(camera, &ghost, 1.1 * self.preview_scale);
+                let extent = (mesh.aabb_max.x - mesh.aabb_min.x)
+                    .max(mesh.aabb_max.z - mesh.aabb_min.z)
+                    * 0.55
+                    * self.preview_scale;
+                renderer.draw_selection_ring(camera, &ghost, extent.max(0.9));
             }
         }
 

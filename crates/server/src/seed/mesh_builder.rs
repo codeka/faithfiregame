@@ -3,6 +3,23 @@ use std::f32::consts::TAU;
 use glam::Vec3;
 use serde_json::json;
 
+#[derive(Clone, Copy)]
+pub(super) struct RockSlice {
+    pub center: Vec3,
+    pub rx: f32,
+    pub rz: f32,
+    pub color: [f32; 4],
+}
+
+fn tint(color: [f32; 4], factor: f32) -> [f32; 4] {
+    [
+        (color[0] * factor).clamp(0.0, 1.0),
+        (color[1] * factor).clamp(0.0, 1.0),
+        (color[2] * factor).clamp(0.0, 1.0),
+        color[3],
+    ]
+}
+
 pub(super) struct MeshBuilder {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
@@ -123,6 +140,122 @@ impl MeshBuilder {
                 }
                 if r > 0 {
                     self.push_tri(p00, p01, p11, color);
+                }
+            }
+        }
+    }
+
+    pub(super) fn add_crag_column(
+        &mut self,
+        slices: &[RockSlice],
+        segments: usize,
+        seed: f32,
+        crag: f32,
+    ) {
+        if slices.len() < 2 || segments < 4 {
+            return;
+        }
+        let crag = crag.clamp(0.0, 0.30);
+        let mut rings: Vec<Vec<Vec3>> = Vec::with_capacity(slices.len());
+
+        for (k, s) in slices.iter().enumerate() {
+            if s.rx <= 0.001 || s.rz <= 0.001 {
+                rings.push(vec![s.center; segments]);
+            } else {
+                let mut ring = Vec::with_capacity(segments);
+                let twist = 0.10 * (seed + k as f32 * 0.85).sin();
+                for i in 0..segments {
+                    let ang = (i as f32 / segments as f32) * TAU + twist;
+                    let perturb = 1.0
+                        + crag
+                            * (0.6 * (ang * 2.0 + seed + k as f32 * 1.35).sin()
+                                + 0.4 * (ang * 3.0 - seed * 1.6 + k as f32 * 2.05).cos());
+                    ring.push(Vec3::new(
+                        s.center.x + s.rx * ang.cos() * perturb,
+                        s.center.y,
+                        s.center.z + s.rz * ang.sin() * perturb,
+                    ));
+                }
+                rings.push(ring);
+            }
+        }
+
+        if slices[0].rx > 0.001 && slices[0].rz > 0.001 {
+            let bot_col = tint(slices[0].color, 0.86);
+            for i in 0..segments {
+                let next = (i + 1) % segments;
+                self.push_tri(slices[0].center, rings[0][i], rings[0][next], bot_col);
+            }
+        }
+
+        for k in 0..(slices.len() - 1) {
+            let hi_collapsed = slices[k + 1].rx <= 0.001 || slices[k + 1].rz <= 0.001;
+            for i in 0..segments {
+                let next = (i + 1) % segments;
+                let shade = 1.0 + 0.045 * (i as f32 * 2.3 + k as f32 * 1.7 + seed).sin();
+                let col = tint(slices[k + 1].color, shade);
+                if hi_collapsed {
+                    self.push_tri(rings[k][next], rings[k][i], slices[k + 1].center, col);
+                } else {
+                    self.push_quad(rings[k][next], rings[k][i], rings[k + 1][i], rings[k + 1][next], col);
+                }
+            }
+        }
+
+        let last = slices.len() - 1;
+        if slices[last].rx > 0.001 && slices[last].rz > 0.001 {
+            let top_col = tint(slices[last].color, 1.05);
+            for i in 0..segments {
+                let next = (i + 1) % segments;
+                self.push_tri(slices[last].center, rings[last][next], rings[last][i], top_col);
+            }
+        }
+    }
+
+    pub(super) fn add_faceted_boulder(
+        &mut self,
+        center: Vec3,
+        radii: Vec3,
+        rings: usize,
+        sectors: usize,
+        seed: f32,
+        crag: f32,
+        color: [f32; 4],
+    ) {
+        let crag = crag.clamp(0.0, 0.26);
+        for r in 0..rings {
+            let v0 = (r as f32 / rings as f32) * std::f32::consts::PI;
+            let v1 = ((r + 1) as f32 / rings as f32) * std::f32::consts::PI;
+            for s in 0..sectors {
+                let u0 = (s as f32 / sectors as f32) * TAU;
+                let u1 = ((s + 1) as f32 / sectors as f32) * TAU;
+
+                let p = |v: f32, u: f32| {
+                    let sv = v.sin();
+                    let wobble = 1.0
+                        + crag
+                            * (0.55 * (u * 2.0 + seed + v * 1.6).sin()
+                                + 0.45 * (u * 3.0 - seed * 1.3 + v * 2.4).cos());
+                    center
+                        + Vec3::new(
+                            radii.x * sv * u.cos() * wobble,
+                            radii.y * v.cos(),
+                            radii.z * sv * u.sin() * wobble,
+                        )
+                };
+
+                let p00 = p(v0, u0);
+                let p10 = p(v1, u0);
+                let p11 = p(v1, u1);
+                let p01 = p(v0, u1);
+                let shade = 1.0 + 0.04 * (s as f32 * 1.9 + r as f32 * 1.3 + seed).sin();
+                let col = tint(color, shade);
+
+                if r < rings - 1 {
+                    self.push_tri(p00, p11, p10, col);
+                }
+                if r > 0 {
+                    self.push_tri(p00, p01, p11, col);
                 }
             }
         }
@@ -296,5 +429,40 @@ mod tests {
         let mut mb = MeshBuilder::new();
         mb.add_frustum(Vec3::ZERO, 2.0, 1.0, 0.4, 8, [1.0; 4]);
         assert_outward_non_degenerate(&mb, Vec3::new(0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn crag_column_and_faceted_boulder_are_outward_ccw() {
+        let mut flat_top = MeshBuilder::new();
+        let stone = [0.5, 0.5, 0.52, 1.0];
+        flat_top.add_crag_column(
+            &[
+                RockSlice { center: Vec3::new(0.0, 0.0, 0.0), rx: 1.5, rz: 1.2, color: stone },
+                RockSlice { center: Vec3::new(0.0, 1.8, 0.0), rx: 1.3, rz: 1.0, color: stone },
+                RockSlice { center: Vec3::new(0.0, 3.6, 0.0), rx: 0.9, rz: 0.8, color: stone },
+            ],
+            8,
+            1.7,
+            0.22,
+        );
+        assert_outward_non_degenerate(&flat_top, Vec3::new(0.0, 1.8, 0.0));
+
+        let mut spire = MeshBuilder::new();
+        spire.add_crag_column(
+            &[
+                RockSlice { center: Vec3::new(0.0, 0.0, 0.0), rx: 1.4, rz: 1.3, color: stone },
+                RockSlice { center: Vec3::new(0.0, 2.2, 0.0), rx: 0.8, rz: 0.75, color: stone },
+                RockSlice { center: Vec3::new(0.0, 4.4, 0.0), rx: 0.0, rz: 0.0, color: stone },
+            ],
+            7,
+            2.3,
+            0.24,
+        );
+        assert_outward_non_degenerate(&spire, Vec3::new(0.0, 1.5, 0.0));
+
+        let mut boulder = MeshBuilder::new();
+        let center = Vec3::new(-0.5, 1.2, 0.8);
+        boulder.add_faceted_boulder(center, Vec3::new(1.3, 1.0, 1.1), 4, 6, 3.1, 0.22, stone);
+        assert_outward_non_degenerate(&boulder, center);
     }
 }

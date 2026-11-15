@@ -30,7 +30,20 @@ pub fn ensure_world_seeded(world_dir: &Path) -> anyhow::Result<()> {
     }
 
     let catalog_path = world_dir.join("assets").join("catalog.json");
-    if !catalog_path.exists() {
+    if catalog_path.exists() {
+        let raw = fs::read(&catalog_path)?;
+        let mut existing: Vec<AssetEntry> = serde_json::from_slice(&raw)?;
+        let mut added = false;
+        for entry in catalog {
+            if !existing.iter().any(|e| e.id == entry.id) {
+                existing.push(entry);
+                added = true;
+            }
+        }
+        if added {
+            fs::write(&catalog_path, serde_json::to_vec_pretty(&existing)?)?;
+        }
+    } else {
         fs::write(&catalog_path, serde_json::to_vec_pretty(&catalog)?)?;
     }
 
@@ -183,4 +196,58 @@ fn seed_village_shop_inside_area(world_dir: &Path) -> anyhow::Result<()> {
     fs::write(shop_dir.join("vis.bin"), postcard::to_allocvec(&vis)?)?;
     fs::write(shop_dir.join("sim.bin"), postcard::to_allocvec(&sim)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_world_seeded_merges_missing_starters_preserving_custom_entries() {
+        let unique = format!(
+            "ff_seed_merge_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let assets_dir = root.join("assets");
+        fs::create_dir_all(&assets_dir).unwrap();
+
+        let initial = vec![
+            AssetEntry {
+                id: "pine_tree".to_owned(),
+                name: "Pine Tree".to_owned(),
+                path: "/world/assets/decorations/pine_tree.glb".to_owned(),
+                category: "Nature".to_owned(),
+            },
+            AssetEntry {
+                id: "rock_boulder".to_owned(),
+                name: "Boulder".to_owned(),
+                path: "/world/assets/decorations/rock_boulder.glb".to_owned(),
+                category: "Rocks".to_owned(),
+            },
+            AssetEntry {
+                id: "custom_altar".to_owned(),
+                name: "Custom Altar".to_owned(),
+                path: "/world/assets/decorations/custom_altar.glb".to_owned(),
+                category: "Props".to_owned(),
+            },
+        ];
+        let catalog_path = assets_dir.join("catalog.json");
+        fs::write(&catalog_path, serde_json::to_vec_pretty(&initial).unwrap()).unwrap();
+
+        ensure_world_seeded(&root).unwrap();
+
+        let merged: Vec<AssetEntry> =
+            serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
+        assert_eq!(merged.len(), 15);
+        assert!(merged.iter().any(|e| e.id == "custom_altar"));
+        assert!(merged.iter().any(|e| e.id == "cliff_wall"));
+        assert!(merged.iter().any(|e| e.id == "rock_scree"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }

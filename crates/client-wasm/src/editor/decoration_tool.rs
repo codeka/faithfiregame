@@ -328,6 +328,67 @@ impl EditorState {
         }
     }
 
+    pub fn duplicate_selected_prop(&mut self, now_ms: f64) {
+        let Some(src) = self.find_selected_prop().cloned() else {
+            return;
+        };
+
+        let horiz_radius = self
+            .prop_meshes
+            .get(&src.asset_id)
+            .map(|m| {
+                (m.aabb_max.x - m.aabb_min.x)
+                    .max(m.aabb_max.z - m.aabb_min.z)
+                    * 0.5
+                    * src.scale[0]
+            })
+            .unwrap_or(1.2);
+
+        let seed = now_ms.to_bits() ^ self.next_prop_id.wrapping_mul(0xD1B5_4A32_D192_ED03);
+        let (dx, dz) = compute_duplicate_offset(seed, horiz_radius);
+
+        let src_ground_y = self
+            .terrain_height_at(src.position[0], src.position[2])
+            .unwrap_or(src.position[1]);
+        let rel_y = src.position[1] - src_ground_y;
+
+        let (mut nx, mut nz) = (src.position[0] + dx, src.position[2] + dz);
+        if self.active_area.kind == AreaKind::Outside {
+            let cand_tx = (nx / TILE_SIZE as f32).floor() as i32;
+            let cand_ty = (nz / TILE_SIZE as f32).floor() as i32;
+            if !self.outside_tiles.contains_key(&(cand_tx, cand_ty)) {
+                nx = src.position[0] - dx;
+                nz = src.position[2] - dz;
+            }
+        } else if let Some(inside) = &self.inside_area {
+            let max_x = (inside.vis.width as f32 - 0.5).max(0.5);
+            let max_z = (inside.vis.length as f32 - 0.5).max(0.5);
+            nx = nx.clamp(0.5, max_x);
+            nz = nz.clamp(0.5, max_z);
+        }
+
+        let ny = self
+            .terrain_height_at(nx, nz)
+            .map(|gy| (gy + rel_y).clamp(-64.0, 256.0))
+            .unwrap_or(src.position[1]);
+
+        let new_id = self.next_prop_id;
+        self.next_prop_id += 1;
+
+        let dup = PropPlacement {
+            id: new_id,
+            asset_id: src.asset_id,
+            position: [nx, ny, nz],
+            rotation: src.rotation,
+            scale: src.scale,
+            cast_shadow: src.cast_shadow,
+        };
+        if self.insert_prop(dup) {
+            self.selected_prop_id = Some(new_id);
+            self.mark_unsaved(now_ms);
+        }
+    }
+
     pub fn delete_selected_prop(&mut self, now_ms: f64) {
         let Some(prop_id) = self.selected_prop_id.take() else {
             return;
@@ -449,4 +510,44 @@ fn intersect_aabb(orig: Vec3, dir: Vec3, bmin: Vec3, bmax: Vec3) -> Option<f32> 
         }
     }
     Some(tmin)
+}
+
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
+}
+
+fn compute_duplicate_offset(seed: u64, base_radius: f32) -> (f32, f32) {
+    let h1 = splitmix64(seed);
+    let h2 = splitmix64(h1);
+    let u_angle = (h1 >> 40) as f32 / ((1u64 << 24) as f32);
+    let u_dist = (h2 >> 40) as f32 / ((1u64 << 24) as f32);
+    let angle = u_angle * std::f32::consts::TAU;
+    let min_d = (base_radius * 0.55).clamp(0.85, 2.2);
+    let max_d = (base_radius * 0.95).clamp(1.55, 3.2);
+    let dist = min_d + u_dist * (max_d - min_d);
+    (angle.cos() * dist, angle.sin() * dist)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_offset_stays_within_bounds_and_varies_across_ids() {
+        let now_ms = 123_456.789_f64;
+        let mut prev = None;
+        for next_id in 1000u64..1010u64 {
+            let seed = now_ms.to_bits() ^ next_id.wrapping_mul(0xD1B5_4A32_D192_ED03);
+            let (dx, dz) = compute_duplicate_offset(seed, 1.5);
+            let dist = (dx * dx + dz * dz).sqrt();
+            assert!((0.84..=3.21).contains(&dist), "dist={dist} out of bounds");
+            if let Some(p) = prev {
+                assert_ne!((dx, dz), p, "offset should vary across prop ids");
+            }
+            prev = Some((dx, dz));
+        }
+    }
 }
