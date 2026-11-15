@@ -16,7 +16,20 @@ fn is_typing_in_form(target: Option<web_sys::EventTarget>) -> bool {
         return false;
     };
     let tag = el.tag_name();
-    matches!(tag.as_str(), "INPUT" | "TEXTAREA" | "SELECT")
+    match tag.as_str() {
+        "TEXTAREA" | "SELECT" => true,
+        "INPUT" => {
+            let input_type = el
+                .get_attribute("type")
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            !matches!(
+                input_type.as_str(),
+                "range" | "checkbox" | "radio" | "button"
+            )
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn attach_input_listeners(
@@ -105,7 +118,7 @@ pub(crate) fn attach_input_listeners(
     // Key down on window
     let st_kd = Rc::clone(inner);
     let on_keydown = Closure::<dyn FnMut(KeyboardEvent)>::new(move |ev: KeyboardEvent| {
-        if is_typing_in_form(ev.target()) {
+        if ev.ctrl_key() || ev.meta_key() || ev.alt_key() || is_typing_in_form(ev.target()) {
             return;
         }
         let code = ev.code();

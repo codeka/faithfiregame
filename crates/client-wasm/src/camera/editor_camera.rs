@@ -5,7 +5,7 @@ use crate::input::InputState;
 use super::controller::CameraController;
 use super::projection::Camera;
 
-/// Flexible free-roaming world editor camera supporting arrow-key panning, middle-drag orbit, and zoom.
+/// Flexible free-roaming world editor camera supporting WASD / arrow-key panning, middle-drag orbit, and zoom.
 #[derive(Debug, Clone)]
 pub struct EditorCameraController {
     pub target: Vec3,
@@ -51,16 +51,16 @@ impl CameraController for EditorCameraController {
         let right = Vec3::new(yaw.sin(), 0.0, -yaw.cos()).normalize_or_zero();
 
         let mut move_dir = Vec3::ZERO;
-        if input.is_key_down("ArrowUp") {
+        if input.is_key_down("ArrowUp") || input.is_key_down("KeyW") {
             move_dir += forward;
         }
-        if input.is_key_down("ArrowDown") {
+        if input.is_key_down("ArrowDown") || input.is_key_down("KeyS") {
             move_dir -= forward;
         }
-        if input.is_key_down("ArrowRight") {
+        if input.is_key_down("ArrowRight") || input.is_key_down("KeyD") {
             move_dir += right;
         }
-        if input.is_key_down("ArrowLeft") {
+        if input.is_key_down("ArrowLeft") || input.is_key_down("KeyA") {
             move_dir -= right;
         }
 
@@ -82,5 +82,43 @@ impl CameraController for EditorCameraController {
 
         camera.target = self.target;
         camera.eye = self.target + offset;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn step_with_key(code: &str) -> Vec3 {
+        let mut ctrl = EditorCameraController::default();
+        let mut cam = Camera::default();
+        let mut input = InputState::default();
+        input.keys.insert(code.to_owned());
+        ctrl.update(&mut cam, &input, 0.1);
+        cam.target
+    }
+
+    #[test]
+    fn wasd_keys_match_arrow_camera_panning() {
+        let pairs = [
+            ("KeyW", "ArrowUp"),
+            ("KeyS", "ArrowDown"),
+            ("KeyA", "ArrowLeft"),
+            ("KeyD", "ArrowRight"),
+        ];
+        let origin = EditorCameraController::default().target;
+
+        for (wasd, arrow) in pairs {
+            let moved_wasd = step_with_key(wasd);
+            let moved_arrow = step_with_key(arrow);
+            assert!(
+                (moved_wasd - origin).length() > 1.0,
+                "{wasd} should move camera target"
+            );
+            assert!(
+                (moved_wasd - moved_arrow).length() < 1e-5,
+                "{wasd} target {moved_wasd:?} should equal {arrow} target {moved_arrow:?}"
+            );
+        }
     }
 }
