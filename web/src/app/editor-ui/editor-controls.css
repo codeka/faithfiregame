@@ -1,0 +1,103 @@
+.select {
+  background: #232a38;
+  color: #edf2f7;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.btn {
+  background: #252d3d;
+  color: #dbe4f0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: #303a4f;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn.active {
+  background: #3182ce;
+  border-color: #63b3ed;
+  color: #fff;
+}
+
+.btn-sm {
+  padding: 4px 8px;
+}
+
+.btn-primary {
+  background: #2b6cb0;
+  border-color: #4299e1;
+  color: #fff;
+}
+
+.btn-danger {
+  background: #742a2a;
+  border-color: #c53030;
+  color: #fed7d7;
+}
+
+.toolbox-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #f6ad55;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tool-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.option-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.slider-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: #cbd5e0;
+  font-variant-numeric: tabular-nums;
+}
+
+.slider-head {
+  display: flex;
+  justify-content: space-between;
+}
+
+.slider-field input[type='range'] {
+  width: 100%;
+  margin: 0;
+}
+
+.toolbox-hint {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.35;
+}

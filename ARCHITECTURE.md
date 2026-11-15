@@ -67,7 +67,7 @@ faith-and-fire/
 │       └── app/
 │           ├── game-canvas/    # Hosts <canvas> and initializes WASM module
 │           ├── hud/            # Action bars, target frame, inventory, chat, trade modals
-│           └── editor-ui/      # Dev-only Angular editor panels (stripped in prod builds)
+│           └── editor-ui/      # Dev-only Angular editor shell: toolbar/, create-area-modal/, and tools/{heightmap-tool,texture-tool,decoration-tool}/ (stripped in prod builds)
 └── world/                      # Gitignored runtime/authored world data (seeded on boot; backed up via scripts/backup_world.py)
     ├── assets/                 # Shared .glb models and terrain textures
     └── areas/

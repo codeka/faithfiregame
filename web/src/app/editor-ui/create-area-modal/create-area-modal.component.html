@@ -1,0 +1,75 @@
+<div class="modal-backdrop" (click)="state.closeNewAreaModal()">
+  <div class="modal" (click)="$event.stopPropagation()">
+    <h3>Create New Area</h3>
+    <label class="field">
+      <span>Area ID (lowercase, no spaces)</span>
+      <input
+        type="text"
+        name="newAreaId"
+        placeholder="e.g. dark_forest or tavern"
+        [ngModel]="newAreaId()"
+        (ngModelChange)="newAreaId.set($event)"
+      />
+    </label>
+    <label class="field">
+      <span>Display Name</span>
+      <input
+        type="text"
+        name="newAreaName"
+        placeholder="e.g. Dark Forest"
+        [ngModel]="newAreaName()"
+        (ngModelChange)="newAreaName.set($event)"
+      />
+    </label>
+    <label class="field">
+      <span>Area Kind</span>
+      <select name="newAreaKind" [ngModel]="newAreaKind()" (ngModelChange)="newAreaKind.set($event)">
+        <option value="outside">Outside (64×64m Infinite Tile Grid)</option>
+        <option value="inside_ephemeral">Inside · Ephemeral (e.g. Shop)</option>
+        <option value="inside_permanent">Inside · Permanent (e.g. Player Home)</option>
+      </select>
+    </label>
+    @if (newAreaKind() !== 'outside') {
+      <div class="dim-row">
+        <label class="field">
+          <span>Width (m)</span>
+          <input
+            type="number"
+            name="newAreaWidth"
+            min="8"
+            max="256"
+            [ngModel]="newAreaWidth()"
+            (ngModelChange)="newAreaWidth.set($event)"
+          />
+        </label>
+        <label class="field">
+          <span>Length (m)</span>
+          <input
+            type="number"
+            name="newAreaLength"
+            min="8"
+            max="256"
+            [ngModel]="newAreaLength()"
+            (ngModelChange)="newAreaLength.set($event)"
+          />
+        </label>
+      </div>
+    }
+    @if (newAreaError(); as err) {
+      <div class="modal-error">{{ err }}</div>
+    }
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" (click)="state.closeNewAreaModal()">
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="btn btn-primary"
+        [disabled]="creatingArea()"
+        (click)="createNewArea()"
+      >
+        {{ creatingArea() ? 'Creating...' : 'Create Area' }}
+      </button>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,85 @@
+<div class="toolbox-title">Decorations</div>
+
+<div class="tool-section">
+  <span class="section-label">Mode</span>
+  <div class="submode-grid">
+    @for (sub of submodes; track sub) {
+      <button
+        type="button"
+        class="btn btn-sm"
+        [class.active]="activeSubmode() === sub"
+        (click)="engine.setDecorationSubmode(sub)"
+      >
+        {{ sub[0].toUpperCase() + sub.slice(1) }}
+      </button>
+    }
+  </div>
+</div>
+
+<div class="tool-section">
+  <span class="section-label">Asset</span>
+  <div class="asset-list">
+    @for (item of state.catalog(); track item.id) {
+      <button
+        type="button"
+        class="btn btn-sm asset-btn"
+        [class.active]="state.selectedAssetId() === item.id"
+        (click)="state.selectAsset(item.id)"
+      >
+        <span>{{ item.name }}</span>
+        <span class="asset-cat">{{ item.category }}</span>
+      </button>
+    }
+  </div>
+</div>
+
+<div class="tool-section">
+  <span class="section-label">
+    @if (selectedProp(); as sel) {
+      Transform · Selected #{{ sel.id }}
+    } @else {
+      Transform · Preview
+    }
+  </span>
+  <label class="slider-field">
+    <span class="slider-head">
+      <span>Angle</span>
+      <span>{{ activeRotationDeg() }}°</span>
+    </span>
+    <input
+      type="range"
+      name="propRotation"
+      min="0"
+      max="359"
+      step="5"
+      [ngModel]="activeRotationDeg()"
+      (ngModelChange)="onRotationChange($event)"
+    />
+  </label>
+  <label class="slider-field">
+    <span class="slider-head">
+      <span>Scale</span>
+      <span>{{ activeScale().toFixed(2) }}×</span>
+    </span>
+    <input
+      type="range"
+      name="propScale"
+      min="0.4"
+      max="2.5"
+      step="0.1"
+      [ngModel]="activeScale()"
+      (ngModelChange)="onScaleChange($event)"
+    />
+  </label>
+</div>
+
+<button
+  type="button"
+  class="btn btn-sm btn-danger"
+  [disabled]="!selectedProp()"
+  (click)="engine.deleteSelectedProp()"
+>
+  Delete Selected
+</button>
+
+<div class="toolbox-hint">Q / E: Rotate · Del: Remove selected</div>

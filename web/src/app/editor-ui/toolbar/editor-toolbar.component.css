@@ -1,0 +1,78 @@
+:host {
+  display: block;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.toolbar {
+  pointer-events: auto;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(16, 20, 28, 0.92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.right-group {
+  margin-left: auto;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #f6ad55;
+  margin-right: 4px;
+}
+
+.divider {
+  width: 1px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.coord-pill,
+.save-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e0;
+}
+
+.coord-pill {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 252px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.save-badge.dirty {
+  background: rgba(237, 137, 54, 0.25);
+  color: #fbd38d;
+}
+
+.save-badge.error {
+  background: rgba(229, 62, 62, 0.28);
+  color: #feb2b2;
+}
+
+.hint {
+  font-size: 11px;
+  color: #94a3b8;
+}

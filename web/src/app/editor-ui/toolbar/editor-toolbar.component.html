@@ -1,0 +1,80 @@
+<header class="toolbar">
+  <!-- Area Switcher -->
+  <div class="group">
+    <span class="brand">Faith &amp; Fire Editor</span>
+    <select
+      class="select"
+      name="activeArea"
+      aria-label="Active Area"
+      [ngModel]="state.selectedAreaId()"
+      (ngModelChange)="state.selectArea($event)"
+    >
+      @for (area of state.areas(); track area.id) {
+        <option [value]="area.id">{{ describeArea(area) }}</option>
+      }
+    </select>
+    <button type="button" class="btn btn-secondary" (click)="state.openNewAreaModal()">+ Area</button>
+
+    <span class="coord-pill">
+      @if (state.status(); as s) {
+        @if (s.isOutside) {
+          Tile ({{ s.currentTile[0] }}, {{ s.currentTile[1] }})
+        } @else if (s.dimensions) {
+          {{ s.dimensions[0] }}×{{ s.dimensions[1] }}m
+        }
+        @if (s.cursorPos; as p) {
+          · {{ p[0].toFixed(1) }}, {{ p[1].toFixed(1) }}, {{ p[2].toFixed(1) }}
+        } @else {
+          · —, —, —
+        }
+      } @else {
+        Tile (0, 0) · —, —, —
+      }
+    </span>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Primary Tools -->
+  <div class="group">
+    <button
+      type="button"
+      class="btn"
+      [class.active]="state.activeTool() === 'heightmap'"
+      (click)="engine.setTool('heightmap')"
+    >
+      Heightmap
+    </button>
+    <button
+      type="button"
+      class="btn"
+      [class.active]="state.activeTool() === 'texture'"
+      (click)="engine.setTool('texture')"
+    >
+      Texture
+    </button>
+    <button
+      type="button"
+      class="btn"
+      [class.active]="state.activeTool() === 'decoration'"
+      (click)="engine.setTool('decoration')"
+    >
+      Decoration
+    </button>
+  </div>
+
+  <!-- Status & Save -->
+  <div class="group right-group">
+    <span class="hint">WASD / Arrows: Pan · Mid-Drag: Orbit · Wheel: Zoom</span>
+    @if (state.status(); as s) {
+      <span
+        class="save-badge"
+        [class.dirty]="s.saveState === 'Unsaved'"
+        [class.error]="s.saveState.includes('fail')"
+      >
+        {{ s.saveState }}
+      </span>
+    }
+    <button type="button" class="btn btn-primary" (click)="engine.saveNow()">Save</button>
+  </div>
+</header>

@@ -1,0 +1,30 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.submode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.asset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.asset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.asset-cat {
+  font-size: 10px;
+  opacity: 0.65;
+  text-transform: capitalize;
+}
