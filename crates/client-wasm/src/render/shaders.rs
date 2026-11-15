@@ -250,6 +250,39 @@ void main() {
 }
 "#;
 
+#[cfg_attr(not(feature = "editor"), allow(dead_code))]
+pub(super) const GIZMO_VERT: &str = r#"#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_normal;
+
+uniform mat4 u_view_proj;
+uniform mat4 u_model;
+
+out vec3 v_normal;
+
+void main() {
+    gl_Position = u_view_proj * u_model * vec4(a_pos, 1.0);
+    v_normal = mat3(u_model) * a_normal;
+}
+"#;
+
+#[cfg_attr(not(feature = "editor"), allow(dead_code))]
+pub(super) const GIZMO_FRAG: &str = r#"#version 300 es
+precision highp float;
+
+uniform vec4 u_color;
+in vec3 v_normal;
+out vec4 frag_color;
+
+void main() {
+    vec3 n = normalize(v_normal);
+    float shade = 0.68 + 0.32 * max(dot(n, normalize(vec3(0.35, 0.85, 0.45))), 0.0);
+    frag_color = vec4(u_color.rgb * shade, u_color.a);
+}
+"#;
+
 pub(super) fn compile_program(
     gl: &glow::Context,
     vert_src: &str,

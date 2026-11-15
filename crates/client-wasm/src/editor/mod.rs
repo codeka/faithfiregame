@@ -1,4 +1,5 @@
 mod decoration_tool;
+mod gizmo;
 mod heightmap_tool;
 pub mod io;
 mod scene_render;

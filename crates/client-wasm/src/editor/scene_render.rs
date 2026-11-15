@@ -4,6 +4,7 @@ use shared::world::{AreaKind, PropPlacement, TILE_SIZE};
 use crate::camera::Camera;
 use crate::render::{BrushOverlay, Renderer};
 
+use super::gizmo::gizmo_scale;
 use super::state::EditorState;
 use super::types::{DecorationSubMode, EditorTool};
 
@@ -62,11 +63,39 @@ impl EditorState {
                     id: 0,
                     asset_id: self.active_asset_id.clone(),
                     position: hit.to_array(),
-                    rotation_y: self.preview_rotation_y,
+                    rotation: self.preview_rotation,
                     scale: [self.preview_scale; 3],
                 };
                 renderer.draw_prop(camera, mesh, &ghost, Vec4::new(0.65, 1.0, 0.78, 0.60));
                 renderer.draw_selection_ring(camera, &ghost, 1.1 * self.preview_scale);
+            }
+        }
+
+        // 3-axis gizmos in Free Move / Rotate submodes (drawn last after depth clear)
+        if self.tool == EditorTool::Decoration {
+            if let Some(prop) = self.find_selected_prop() {
+                let origin = Vec3::from(prop.position);
+                let scale = gizmo_scale(camera, origin);
+                match self.decoration_submode {
+                    DecorationSubMode::FreeMove => {
+                        let active = self
+                            .gizmo_drag
+                            .map(|d| d.axis)
+                            .or(self.hovered_gizmo_axis)
+                            .map(|a| a.index());
+                        let ground_y = self.terrain_height_at(origin.x, origin.z);
+                        renderer.draw_translate_gizmo(camera, origin, scale, active, ground_y);
+                    }
+                    DecorationSubMode::Rotate => {
+                        let active = self
+                            .rotate_drag
+                            .map(|d| d.axis)
+                            .or(self.hovered_rotate_axis)
+                            .map(|a| a.index());
+                        renderer.draw_rotate_gizmo(camera, origin, scale, active);
+                    }
+                    DecorationSubMode::Place | DecorationSubMode::Move => {}
+                }
             }
         }
     }

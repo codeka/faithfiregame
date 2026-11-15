@@ -22,7 +22,7 @@ pub async fn save_outside_tile(
     let (tx, ty) =
         parse_tile_coord(&tile_coord).ok_or((StatusCode::BAD_REQUEST, "invalid tile coord".to_owned()))?;
 
-    let mut vis: TileVisData = postcard::from_bytes(&body)
+    let mut vis = TileVisData::from_postcard_bytes(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid TileVisData: {e}")))?;
 
     if vis.heights.len() != TILE_VERTICES * TILE_VERTICES || vis.splat_map.len() != TILE_SIZE * TILE_SIZE {
@@ -81,7 +81,7 @@ pub async fn save_inside_area(
         return Err((StatusCode::BAD_REQUEST, "invalid area id".to_owned()));
     }
 
-    let mut vis: InsideVisData = postcard::from_bytes(&body)
+    let mut vis = InsideVisData::from_postcard_bytes(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid InsideVisData: {e}")))?;
 
     vis.recompute_slope_walkability();

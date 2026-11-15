@@ -22,7 +22,8 @@ export interface AssetEntry {
 export interface SelectedPropInfo {
   id: number;
   assetId: string;
-  rotationDeg: number;
+  position: [number, number, number];
+  rotationDeg: [number, number, number];
   scale: number;
 }
 
@@ -38,9 +39,9 @@ export interface EditorStatus {
   tool: 'heightmap' | 'texture' | 'decoration';
   heightMode: 'raise' | 'lower' | 'smooth' | 'flatten';
   textureLayer: number;
-  decorationSubmode: 'place' | 'move' | 'rotate';
+  decorationSubmode: 'place' | 'move' | 'free_move' | 'rotate';
   selectedProp: SelectedPropInfo | null;
-  previewRotationDeg: number;
+  previewRotationDeg: [number, number, number];
   previewScale: number;
 }
 
@@ -139,8 +140,13 @@ export class EngineService implements OnDestroy {
     this.refreshStatus();
   }
 
-  setDecorationSubmode(submode: 'place' | 'move' | 'rotate'): void {
+  setDecorationSubmode(submode: 'place' | 'move' | 'free_move' | 'rotate'): void {
     this.handle?.set_decoration_submode(submode);
+    this.refreshStatus();
+  }
+
+  snapSelectedPropToTerrain(): void {
+    this.handle?.snap_selected_prop_to_terrain();
     this.refreshStatus();
   }
 
@@ -148,8 +154,13 @@ export class EngineService implements OnDestroy {
     this.handle?.set_decoration_asset(assetId);
   }
 
-  setPropRotationDeg(deg: number): void {
-    this.handle?.set_selected_prop_rotation_deg(deg);
+  setPropRotationAxisDeg(axis: 0 | 1 | 2, deg: number): void {
+    this.handle?.set_selected_prop_rotation_axis_deg(axis, deg);
+    this.refreshStatus();
+  }
+
+  resetPropRotation(): void {
+    this.handle?.reset_selected_prop_rotation();
     this.refreshStatus();
   }
 

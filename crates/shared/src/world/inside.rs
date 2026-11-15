@@ -104,6 +104,34 @@ impl InsideVisData {
             }
         }
     }
+
+    /// Decodes a postcard-encoded inside visual payload, falling back to legacy single-axis
+    /// `rotation_y` prop records so existing interior world files load cleanly.
+    pub fn from_postcard_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
+        #[derive(Deserialize)]
+        struct LegacyInsideVisData {
+            width: u32,
+            length: u32,
+            walkable: Vec<u64>,
+            heights: Vec<f32>,
+            splat_map: Vec<u32>,
+            props: Vec<super::types::LegacyPropPlacement>,
+        }
+
+        match postcard::from_bytes::<Self>(bytes) {
+            Ok(vis) => Ok(vis),
+            Err(primary_err) => postcard::from_bytes::<LegacyInsideVisData>(bytes)
+                .map(|legacy| Self {
+                    width: legacy.width,
+                    length: legacy.length,
+                    walkable: legacy.walkable,
+                    heights: legacy.heights,
+                    splat_map: legacy.splat_map,
+                    props: legacy.props.into_iter().map(Into::into).collect(),
+                })
+                .map_err(|_| primary_err),
+        }
+    }
 }
 
 /// Derives `InsideSimData` from an `InsideVisData`, preserving existing triggers and spawns.

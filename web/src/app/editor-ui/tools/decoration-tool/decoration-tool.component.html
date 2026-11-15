@@ -2,15 +2,15 @@
 
 <div class="tool-section">
   <span class="section-label">Mode</span>
-  <div class="submode-grid">
-    @for (sub of submodes; track sub) {
+  <div class="option-grid">
+    @for (sub of submodes; track sub.id) {
       <button
         type="button"
         class="btn btn-sm"
-        [class.active]="activeSubmode() === sub"
-        (click)="engine.setDecorationSubmode(sub)"
+        [class.active]="activeSubmode() === sub.id"
+        (click)="engine.setDecorationSubmode(sub.id)"
       >
-        {{ sub[0].toUpperCase() + sub.slice(1) }}
+        {{ sub.label }}
       </button>
     }
   </div>
@@ -41,21 +41,29 @@
       Transform · Preview
     }
   </span>
-  <label class="slider-field">
-    <span class="slider-head">
-      <span>Angle</span>
-      <span>{{ activeRotationDeg() }}°</span>
-    </span>
-    <input
-      type="range"
-      name="propRotation"
-      min="0"
-      max="359"
-      step="5"
-      [ngModel]="activeRotationDeg()"
-      (ngModelChange)="onRotationChange($event)"
-    />
-  </label>
+  @if (selectedProp(); as sel) {
+    <div class="pos-readout">
+      X {{ sel.position[0].toFixed(2) }} · Y {{ sel.position[1].toFixed(2) }} · Z {{ sel.position[2].toFixed(2) }}
+    </div>
+  }
+  @for (rotAxis of rotationAxes; track rotAxis.axis) {
+    <label class="slider-field {{ rotAxis.accentClass }}">
+      <span class="slider-head">
+        <span class="axis-tag">{{ rotAxis.label }}</span>
+        <span>{{ activeRotationDeg()[rotAxis.axis] }}°</span>
+      </span>
+      <input
+        type="range"
+        [name]="rotAxis.name"
+        class="{{ rotAxis.accentClass }}"
+        min="0"
+        max="359"
+        step="1"
+        [ngModel]="activeRotationDeg()[rotAxis.axis]"
+        (ngModelChange)="onRotationAxisChange(rotAxis.axis, $event)"
+      />
+    </label>
+  }
   <label class="slider-field">
     <span class="slider-head">
       <span>Scale</span>
@@ -71,6 +79,24 @@
       (ngModelChange)="onScaleChange($event)"
     />
   </label>
+  <div class="action-row">
+    <button
+      type="button"
+      class="btn btn-sm"
+      (click)="engine.resetPropRotation()"
+    >
+      Reset Rotation
+    </button>
+    @if (selectedProp()) {
+      <button
+        type="button"
+        class="btn btn-sm"
+        (click)="engine.snapSelectedPropToTerrain()"
+      >
+        Snap to Terrain
+      </button>
+    }
+  </div>
 </div>
 
 <button
@@ -82,4 +108,4 @@
   Delete Selected
 </button>
 
-<div class="toolbox-hint">Q / E: Rotate · Del: Remove selected</div>
+<div class="toolbox-hint">Drag X/Y/Z gizmo or rings · Q/E: Yaw · Del: Remove</div>

@@ -4,10 +4,12 @@ use shared::world::PropPlacement;
 
 use crate::camera::Camera;
 
+use super::gizmo_mesh::GizmoMeshGpu;
 use super::procedural_textures::create_terrain_texture_array;
 use super::prop_mesh::{PropMeshGpu, create_selection_ring_mesh, prop_model_matrix};
 use super::shaders::{
-    LINE_FRAG, LINE_VERT, PROP_FRAG, PROP_VERT, TERRAIN_FRAG, TERRAIN_VERT, compile_program,
+    GIZMO_FRAG, GIZMO_VERT, LINE_FRAG, LINE_VERT, PROP_FRAG, PROP_VERT, TERRAIN_FRAG, TERRAIN_VERT,
+    compile_program,
 };
 use super::shadow_map::{ShadowMapGpu, compute_light_space_matrix, sun_direction};
 use super::terrain_mesh::{BrushOverlay, TerrainMeshGpu};
@@ -17,9 +19,13 @@ pub struct Renderer {
     terrain_prog: glow::Program,
     prop_prog: glow::Program,
     line_prog: glow::Program,
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    gizmo_prog: glow::Program,
     tex_array: glow::Texture,
     ring_vao: glow::VertexArray,
     ring_vert_count: i32,
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    gizmo_mesh: GizmoMeshGpu,
     shadow_map: ShadowMapGpu,
     light_view_proj: Mat4,
     pub sun_dir: Vec3,
@@ -33,8 +39,10 @@ impl Renderer {
         let terrain_prog = compile_program(&gl, TERRAIN_VERT, TERRAIN_FRAG)?;
         let prop_prog = compile_program(&gl, PROP_VERT, PROP_FRAG)?;
         let line_prog = compile_program(&gl, LINE_VERT, LINE_FRAG)?;
+        let gizmo_prog = compile_program(&gl, GIZMO_VERT, GIZMO_FRAG)?;
         let tex_array = create_terrain_texture_array(&gl)?;
         let (ring_vao, ring_vert_count) = create_selection_ring_mesh(&gl)?;
+        let gizmo_mesh = GizmoMeshGpu::new(&gl)?;
         let shadow_map = ShadowMapGpu::new(&gl)?;
 
         unsafe {
@@ -49,9 +57,11 @@ impl Renderer {
             terrain_prog,
             prop_prog,
             line_prog,
+            gizmo_prog,
             tex_array,
             ring_vao,
             ring_vert_count,
+            gizmo_mesh,
             shadow_map,
             light_view_proj: Mat4::IDENTITY,
             sun_dir: sun_direction(),
@@ -245,7 +255,7 @@ impl Renderer {
             placement.position[0],
             placement.position[1] + 0.08,
             placement.position[2],
-        )) * Mat4::from_rotation_y(placement.rotation_y)
+        )) * Mat4::from_rotation_y(placement.rotation[1])
             * Mat4::from_scale(Vec3::splat(radius.max(0.8)));
 
         unsafe {
@@ -258,6 +268,142 @@ impl Renderer {
 
             gl.bind_vertex_array(Some(self.ring_vao));
             gl.draw_arrays(glow::LINES, 0, self.ring_vert_count);
+            gl.bind_vertex_array(None);
+        }
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_translate_gizmo(
+        &self,
+        camera: &Camera,
+        origin: Vec3,
+        scale: f32,
+        active_axis: Option<u8>,
+        ground_y: Option<f32>,
+    ) {
+        let vp = camera.view_proj_matrix();
+
+        unsafe {
+            let gl = &self.gl;
+            if let Some(gy) = ground_y {
+                if (origin.y - gy).abs() > 0.03 {
+                    gl.use_program(Some(self.line_prog));
+                    let loc = |name| gl.get_uniform_location(self.line_prog, name);
+                    gl.uniform_matrix_4_f32_slice(loc("u_view_proj").as_ref(), false, vp.as_ref());
+                    gl.uniform_4_f32(loc("u_color").as_ref(), 0.85, 0.92, 1.0, 0.78);
+                    gl.bind_vertex_array(Some(self.gizmo_mesh.ref_vao));
+
+                    let line_model = Mat4::from_translation(Vec3::new(origin.x, gy, origin.z))
+                        * Mat4::from_scale(Vec3::new(1.0, origin.y - gy, 1.0));
+                    gl.uniform_matrix_4_f32_slice(
+                        loc("u_model").as_ref(),
+                        false,
+                        line_model.as_ref(),
+                    );
+                    gl.draw_arrays(glow::LINES, 0, 2);
+
+                    let cross_model = Mat4::from_translation(Vec3::new(origin.x, gy + 0.05, origin.z))
+                        * Mat4::from_scale(Vec3::splat(0.35));
+                    gl.uniform_matrix_4_f32_slice(
+                        loc("u_model").as_ref(),
+                        false,
+                        cross_model.as_ref(),
+                    );
+                    gl.draw_arrays(glow::LINES, 2, 4);
+                }
+            }
+
+            // Clear depth so the gizmo renders reliably on top of terrain/props while self-depth-sorting.
+            gl.clear(glow::DEPTH_BUFFER_BIT);
+            gl.disable(glow::CULL_FACE);
+
+            gl.use_program(Some(self.gizmo_prog));
+            let loc = |name| gl.get_uniform_location(self.gizmo_prog, name);
+            gl.uniform_matrix_4_f32_slice(loc("u_view_proj").as_ref(), false, vp.as_ref());
+
+            let hub_model = Mat4::from_translation(origin) * Mat4::from_scale(Vec3::splat(scale));
+            gl.uniform_matrix_4_f32_slice(loc("u_model").as_ref(), false, hub_model.as_ref());
+            gl.uniform_4_f32(loc("u_color").as_ref(), 0.92, 0.94, 0.98, 1.0);
+            gl.bind_vertex_array(Some(self.gizmo_mesh.hub_vao));
+            gl.draw_elements(
+                glow::TRIANGLES,
+                self.gizmo_mesh.hub_index_count,
+                glow::UNSIGNED_SHORT,
+                0,
+            );
+
+            self.draw_gizmo_axis_meshes(
+                vp,
+                origin,
+                scale,
+                active_axis,
+                self.gizmo_mesh.arrow_vao,
+                self.gizmo_mesh.arrow_index_count,
+            );
+            gl.enable(glow::CULL_FACE);
+        }
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_rotate_gizmo(
+        &self,
+        camera: &Camera,
+        origin: Vec3,
+        scale: f32,
+        active_axis: Option<u8>,
+    ) {
+        let vp = camera.view_proj_matrix();
+        unsafe {
+            let gl = &self.gl;
+            gl.clear(glow::DEPTH_BUFFER_BIT);
+            gl.disable(glow::CULL_FACE);
+            gl.use_program(Some(self.gizmo_prog));
+            self.draw_gizmo_axis_meshes(
+                vp,
+                origin,
+                scale,
+                active_axis,
+                self.gizmo_mesh.ring_vao,
+                self.gizmo_mesh.ring_index_count,
+            );
+            gl.enable(glow::CULL_FACE);
+        }
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    fn draw_gizmo_axis_meshes(
+        &self,
+        vp: Mat4,
+        origin: Vec3,
+        scale: f32,
+        active_axis: Option<u8>,
+        vao: glow::VertexArray,
+        index_count: i32,
+    ) {
+        let highlight = [1.0f32, 0.90, 0.28, 1.0];
+        let axes: [(u8, Mat4, [f32; 4]); 3] = [
+            (0, Mat4::from_rotation_z(-std::f32::consts::FRAC_PI_2), [0.95, 0.26, 0.26, 1.0]),
+            (1, Mat4::IDENTITY, [0.28, 0.86, 0.36, 1.0]),
+            (2, Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2), [0.28, 0.56, 0.98, 1.0]),
+        ];
+        unsafe {
+            let gl = &self.gl;
+            let loc = |name| gl.get_uniform_location(self.gizmo_prog, name);
+            gl.uniform_matrix_4_f32_slice(loc("u_view_proj").as_ref(), false, vp.as_ref());
+            gl.bind_vertex_array(Some(vao));
+            let translate_origin = Mat4::from_translation(origin);
+            let scale_mat = Mat4::from_scale(Vec3::splat(scale));
+            for (axis_idx, rot, base_color) in axes {
+                let color = if active_axis == Some(axis_idx) {
+                    highlight
+                } else {
+                    base_color
+                };
+                let model = translate_origin * rot * scale_mat;
+                gl.uniform_matrix_4_f32_slice(loc("u_model").as_ref(), false, model.as_ref());
+                gl.uniform_4_f32(loc("u_color").as_ref(), color[0], color[1], color[2], color[3]);
+                gl.draw_elements(glow::TRIANGLES, index_count, glow::UNSIGNED_SHORT, 0);
+            }
             gl.bind_vertex_array(None);
         }
     }

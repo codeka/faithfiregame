@@ -44,8 +44,29 @@ pub struct PropPlacement {
     pub id: u64,
     pub asset_id: String,
     pub position: [f32; 3],
+    pub rotation: [f32; 3],
+    pub scale: [f32; 3],
+}
+
+#[derive(Deserialize)]
+pub(crate) struct LegacyPropPlacement {
+    pub id: u64,
+    pub asset_id: String,
+    pub position: [f32; 3],
     pub rotation_y: f32,
     pub scale: [f32; 3],
+}
+
+impl From<LegacyPropPlacement> for PropPlacement {
+    fn from(legacy: LegacyPropPlacement) -> Self {
+        Self {
+            id: legacy.id,
+            asset_id: legacy.asset_id,
+            position: legacy.position,
+            rotation: [0.0, legacy.rotation_y, 0.0],
+            scale: legacy.scale,
+        }
+    }
 }
 
 /// Catalog entry for a `.glb` decoration or prop asset served over HTTP(S).

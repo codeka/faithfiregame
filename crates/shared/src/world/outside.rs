@@ -63,6 +63,30 @@ impl TileVisData {
             }
         }
     }
+
+    /// Decodes a postcard-encoded tile visual payload, falling back to legacy single-axis
+    /// `rotation_y` prop records so existing world files load cleanly.
+    pub fn from_postcard_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
+        #[derive(Deserialize)]
+        struct LegacyTileVisData {
+            walkable: WalkMask,
+            heights: Vec<f32>,
+            splat_map: Vec<u32>,
+            props: Vec<super::types::LegacyPropPlacement>,
+        }
+
+        match postcard::from_bytes::<Self>(bytes) {
+            Ok(vis) => Ok(vis),
+            Err(primary_err) => postcard::from_bytes::<LegacyTileVisData>(bytes)
+                .map(|legacy| Self {
+                    walkable: legacy.walkable,
+                    heights: legacy.heights,
+                    splat_map: legacy.splat_map,
+                    props: legacy.props.into_iter().map(Into::into).collect(),
+                })
+                .map_err(|_| primary_err),
+        }
+    }
 }
 
 /// Derives `TileSimData` from a `TileVisData`, computing cell elevations and steep-slope walkability
@@ -116,5 +140,43 @@ mod tests {
         let sim = compute_sim_from_vis(&vis, None);
         assert!(!sim.walkable.get(10, 10));
         assert!(sim.elevation[10 * TILE_SIZE + 10] > 1.0);
+    }
+
+    #[test]
+    fn legacy_tile_vis_decoding_preserves_rotation_y() {
+        #[derive(Serialize)]
+        struct LegacyProp {
+            id: u64,
+            asset_id: String,
+            position: [f32; 3],
+            rotation_y: f32,
+            scale: [f32; 3],
+        }
+        #[derive(Serialize)]
+        struct LegacyTile {
+            walkable: WalkMask,
+            heights: Vec<f32>,
+            splat_map: Vec<u32>,
+            props: Vec<LegacyProp>,
+        }
+
+        let base = TileVisData::flat_default();
+        let legacy = LegacyTile {
+            walkable: base.walkable,
+            heights: base.heights,
+            splat_map: base.splat_map,
+            props: vec![LegacyProp {
+                id: 7,
+                asset_id: "ruin_stone".to_owned(),
+                position: [12.0, 1.5, 34.0],
+                rotation_y: 1.25,
+                scale: [1.0, 1.0, 1.0],
+            }],
+        };
+
+        let bytes = postcard::to_allocvec(&legacy).unwrap();
+        let decoded = TileVisData::from_postcard_bytes(&bytes).unwrap();
+        assert_eq!(decoded.props.len(), 1);
+        assert_eq!(decoded.props[0].rotation, [0.0, 1.25, 0.0]);
     }
 }

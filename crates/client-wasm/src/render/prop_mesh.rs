@@ -67,7 +67,7 @@ impl PropMeshGpu {
 
 pub fn prop_model_matrix(p: &PropPlacement) -> Mat4 {
     Mat4::from_translation(Vec3::from(p.position))
-        * Mat4::from_rotation_y(p.rotation_y)
+        * Mat4::from_euler(glam::EulerRot::YXZ, p.rotation[1], p.rotation[0], p.rotation[2])
         * Mat4::from_scale(Vec3::from(p.scale))
 }
 

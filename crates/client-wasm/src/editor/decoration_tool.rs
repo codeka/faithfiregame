@@ -1,10 +1,14 @@
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use shared::world::{AreaKind, PropPlacement, TILE_SIZE};
 
 use crate::camera::Camera;
 use crate::input::InputState;
 use crate::render::prop_model_matrix;
 
+use super::gizmo::{
+    GizmoDragState, begin_rotate_drag, compute_drag_plane_normal, pick_gizmo_axis,
+    pick_rotate_gizmo_axis, project_ray_on_axis, update_rotate_drag,
+};
 use super::state::EditorState;
 use super::types::DecorationSubMode;
 
@@ -25,7 +29,7 @@ impl EditorState {
                             id,
                             asset_id: self.active_asset_id.clone(),
                             position: hit.to_array(),
-                            rotation_y: self.preview_rotation_y,
+                            rotation: self.preview_rotation,
                             scale: [self.preview_scale; 3],
                         };
                         if self.insert_prop(placement) {
@@ -55,24 +59,127 @@ impl EditorState {
                     }
                 }
             }
-            DecorationSubMode::Rotate => {
+            DecorationSubMode::FreeMove => {
+                let ray_opt = camera.screen_ray(
+                    input.mouse_x,
+                    input.mouse_y,
+                    input.canvas_width,
+                    input.canvas_height,
+                );
+
                 if input.left_just_pressed {
-                    if let Some((orig, dir)) = camera.screen_ray(
-                        input.mouse_x,
-                        input.mouse_y,
-                        input.canvas_width,
-                        input.canvas_height,
-                    ) {
-                        if let Some(hit_id) = self.raycast_prop(orig, dir) {
-                            self.selected_prop_id = Some(hit_id);
+                    if let Some((orig, dir)) = ray_opt {
+                        let selected_pos = self.find_selected_prop().map(|p| Vec3::from(p.position));
+                        let hit_axis = selected_pos
+                            .and_then(|pos| pick_gizmo_axis(camera, pos, orig, dir));
+                        if let (Some(pos), Some(axis)) = (selected_pos, hit_axis) {
+                            let plane_normal = compute_drag_plane_normal(camera, pos, axis);
+                            if let Some(start_s) =
+                                project_ray_on_axis(orig, dir, pos, axis.unit_dir(), plane_normal)
+                            {
+                                self.gizmo_drag = Some(GizmoDragState {
+                                    axis,
+                                    origin: pos,
+                                    plane_normal,
+                                    start_s,
+                                });
+                                self.hovered_gizmo_axis = Some(axis);
+                            }
+                        } else {
+                            self.selected_prop_id = self.raycast_prop(orig, dir);
+                            self.gizmo_drag = None;
+                            self.hovered_gizmo_axis = None;
                         }
-                        self.rotating_prop = self.selected_prop_id.is_some();
                     }
                 }
-                if input.left_mouse_down && self.rotating_prop && input.mouse_delta.0.abs() > 0.0 {
-                    if let Some(id) = self.selected_prop_id {
-                        self.rotate_prop_by(id, input.mouse_delta.0 * 0.015, now_ms);
+
+                if let (Some(id), Some(drag), Some((orig, dir))) = (
+                    input.left_mouse_down.then_some(self.selected_prop_id).flatten(),
+                    self.gizmo_drag,
+                    ray_opt,
+                ) {
+                    if let Some(s_now) =
+                        project_ray_on_axis(orig, dir, drag.origin, drag.axis.unit_dir(), drag.plane_normal)
+                    {
+                        let delta = (s_now - drag.start_s).clamp(-200.0, 200.0);
+                        let mut new_pos = drag.origin + drag.axis.unit_dir() * delta;
+                        new_pos.y = new_pos.y.clamp(-64.0, 256.0);
+                        if self.move_prop_to(id, new_pos) {
+                            self.mark_unsaved(now_ms);
+                        }
                     }
+                }
+
+                if let Some(drag) = self.gizmo_drag {
+                    self.hovered_gizmo_axis = Some(drag.axis);
+                } else {
+                    let selected_pos = self.find_selected_prop().map(|p| Vec3::from(p.position));
+                    self.hovered_gizmo_axis = match (selected_pos, ray_opt) {
+                        (Some(pos), Some((orig, dir))) => pick_gizmo_axis(camera, pos, orig, dir),
+                        _ => None,
+                    };
+                }
+            }
+            DecorationSubMode::Rotate => {
+                let ray_opt = camera.screen_ray(
+                    input.mouse_x,
+                    input.mouse_y,
+                    input.canvas_width,
+                    input.canvas_height,
+                );
+                let mouse_px = Vec2::new(input.mouse_x, input.mouse_y);
+
+                if input.left_just_pressed {
+                    if let Some((orig, dir)) = ray_opt {
+                        let selected = self
+                            .find_selected_prop()
+                            .map(|p| (Vec3::from(p.position), p.rotation));
+                        let hit_axis = selected
+                            .and_then(|(pos, _)| pick_rotate_gizmo_axis(camera, pos, orig, dir));
+                        if let (Some((pos, start_rot)), Some(axis)) = (selected, hit_axis) {
+                            self.rotate_drag = Some(begin_rotate_drag(
+                                camera,
+                                pos,
+                                axis,
+                                orig,
+                                dir,
+                                mouse_px,
+                                input.canvas_width,
+                                input.canvas_height,
+                                start_rot,
+                            ));
+                            self.hovered_rotate_axis = Some(axis);
+                        } else {
+                            self.selected_prop_id = self.raycast_prop(orig, dir);
+                            self.rotate_drag = None;
+                            self.hovered_rotate_axis = None;
+                        }
+                    }
+                }
+
+                if input.left_mouse_down {
+                    if let (Some(id), Some(mut drag), Some((orig, dir))) =
+                        (self.selected_prop_id, self.rotate_drag, ray_opt)
+                    {
+                        if let Some(next_rot) = update_rotate_drag(&mut drag, orig, dir, mouse_px) {
+                            if self.modify_prop(id, |p| p.rotation = next_rot) {
+                                self.mark_unsaved(now_ms);
+                            }
+                        }
+                        self.rotate_drag = Some(drag);
+                    }
+                }
+
+                if let Some(drag) = self.rotate_drag {
+                    self.hovered_rotate_axis = Some(drag.axis);
+                } else {
+                    let selected_pos = self.find_selected_prop().map(|p| Vec3::from(p.position));
+                    self.hovered_rotate_axis = match (selected_pos, ray_opt) {
+                        (Some(pos), Some((orig, dir))) => {
+                            pick_rotate_gizmo_axis(camera, pos, orig, dir)
+                        }
+                        _ => None,
+                    };
                 }
             }
         }
@@ -151,20 +258,38 @@ impl EditorState {
 
     pub(super) fn rotate_prop_by(&mut self, prop_id: u64, delta_rad: f32, now_ms: f64) {
         if self.modify_prop(prop_id, |p| {
-            p.rotation_y = (p.rotation_y + delta_rad).rem_euclid(std::f32::consts::TAU);
+            p.rotation[1] = (p.rotation[1] + delta_rad).rem_euclid(std::f32::consts::TAU);
         }) {
             self.mark_unsaved(now_ms);
         }
     }
 
-    pub fn set_selected_or_preview_rotation_deg(&mut self, degrees: f32, now_ms: f64) {
+    pub fn set_selected_or_preview_rotation_axis_deg(
+        &mut self,
+        axis: usize,
+        degrees: f32,
+        now_ms: f64,
+    ) {
+        if axis >= 3 {
+            return;
+        }
         let rad = degrees.to_radians().rem_euclid(std::f32::consts::TAU);
         if let Some(id) = self.selected_prop_id {
-            if self.modify_prop(id, |p| p.rotation_y = rad) {
+            if self.modify_prop(id, |p| p.rotation[axis] = rad) {
                 self.mark_unsaved(now_ms);
             }
         } else {
-            self.preview_rotation_y = rad;
+            self.preview_rotation[axis] = rad;
+        }
+    }
+
+    pub fn reset_selected_or_preview_rotation(&mut self, now_ms: f64) {
+        if let Some(id) = self.selected_prop_id {
+            if self.modify_prop(id, |p| p.rotation = [0.0; 3]) {
+                self.mark_unsaved(now_ms);
+            }
+        } else {
+            self.preview_rotation = [0.0; 3];
         }
     }
 
@@ -176,6 +301,19 @@ impl EditorState {
             }
         } else {
             self.preview_scale = s;
+        }
+    }
+
+    pub fn snap_selected_prop_to_terrain(&mut self, now_ms: f64) {
+        let Some((id, pos)) = self.find_selected_prop().map(|p| (p.id, Vec3::from(p.position)))
+        else {
+            return;
+        };
+        let Some(ground_y) = self.terrain_height_at(pos.x, pos.z) else {
+            return;
+        };
+        if self.move_prop_to(id, Vec3::new(pos.x, ground_y, pos.z)) {
+            self.mark_unsaved(now_ms);
         }
     }
 

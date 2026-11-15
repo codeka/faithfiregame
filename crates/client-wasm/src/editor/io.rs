@@ -35,7 +35,7 @@ pub(crate) fn spawn_frame_io(inner: &Rc<RefCell<EngineInner>>, batch: FrameIoBat
             let url = format!("/world/areas/{area_id}/{tx},{ty}/vis.bin");
             match http_get_bytes(&url).await {
                 Ok((200, bytes)) => {
-                    let decoded = postcard::from_bytes::<TileVisData>(&bytes).ok();
+                    let decoded = TileVisData::from_postcard_bytes(&bytes).ok();
                     let mut st = weak.borrow_mut();
                     let EngineInner {
                         renderer, editor, ..
@@ -64,7 +64,7 @@ pub(crate) fn spawn_frame_io(inner: &Rc<RefCell<EngineInner>>, batch: FrameIoBat
         spawn_local(async move {
             let url = format!("/world/areas/{area_id}/vis.bin");
             if let Ok((200, bytes)) = http_get_bytes(&url).await {
-                if let Ok(vis) = postcard::from_bytes::<InsideVisData>(&bytes) {
+                if let Ok(vis) = InsideVisData::from_postcard_bytes(&bytes) {
                     let mut st = weak.borrow_mut();
                     let EngineInner {
                         renderer, editor, ..

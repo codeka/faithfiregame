@@ -8,6 +8,7 @@ use crate::glb_loader::parse_glb;
 use crate::input::InputState;
 use crate::render::{PropMeshGpu, TerrainMeshGpu};
 
+use super::gizmo::{GizmoAxis, GizmoDragState};
 use super::types::{
     DecorationSubMode, EditorInsideState, EditorStatusSnapshot, EditorTileState, EditorTool,
     HeightMode, PendingSave, SelectedPropInfo,
@@ -34,11 +35,14 @@ pub struct EditorState {
 
     pub decoration_submode: DecorationSubMode,
     pub active_asset_id: String,
-    pub preview_rotation_y: f32,
+    pub preview_rotation: [f32; 3],
     pub preview_scale: f32,
     pub selected_prop_id: Option<u64>,
     pub dragging_prop: bool,
-    pub rotating_prop: bool,
+    pub hovered_rotate_axis: Option<GizmoAxis>,
+    pub rotate_drag: Option<super::gizmo::RotateDragState>,
+    pub hovered_gizmo_axis: Option<GizmoAxis>,
+    pub gizmo_drag: Option<GizmoDragState>,
     pub next_prop_id: u64,
 
     pub hover_world: Option<Vec3>,
@@ -78,11 +82,14 @@ impl EditorState {
             texture_layer: 1, // Default brush paints Dirt so clicking immediately shows contrast on Grass
             decoration_submode: DecorationSubMode::Place,
             active_asset_id: "pine_tree".to_owned(),
-            preview_rotation_y: 0.0,
+            preview_rotation: [0.0; 3],
             preview_scale: 1.0,
             selected_prop_id: None,
             dragging_prop: false,
-            rotating_prop: false,
+            hovered_rotate_axis: None,
+            rotate_drag: None,
+            hovered_gizmo_axis: None,
+            gizmo_drag: None,
             next_prop_id: 1000,
             hover_world: None,
             flatten_target_y: None,
@@ -113,6 +120,10 @@ impl EditorState {
         self.pending_tile_fetches.clear();
         self.pending_inside_fetch = None;
         self.selected_prop_id = None;
+        self.hovered_gizmo_axis = None;
+        self.gizmo_drag = None;
+        self.hovered_rotate_axis = None;
+        self.rotate_drag = None;
         self.hover_world = None;
         self.autosave_deadline_ms = None;
         self.save_state = "Saved".to_owned();
@@ -289,8 +300,8 @@ impl EditorState {
                 if let Some(id) = self.selected_prop_id {
                     self.rotate_prop_by(id, delta_rot, now_ms);
                 } else {
-                    self.preview_rotation_y =
-                        (self.preview_rotation_y + delta_rot).rem_euclid(std::f32::consts::TAU);
+                    self.preview_rotation[1] =
+                        (self.preview_rotation[1] + delta_rot).rem_euclid(std::f32::consts::TAU);
                 }
             }
             if input.is_key_down("Delete") || input.is_key_down("Backspace") {
@@ -299,6 +310,18 @@ impl EditorState {
         }
 
         // 4. Mouse tool interaction (ignore left-click while middle-mouse orbiting)
+        if self.tool != EditorTool::Decoration
+            || self.decoration_submode != DecorationSubMode::FreeMove
+        {
+            self.hovered_gizmo_axis = None;
+            self.gizmo_drag = None;
+        }
+        if self.tool != EditorTool::Decoration
+            || self.decoration_submode != DecorationSubMode::Rotate
+        {
+            self.hovered_rotate_axis = None;
+            self.rotate_drag = None;
+        }
         if !input.middle_mouse_down {
             match self.tool {
                 EditorTool::Heightmap => self.handle_heightmap_tool(gl, input, dt, now_ms),
@@ -310,7 +333,8 @@ impl EditorState {
         if input.left_just_released {
             self.flatten_target_y = None;
             self.dragging_prop = false;
-            self.rotating_prop = false;
+            self.gizmo_drag = None;
+            self.rotate_drag = None;
         }
 
         // 5. Debounced auto-save after finishing an edit stroke
@@ -385,7 +409,8 @@ impl EditorState {
         let selected_prop = self.find_selected_prop().map(|p| SelectedPropInfo {
             id: p.id,
             asset_id: p.asset_id.clone(),
-            rotation_deg: p.rotation_y.to_degrees().rem_euclid(360.0),
+            position: p.position,
+            rotation_deg: p.rotation.map(|r| r.to_degrees().rem_euclid(360.0)),
             scale: p.scale[0],
         });
 
@@ -413,10 +438,13 @@ impl EditorState {
             decoration_submode: match self.decoration_submode {
                 DecorationSubMode::Place => "place",
                 DecorationSubMode::Move => "move",
+                DecorationSubMode::FreeMove => "free_move",
                 DecorationSubMode::Rotate => "rotate",
             },
             selected_prop,
-            preview_rotation_deg: self.preview_rotation_y.to_degrees().rem_euclid(360.0),
+            preview_rotation_deg: self
+                .preview_rotation
+                .map(|r| r.to_degrees().rem_euclid(360.0)),
             preview_scale: self.preview_scale,
         }
     }

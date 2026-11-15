@@ -217,9 +217,14 @@ impl EngineHandle {
         let mut st = self.inner.borrow_mut();
         st.editor.decoration_submode = match submode {
             "move" => DecorationSubMode::Move,
+            "free_move" => DecorationSubMode::FreeMove,
             "rotate" => DecorationSubMode::Rotate,
             _ => DecorationSubMode::Place,
         };
+        st.editor.gizmo_drag = None;
+        st.editor.hovered_gizmo_axis = None;
+        st.editor.rotate_drag = None;
+        st.editor.hovered_rotate_axis = None;
     }
 
     #[cfg(feature = "editor")]
@@ -228,15 +233,21 @@ impl EngineHandle {
     }
 
     #[cfg(feature = "editor")]
-    pub fn set_selected_prop_rotation_deg(&self, degrees: f32) {
-        let now_ms = web_sys::window()
-            .and_then(|w| w.performance())
-            .map(|p| p.now())
-            .unwrap_or(0.0);
+    pub fn set_selected_prop_rotation_axis_deg(&self, axis: u8, degrees: f32) {
+        let now_ms = browser_now_ms();
         self.inner
             .borrow_mut()
             .editor
-            .set_selected_or_preview_rotation_deg(degrees, now_ms);
+            .set_selected_or_preview_rotation_axis_deg(axis as usize, degrees, now_ms);
+    }
+
+    #[cfg(feature = "editor")]
+    pub fn reset_selected_prop_rotation(&self) {
+        let now_ms = browser_now_ms();
+        self.inner
+            .borrow_mut()
+            .editor
+            .reset_selected_or_preview_rotation(now_ms);
     }
 
     #[cfg(feature = "editor")]
@@ -261,6 +272,18 @@ impl EngineHandle {
     }
 
     #[cfg(feature = "editor")]
+    pub fn snap_selected_prop_to_terrain(&self) {
+        let now_ms = web_sys::window()
+            .and_then(|w| w.performance())
+            .map(|p| p.now())
+            .unwrap_or(0.0);
+        self.inner
+            .borrow_mut()
+            .editor
+            .snap_selected_prop_to_terrain(now_ms);
+    }
+
+    #[cfg(feature = "editor")]
     pub fn save_editor_changes(&self) {
         let saves = {
             let mut st = self.inner.borrow_mut();
@@ -282,4 +305,12 @@ impl EngineHandle {
     pub fn get_editor_status_json(&self) -> String {
         "{}".to_owned()
     }
+}
+
+#[cfg(feature = "editor")]
+fn browser_now_ms() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now())
+        .unwrap_or(0.0)
 }

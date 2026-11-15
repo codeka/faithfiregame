@@ -1,3 +1,4 @@
+mod gizmo_mesh;
 mod procedural_textures;
 mod prop_mesh;
 mod renderer;

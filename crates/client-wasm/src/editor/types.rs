@@ -22,6 +22,7 @@ pub enum HeightMode {
 pub enum DecorationSubMode {
     Place,
     Move,
+    FreeMove,
     Rotate,
 }
 
@@ -55,7 +56,8 @@ pub struct EditorInsideState {
 pub struct SelectedPropInfo {
     pub id: u64,
     pub asset_id: String,
-    pub rotation_deg: f32,
+    pub position: [f32; 3],
+    pub rotation_deg: [f32; 3],
     pub scale: f32,
 }
 
@@ -75,6 +77,6 @@ pub struct EditorStatusSnapshot {
     pub texture_layer: usize,
     pub decoration_submode: &'static str,
     pub selected_prop: Option<SelectedPropInfo>,
-    pub preview_rotation_deg: f32,
+    pub preview_rotation_deg: [f32; 3],
     pub preview_scale: f32,
 }

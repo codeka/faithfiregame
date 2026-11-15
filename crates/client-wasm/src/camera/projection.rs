@@ -60,4 +60,21 @@ impl Camera {
         }
         Some((near, dir))
     }
+
+    /// Projects a world-space point into viewport pixel coordinates `(x, y)`.
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn world_to_screen(&self, world: Vec3, width: f32, height: f32) -> Option<glam::Vec2> {
+        if width <= 1.0 || height <= 1.0 {
+            return None;
+        }
+        let clip = self.view_proj_matrix() * Vec4::new(world.x, world.y, world.z, 1.0);
+        if clip.w <= 1e-4 {
+            return None;
+        }
+        let ndc = clip.truncate() / clip.w;
+        Some(glam::Vec2::new(
+            (ndc.x * 0.5 + 0.5) * width,
+            (0.5 - ndc.y * 0.5) * height,
+        ))
+    }
 }
