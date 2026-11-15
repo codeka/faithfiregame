@@ -1,8 +1,8 @@
-mod assets_gen;
 mod db;
 #[cfg(feature = "editor")]
 mod editor_api;
 mod net;
+mod seed;
 mod sim;
 
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let world_dir = PathBuf::from("world");
-    assets_gen::ensure_world_seeded(&world_dir)?;
+    seed::ensure_world_seeded(&world_dir)?;
 
     let db_path = PathBuf::from("faithfire.db");
     let storage = Arc::new(SqliteStorage::open(&db_path).await?);

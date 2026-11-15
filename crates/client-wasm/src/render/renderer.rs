@@ -1,0 +1,174 @@
+use glam::{Mat4, Vec3, Vec4};
+use glow::HasContext;
+use shared::world::PropPlacement;
+
+use crate::camera::Camera;
+
+use super::procedural_textures::create_terrain_texture_array;
+use super::prop_mesh::{PropMeshGpu, create_selection_ring_mesh, prop_model_matrix};
+use super::shaders::{
+    LINE_FRAG, LINE_VERT, PROP_FRAG, PROP_VERT, TERRAIN_FRAG, TERRAIN_VERT, compile_program,
+};
+use super::terrain_mesh::{BrushOverlay, TerrainMeshGpu};
+
+pub struct Renderer {
+    pub gl: glow::Context,
+    terrain_prog: glow::Program,
+    prop_prog: glow::Program,
+    line_prog: glow::Program,
+    tex_array: glow::Texture,
+    ring_vao: glow::VertexArray,
+    ring_vert_count: i32,
+    pub fog_start: f32,
+    pub fog_end: f32,
+    pub fog_color: [f32; 3],
+}
+
+impl Renderer {
+    pub fn new(gl: glow::Context) -> Result<Self, String> {
+        let terrain_prog = compile_program(&gl, TERRAIN_VERT, TERRAIN_FRAG)?;
+        let prop_prog = compile_program(&gl, PROP_VERT, PROP_FRAG)?;
+        let line_prog = compile_program(&gl, LINE_VERT, LINE_FRAG)?;
+        let tex_array = create_terrain_texture_array(&gl)?;
+        let (ring_vao, ring_vert_count) = create_selection_ring_mesh(&gl)?;
+
+        unsafe {
+            gl.enable(glow::DEPTH_TEST);
+            gl.enable(glow::CULL_FACE);
+            gl.enable(glow::BLEND);
+            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+        }
+
+        Ok(Self {
+            gl,
+            terrain_prog,
+            prop_prog,
+            line_prog,
+            tex_array,
+            ring_vao,
+            ring_vert_count,
+            fog_start: 140.0,
+            fog_end: 240.0,
+            fog_color: [0.56, 0.72, 0.86],
+        })
+    }
+
+    pub fn begin_frame(&self, width: i32, height: i32) {
+        unsafe {
+            self.gl.viewport(0, 0, width.max(1), height.max(1));
+            self.gl
+                .clear_color(self.fog_color[0], self.fog_color[1], self.fog_color[2], 1.0);
+            self.gl
+                .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+        }
+    }
+
+    pub fn draw_terrain_chunk(
+        &self,
+        camera: &Camera,
+        mesh: &TerrainMeshGpu,
+        origin_x: f32,
+        origin_z: f32,
+        show_grid: bool,
+        brush: &BrushOverlay,
+    ) {
+        let vp = camera.view_proj_matrix();
+        unsafe {
+            let gl = &self.gl;
+            gl.use_program(Some(self.terrain_prog));
+
+            let loc = |name| gl.get_uniform_location(self.terrain_prog, name);
+            gl.uniform_matrix_4_f32_slice(loc("u_view_proj").as_ref(), false, vp.as_ref());
+            gl.uniform_3_f32(loc("u_camera_pos").as_ref(), camera.eye.x, camera.eye.y, camera.eye.z);
+            gl.uniform_3_f32(loc("u_tile_origin").as_ref(), origin_x, 0.0, origin_z);
+            gl.uniform_2_f32(loc("u_tile_size").as_ref(), mesh.width as f32, mesh.length as f32);
+            gl.uniform_1_i32(loc("u_show_grid").as_ref(), i32::from(show_grid));
+            gl.uniform_3_f32(
+                loc("u_brush_center").as_ref(),
+                brush.center.x,
+                brush.center.y,
+                brush.center.z,
+            );
+            gl.uniform_1_f32(
+                loc("u_brush_radius").as_ref(),
+                if brush.active { brush.radius } else { 0.0 },
+            );
+            gl.uniform_3_f32(
+                loc("u_brush_color").as_ref(),
+                brush.color[0],
+                brush.color[1],
+                brush.color[2],
+            );
+            gl.uniform_1_f32(loc("u_fog_start").as_ref(), self.fog_start);
+            gl.uniform_1_f32(loc("u_fog_end").as_ref(), self.fog_end);
+            gl.uniform_3_f32(
+                loc("u_fog_color").as_ref(),
+                self.fog_color[0],
+                self.fog_color[1],
+                self.fog_color[2],
+            );
+
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(mesh.splat_tex));
+            gl.uniform_1_i32(loc("u_splat_tex").as_ref(), 0);
+
+            gl.active_texture(glow::TEXTURE1);
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(self.tex_array));
+            gl.uniform_1_i32(loc("u_tex_array").as_ref(), 1);
+
+            gl.bind_vertex_array(Some(mesh.vao));
+            gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_INT, 0);
+            gl.bind_vertex_array(None);
+        }
+    }
+
+    pub fn draw_prop(&self, camera: &Camera, mesh: &PropMeshGpu, placement: &PropPlacement, tint: Vec4) {
+        let vp = camera.view_proj_matrix();
+        let model = prop_model_matrix(placement);
+        unsafe {
+            let gl = &self.gl;
+            gl.use_program(Some(self.prop_prog));
+            let loc = |name| gl.get_uniform_location(self.prop_prog, name);
+
+            gl.uniform_matrix_4_f32_slice(loc("u_view_proj").as_ref(), false, vp.as_ref());
+            gl.uniform_matrix_4_f32_slice(loc("u_model").as_ref(), false, model.as_ref());
+            gl.uniform_3_f32(loc("u_camera_pos").as_ref(), camera.eye.x, camera.eye.y, camera.eye.z);
+            gl.uniform_4_f32(loc("u_tint").as_ref(), tint.x, tint.y, tint.z, tint.w);
+            gl.uniform_1_f32(loc("u_fog_start").as_ref(), self.fog_start);
+            gl.uniform_1_f32(loc("u_fog_end").as_ref(), self.fog_end);
+            gl.uniform_3_f32(
+                loc("u_fog_color").as_ref(),
+                self.fog_color[0],
+                self.fog_color[1],
+                self.fog_color[2],
+            );
+
+            gl.bind_vertex_array(Some(mesh.vao));
+            gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_SHORT, 0);
+            gl.bind_vertex_array(None);
+        }
+    }
+
+    pub fn draw_selection_ring(&self, camera: &Camera, placement: &PropPlacement, radius: f32) {
+        let vp = camera.view_proj_matrix();
+        let model = Mat4::from_translation(Vec3::new(
+            placement.position[0],
+            placement.position[1] + 0.08,
+            placement.position[2],
+        )) * Mat4::from_rotation_y(placement.rotation_y)
+            * Mat4::from_scale(Vec3::splat(radius.max(0.8)));
+
+        unsafe {
+            let gl = &self.gl;
+            gl.use_program(Some(self.line_prog));
+            let loc = |name| gl.get_uniform_location(self.line_prog, name);
+            gl.uniform_matrix_4_f32_slice(loc("u_view_proj").as_ref(), false, vp.as_ref());
+            gl.uniform_matrix_4_f32_slice(loc("u_model").as_ref(), false, model.as_ref());
+            gl.uniform_4_f32(loc("u_color").as_ref(), 1.0, 0.88, 0.25, 1.0);
+
+            gl.bind_vertex_array(Some(self.ring_vao));
+            gl.draw_arrays(glow::LINES, 0, self.ring_vert_count);
+            gl.bind_vertex_array(None);
+        }
+    }
+}

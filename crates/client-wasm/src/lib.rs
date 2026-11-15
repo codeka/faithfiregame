@@ -1,7 +1,9 @@
 mod camera;
 #[cfg(feature = "editor")]
 mod editor;
+mod engine;
 mod glb_loader;
+mod input;
 mod net;
 mod render;
 
@@ -9,42 +11,28 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[cfg(feature = "editor")]
-use shared::world::{AreaMetadata, AssetEntry, InsideVisData, TileVisData};
+use shared::world::AreaMetadata;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
-#[cfg(feature = "editor")]
-use wasm_bindgen_futures::{JsFuture, spawn_local};
-#[cfg(feature = "editor")]
-use web_sys::{Request, RequestInit, RequestMode, Response, console};
 #[cfg(target_arch = "wasm32")]
 use web_sys::WebGl2RenderingContext;
-use web_sys::{Element, HtmlCanvasElement, KeyboardEvent, MouseEvent, WheelEvent};
+use web_sys::HtmlCanvasElement;
 
-#[cfg(not(feature = "editor"))]
-use crate::camera::GameplayCameraController;
-use crate::camera::{Camera, CameraController, InputState};
 #[cfg(feature = "editor")]
 use crate::camera::EditorCameraController;
+#[cfg(not(feature = "editor"))]
+use crate::camera::GameplayCameraController;
+use crate::camera::Camera;
 #[cfg(feature = "editor")]
-use crate::editor::{DecorationSubMode, EditorState, EditorTool, HeightMode, PendingSave};
+use crate::editor::{
+    DecorationSubMode, EditorState, EditorTool, HeightMode,
+    io::{dispatch_pending_saves, fetch_asset_catalog},
+};
+use crate::engine::{EngineInner, step_frame};
+use crate::input::{InputState, attach_input_listeners};
 use crate::net::NetClient;
 use crate::render::Renderer;
-
-struct EngineInner {
-    canvas: HtmlCanvasElement,
-    renderer: Renderer,
-    camera: Camera,
-    input: InputState,
-    #[cfg(not(feature = "editor"))]
-    gameplay_cam: GameplayCameraController,
-    #[cfg(feature = "editor")]
-    editor_cam: EditorCameraController,
-    #[cfg(feature = "editor")]
-    editor: EditorState,
-    _net: Option<NetClient>,
-    last_time_ms: f64,
-}
 
 #[wasm_bindgen]
 pub struct EngineHandle {
@@ -294,331 +282,4 @@ impl EngineHandle {
     pub fn get_editor_status_json(&self) -> String {
         "{}".to_owned()
     }
-}
-
-fn step_frame(inner: &Rc<RefCell<EngineInner>>, time_ms: f64) {
-    #[cfg(feature = "editor")]
-    let (tile_fetches, inside_fetch, asset_fetches, saves);
-
-    {
-        let mut st = inner.borrow_mut();
-        let dt = ((time_ms - st.last_time_ms) * 0.001).clamp(0.001, 0.1) as f32;
-        st.last_time_ms = time_ms;
-
-        let cw = st.canvas.client_width().max(1);
-        let ch = st.canvas.client_height().max(1);
-        if st.canvas.width() != cw as u32 || st.canvas.height() != ch as u32 {
-            st.canvas.set_width(cw as u32);
-            st.canvas.set_height(ch as u32);
-        }
-        st.camera.aspect = cw as f32 / ch as f32;
-        st.input.canvas_width = cw as f32;
-        st.input.canvas_height = ch as f32;
-
-        #[cfg(feature = "editor")]
-        {
-            let EngineInner {
-                renderer,
-                camera,
-                input,
-                editor_cam,
-                editor,
-                ..
-            } = &mut *st;
-            editor_cam.update(camera, input, dt);
-            editor.update(&renderer.gl, camera, editor_cam, input, dt, time_ms);
-            renderer.begin_frame(cw, ch);
-            editor.render(renderer, camera);
-
-            tile_fetches = std::mem::take(&mut editor.pending_tile_fetches);
-            inside_fetch = editor.pending_inside_fetch.take();
-            asset_fetches = std::mem::take(&mut editor.pending_asset_fetches);
-            saves = std::mem::take(&mut editor.pending_saves);
-        }
-
-        #[cfg(not(feature = "editor"))]
-        {
-            let EngineInner {
-                renderer,
-                camera,
-                input,
-                gameplay_cam,
-                ..
-            } = &mut *st;
-            gameplay_cam.update(camera, input, dt);
-            renderer.begin_frame(cw, ch);
-        }
-
-        st.input.end_frame();
-    }
-
-    #[cfg(feature = "editor")]
-    {
-        for (area_id, tx, ty) in tile_fetches {
-            let weak = Rc::clone(inner);
-            spawn_local(async move {
-                let url = format!("/world/areas/{area_id}/{tx},{ty}/vis.bin");
-                match http_get_bytes(&url).await {
-                    Ok((200, bytes)) => {
-                        let decoded = postcard::from_bytes::<TileVisData>(&bytes).ok();
-                        let mut st = weak.borrow_mut();
-                        let EngineInner {
-                            renderer, editor, ..
-                        } = &mut *st;
-                        editor.on_outside_tile_loaded(&renderer.gl, area_id, tx, ty, decoded);
-                    }
-                    Ok((404, _)) => {
-                        let mut st = weak.borrow_mut();
-                        let EngineInner {
-                            renderer, editor, ..
-                        } = &mut *st;
-                        editor.on_outside_tile_loaded(&renderer.gl, area_id, tx, ty, None);
-                    }
-                    Ok((code, _)) => {
-                        console::warn_1(&format!("Failed loading {url}: HTTP {code}").into());
-                    }
-                    Err(e) => {
-                        console::warn_1(&format!("Error loading {url}: {e}").into());
-                    }
-                }
-            });
-        }
-
-        if let Some(area_id) = inside_fetch {
-            let weak = Rc::clone(inner);
-            spawn_local(async move {
-                let url = format!("/world/areas/{area_id}/vis.bin");
-                if let Ok((200, bytes)) = http_get_bytes(&url).await {
-                    if let Ok(vis) = postcard::from_bytes::<InsideVisData>(&bytes) {
-                        let mut st = weak.borrow_mut();
-                        let EngineInner {
-                            renderer, editor, ..
-                        } = &mut *st;
-                        editor.on_inside_loaded(&renderer.gl, area_id, vis);
-                    }
-                }
-            });
-        }
-
-        for entry in asset_fetches {
-            let weak = Rc::clone(inner);
-            spawn_local(async move {
-                if let Ok((200, bytes)) = http_get_bytes(&entry.path).await {
-                    let mut st = weak.borrow_mut();
-                    let EngineInner {
-                        renderer, editor, ..
-                    } = &mut *st;
-                    editor.on_glb_loaded(&renderer.gl, entry.id, &bytes);
-                }
-            });
-        }
-
-        dispatch_pending_saves(inner, saves);
-    }
-}
-
-#[cfg(feature = "editor")]
-fn dispatch_pending_saves(inner: &Rc<RefCell<EngineInner>>, saves: Vec<PendingSave>) {
-    for save in saves {
-        let weak = Rc::clone(inner);
-        spawn_local(async move {
-            let (url, bytes) = match save {
-                PendingSave::Outside {
-                    area_id,
-                    tx,
-                    ty,
-                    bytes,
-                } => (format!("/api/editor/areas/{area_id}/tiles/{tx},{ty}"), bytes),
-                PendingSave::Inside { area_id, bytes } => {
-                    (format!("/api/editor/areas/{area_id}/inside"), bytes)
-                }
-            };
-            let ok = matches!(http_put_bytes(&url, &bytes).await, Ok(200..=299));
-            weak.borrow_mut().editor.on_save_finished(ok);
-        });
-    }
-}
-
-#[cfg(feature = "editor")]
-fn fetch_asset_catalog(inner: &Rc<RefCell<EngineInner>>) {
-    let weak = Rc::clone(inner);
-    spawn_local(async move {
-        if let Ok((200, bytes)) = http_get_bytes("/world/assets/catalog.json").await {
-            if let Ok(catalog) = serde_json::from_slice::<Vec<AssetEntry>>(&bytes) {
-                weak.borrow_mut().editor.set_catalog(catalog);
-            }
-        }
-    });
-}
-
-#[cfg(feature = "editor")]
-async fn http_get_bytes(url: &str) -> Result<(u16, Vec<u8>), String> {
-    let window = web_sys::window().ok_or_else(|| "no window".to_owned())?;
-    let opts = RequestInit::new();
-    opts.set_method("GET");
-    opts.set_mode(RequestMode::SameOrigin);
-    let req = Request::new_with_str_and_init(url, &opts).map_err(|e| format!("{e:?}"))?;
-    let resp_val = JsFuture::from(window.fetch_with_request(&req))
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    let resp: Response = resp_val.dyn_into().map_err(|e| format!("{e:?}"))?;
-    let status = resp.status();
-    if status != 200 {
-        return Ok((status, Vec::new()));
-    }
-    let buf_val = JsFuture::from(resp.array_buffer().map_err(|e| format!("{e:?}"))?)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    let arr = js_sys::Uint8Array::new(&buf_val);
-    Ok((status, arr.to_vec()))
-}
-
-#[cfg(feature = "editor")]
-async fn http_put_bytes(url: &str, bytes: &[u8]) -> Result<u16, String> {
-    let window = web_sys::window().ok_or_else(|| "no window".to_owned())?;
-    let opts = RequestInit::new();
-    opts.set_method("PUT");
-    opts.set_mode(RequestMode::SameOrigin);
-    let uint8 = js_sys::Uint8Array::from(bytes);
-    opts.set_body(&uint8.into());
-    let req = Request::new_with_str_and_init(url, &opts).map_err(|e| format!("{e:?}"))?;
-    let resp_val = JsFuture::from(window.fetch_with_request(&req))
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    let resp: Response = resp_val.dyn_into().map_err(|e| format!("{e:?}"))?;
-    Ok(resp.status())
-}
-
-fn is_typing_in_form(target: Option<web_sys::EventTarget>) -> bool {
-    let Some(t) = target else {
-        return false;
-    };
-    let Ok(el) = t.dyn_into::<Element>() else {
-        return false;
-    };
-    let tag = el.tag_name();
-    matches!(tag.as_str(), "INPUT" | "TEXTAREA" | "SELECT")
-}
-
-fn attach_input_listeners(
-    window: &web_sys::Window,
-    canvas: &HtmlCanvasElement,
-    inner: &Rc<RefCell<EngineInner>>,
-) -> Result<Vec<Box<dyn std::any::Any>>, JsValue> {
-    let mut kept: Vec<Box<dyn std::any::Any>> = Vec::new();
-
-    // Prevent browser auto-scroll on middle-click and context menu on right-click
-    let on_context = Closure::<dyn FnMut(MouseEvent)>::new(|ev: MouseEvent| {
-        ev.prevent_default();
-    });
-    canvas.add_event_listener_with_callback("contextmenu", on_context.as_ref().unchecked_ref())?;
-    kept.push(Box::new(on_context));
-
-    // Mouse down on canvas
-    let st_down = Rc::clone(inner);
-    let c_down = canvas.clone();
-    let on_mousedown = Closure::<dyn FnMut(MouseEvent)>::new(move |ev: MouseEvent| {
-        if ev.button() == 1 {
-            ev.prevent_default();
-        }
-        let rect = c_down.get_bounding_client_rect();
-        let mut st = st_down.borrow_mut();
-        st.input.mouse_x = (ev.client_x() as f64 - rect.left()) as f32;
-        st.input.mouse_y = (ev.client_y() as f64 - rect.top()) as f32;
-        match ev.button() {
-            0 => {
-                st.input.left_mouse_down = true;
-                st.input.left_just_pressed = true;
-            }
-            1 => st.input.middle_mouse_down = true,
-            _ => {}
-        }
-    });
-    canvas.add_event_listener_with_callback("mousedown", on_mousedown.as_ref().unchecked_ref())?;
-    kept.push(Box::new(on_mousedown));
-
-    // Mouse up on window so releasing outside canvas doesn't stick
-    let st_up = Rc::clone(inner);
-    let on_mouseup = Closure::<dyn FnMut(MouseEvent)>::new(move |ev: MouseEvent| {
-        let mut st = st_up.borrow_mut();
-        match ev.button() {
-            0 => {
-                if st.input.left_mouse_down {
-                    st.input.left_just_released = true;
-                }
-                st.input.left_mouse_down = false;
-            }
-            1 => st.input.middle_mouse_down = false,
-            _ => {}
-        }
-    });
-    window.add_event_listener_with_callback("mouseup", on_mouseup.as_ref().unchecked_ref())?;
-    kept.push(Box::new(on_mouseup));
-
-    // Mouse move on window
-    let st_move = Rc::clone(inner);
-    let c_move = canvas.clone();
-    let on_mousemove = Closure::<dyn FnMut(MouseEvent)>::new(move |ev: MouseEvent| {
-        let rect = c_move.get_bounding_client_rect();
-        let nx = (ev.client_x() as f64 - rect.left()) as f32;
-        let ny = (ev.client_y() as f64 - rect.top()) as f32;
-        let mut st = st_move.borrow_mut();
-        let dx = nx - st.input.mouse_x;
-        let dy = ny - st.input.mouse_y;
-        st.input.mouse_x = nx;
-        st.input.mouse_y = ny;
-        st.input.mouse_delta.0 += dx;
-        st.input.mouse_delta.1 += dy;
-    });
-    window.add_event_listener_with_callback("mousemove", on_mousemove.as_ref().unchecked_ref())?;
-    kept.push(Box::new(on_mousemove));
-
-    // Wheel on canvas
-    let st_wheel = Rc::clone(inner);
-    let on_wheel = Closure::<dyn FnMut(WheelEvent)>::new(move |ev: WheelEvent| {
-        ev.prevent_default();
-        let delta = (ev.delta_y() as f32 / 100.0).clamp(-3.0, 3.0);
-        st_wheel.borrow_mut().input.scroll_delta += delta;
-    });
-    canvas.add_event_listener_with_callback("wheel", on_wheel.as_ref().unchecked_ref())?;
-    kept.push(Box::new(on_wheel));
-
-    // Key down on window
-    let st_kd = Rc::clone(inner);
-    let on_keydown = Closure::<dyn FnMut(KeyboardEvent)>::new(move |ev: KeyboardEvent| {
-        if is_typing_in_form(ev.target()) {
-            return;
-        }
-        let code = ev.code();
-        if matches!(
-            code.as_str(),
-            "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"
-        ) {
-            ev.prevent_default();
-        }
-        st_kd.borrow_mut().input.keys.insert(code);
-    });
-    window.add_event_listener_with_callback("keydown", on_keydown.as_ref().unchecked_ref())?;
-    kept.push(Box::new(on_keydown));
-
-    // Key up on window
-    let st_ku = Rc::clone(inner);
-    let on_keyup = Closure::<dyn FnMut(KeyboardEvent)>::new(move |ev: KeyboardEvent| {
-        st_ku.borrow_mut().input.keys.remove(&ev.code());
-    });
-    window.add_event_listener_with_callback("keyup", on_keyup.as_ref().unchecked_ref())?;
-    kept.push(Box::new(on_keyup));
-
-    // Blur clears stuck keys
-    let st_blur = Rc::clone(inner);
-    let on_blur = Closure::<dyn FnMut()>::new(move || {
-        let mut st = st_blur.borrow_mut();
-        st.input.keys.clear();
-        st.input.left_mouse_down = false;
-        st.input.middle_mouse_down = false;
-    });
-    window.add_event_listener_with_callback("blur", on_blur.as_ref().unchecked_ref())?;
-    kept.push(Box::new(on_blur));
-
-    Ok(kept)
 }

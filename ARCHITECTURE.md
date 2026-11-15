@@ -40,21 +40,27 @@ faith-and-fire/
 │   ├── shared/                 # Pure Rust (compiles to native & wasm32-unknown-unknown)
 │   │   └── src/
 │   │       ├── protocol.rs     # ClientMessage, ServerMessage, PROTOCOL_VERSION
-│   │       ├── world.rs        # TileSimData, TileVisData, AreaMetadata, WalkGrid
+│   │       ├── world/          # walk_mask.rs, types.rs, outside.rs, inside.rs
 │   │       └── pathfinding.rs  # 1m grid A* + Line-of-Sight (Theta* / string-pulling)
 │   ├── server/                 # Authoritative Rust game server
 │   │   └── src/
 │   │       ├── main.rs
-│   │       ├── sim/            # 10Hz tick loop, 3x3 tile hibernation, combat, AI
-│   │       ├── net/            # HTTP auth, WebSocket session manager, handshake, packet router
-│   │       ├── db/             # Storage trait + SQLite WAL implementation
-│   │       └── editor_api.rs   # #[cfg(feature = "editor")] tile/area save & hot-reload
+│   │       ├── seed/           # mesh_builder.rs, decorations.rs, world_seed.rs
+│   │       ├── sim/            # world.rs (10Hz loop, 3x3 hibernation), player.rs
+│   │       ├── net/            # state.rs, auth.rs, world_files.rs, ws.rs
+│   │       ├── db/             # repository.rs (Storage trait), sqlite.rs (SQLite WAL)
+│   │       └── editor_api/     # #[cfg(feature = "editor")] areas.rs, save.rs
 │   └── client-wasm/            # Rust WASM 3D engine & game client core
 │       └── src/
 │           ├── lib.rs          # #[wasm_bindgen] exports & Angular state bridge
-│           ├── render/         # WebGL2 renderer (terrain chunks, .glb meshes, skeletal/prop instances)
-│           ├── net.rs          # Browser WebSocket client + postcard codec
-│           └── editor/         # #[cfg(feature = "editor")] sculpting, painting, prop gizmos
+│           ├── engine.rs       # EngineInner state & frame loop
+│           ├── input/          # state.rs, dom.rs (keyboard/mouse listeners)
+│           ├── camera/         # projection.rs, controller.rs, gameplay_camera.rs, editor_camera.rs
+│           ├── render/         # renderer.rs, shaders.rs, terrain_mesh.rs, prop_mesh.rs, procedural_textures.rs
+│           ├── glb_loader.rs   # Binary .glb scene-graph mesh parser
+│           ├── net/            # ws_client.rs, http.rs
+│           └── editor/         # #[cfg(feature = "editor")] state.rs, types.rs, terrain_ops.rs,
+│                               # heightmap_tool.rs, texture_tool.rs, decoration_tool.rs, scene_render.rs, io.rs
 ├── web/                        # Angular (TypeScript) frontend shell
 │   └── src/
 │       └── app/
@@ -74,6 +80,8 @@ faith-and-fire/
             ├── sim.bin
             └── vis.bin
 ```
+
+> **Rust Module Convention:** `mod.rs` files strictly declare submodules and `pub use` re-exports; domain types and implementation logic live in focused, single-purpose submodule files.
 
 ---
 
