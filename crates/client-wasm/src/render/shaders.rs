@@ -107,21 +107,75 @@ out vec4 frag_color;
 "#,
     shadow_sampler_glsl!(),
     r#"
-vec3 sample_splat_corner(ivec2 coord, vec2 world_uv, vec2 uv_dx, vec2 uv_dy) {
-    uvec4 ids = texelFetch(u_splat_ids, coord, 0);
-    vec4 w = texelFetch(u_splat_weights, coord, 0);
-    vec3 col = textureGrad(u_tex_array, vec3(world_uv, float(ids.x)), uv_dx, uv_dy).rgb * w.x;
-    if (w.y > 0.002) {
-        col += textureGrad(u_tex_array, vec3(world_uv, float(ids.y)), uv_dx, uv_dy).rgb * w.y;
+const int MAT_COUNT = 9;
+const float HEIGHT_STRENGTH = 0.85;
+const float BLEND_DEPTH = 0.15;
+
+float corner_mat_weight(uvec4 ids, vec4 w, uint m) {
+    return (ids.x == m ? w.x : 0.0)
+         + (ids.y == m ? w.y : 0.0)
+         + (ids.z == m ? w.z : 0.0)
+         + (ids.w == m ? w.w : 0.0);
+}
+
+vec3 sample_height_blended_terrain(ivec2 c00, vec2 f, vec2 world_uv, vec2 uv_dx, vec2 uv_dy) {
+    float b00 = (1.0 - f.x) * (1.0 - f.y);
+    float b10 = f.x * (1.0 - f.y);
+    float b01 = (1.0 - f.x) * f.y;
+    float b11 = f.x * f.y;
+
+    uvec4 ids00 = texelFetch(u_splat_ids, c00, 0);
+    vec4 w00 = texelFetch(u_splat_weights, c00, 0);
+    w00 *= b00 / max(w00.x + w00.y + w00.z + w00.w, 0.0001);
+
+    uvec4 ids10 = texelFetch(u_splat_ids, c00 + ivec2(1, 0), 0);
+    vec4 w10 = texelFetch(u_splat_weights, c00 + ivec2(1, 0), 0);
+    w10 *= b10 / max(w10.x + w10.y + w10.z + w10.w, 0.0001);
+
+    uvec4 ids01 = texelFetch(u_splat_ids, c00 + ivec2(0, 1), 0);
+    vec4 w01 = texelFetch(u_splat_weights, c00 + ivec2(0, 1), 0);
+    w01 *= b01 / max(w01.x + w01.y + w01.z + w01.w, 0.0001);
+
+    uvec4 ids11 = texelFetch(u_splat_ids, c00 + ivec2(1, 1), 0);
+    vec4 w11 = texelFetch(u_splat_weights, c00 + ivec2(1, 1), 0);
+    w11 *= b11 / max(w11.x + w11.y + w11.z + w11.w, 0.0001);
+
+    float mat_w[MAT_COUNT];
+    float mat_s[MAT_COUNT];
+    vec3 mat_rgb[MAT_COUNT];
+    float s_max = -1.0;
+
+    for (int m = 0; m < MAT_COUNT; m++) {
+        uint mu = uint(m);
+        float wm = corner_mat_weight(ids00, w00, mu)
+                 + corner_mat_weight(ids10, w10, mu)
+                 + corner_mat_weight(ids01, w01, mu)
+                 + corner_mat_weight(ids11, w11, mu);
+        mat_w[m] = wm;
+        if (wm > 0.001) {
+            vec4 tex = textureGrad(u_tex_array, vec3(world_uv, float(m)), uv_dx, uv_dy);
+            mat_rgb[m] = tex.rgb;
+            float s = wm + HEIGHT_STRENGTH * tex.a * smoothstep(0.0, 0.15, wm);
+            mat_s[m] = s;
+            s_max = max(s_max, s);
+        } else {
+            mat_rgb[m] = vec3(0.0);
+            mat_s[m] = -1.0;
+        }
     }
-    if (w.z > 0.002) {
-        col += textureGrad(u_tex_array, vec3(world_uv, float(ids.z)), uv_dx, uv_dy).rgb * w.z;
+
+    vec3 albedo_sum = vec3(0.0);
+    float blend_sum = 0.0;
+    float threshold = s_max - BLEND_DEPTH;
+    for (int m = 0; m < MAT_COUNT; m++) {
+        float wm = mat_w[m];
+        if (wm > 0.001) {
+            float bw = smoothstep(0.0, 0.05, wm) * max(mat_s[m] - threshold, 0.0);
+            albedo_sum += mat_rgb[m] * bw;
+            blend_sum += bw;
+        }
     }
-    if (w.w > 0.002) {
-        col += textureGrad(u_tex_array, vec3(world_uv, float(ids.w)), uv_dx, uv_dy).rgb * w.w;
-    }
-    float w_sum = max(w.x + w.y + w.z + w.w, 0.0001);
-    return col / w_sum;
+    return albedo_sum / max(blend_sum, 0.0001);
 }
 
 void main() {
@@ -134,11 +188,7 @@ void main() {
     ivec2 c00 = clamp(ivec2(floor(cell_pos)), ivec2(0), max_cell);
     vec2 f = clamp(cell_pos - vec2(c00), 0.0, 1.0);
 
-    vec3 a00 = sample_splat_corner(c00, world_uv, uv_dx, uv_dy);
-    vec3 a10 = sample_splat_corner(c00 + ivec2(1, 0), world_uv, uv_dx, uv_dy);
-    vec3 a01 = sample_splat_corner(c00 + ivec2(0, 1), world_uv, uv_dx, uv_dy);
-    vec3 a11 = sample_splat_corner(c00 + ivec2(1, 1), world_uv, uv_dx, uv_dy);
-    vec3 albedo = mix(mix(a00, a10, f.x), mix(a01, a11, f.x), f.y);
+    vec3 albedo = sample_height_blended_terrain(c00, f, world_uv, uv_dx, uv_dy);
 
     vec3 smooth_n = normalize(v_normal);
     vec3 geom_n = normalize(cross(dFdx(v_world_pos), dFdy(v_world_pos)));
@@ -420,5 +470,22 @@ unsafe fn compile_shader(
             return Err(format!("shader compile error: {}", gl.get_shader_info_log(shader)));
         }
         Ok(shader)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terrain_shader_material_count_matches_shared_constant() {
+        let expected = format!(
+            "const int MAT_COUNT = {};",
+            shared::world::TERRAIN_MATERIAL_COUNT
+        );
+        assert!(
+            TERRAIN_FRAG.contains(&expected),
+            "TERRAIN_FRAG must define `{expected}`"
+        );
     }
 }
