@@ -20,3 +20,9 @@ Use `scripts/dev.py` as a normal synchronous command (never launch `server.exe` 
 - Keep all editor code gated behind `#[cfg(feature = "editor")]` in Rust so `cargo check -p client-wasm` (no features) and `npx ng build --configuration production` compile cleanly.
 - Before running `cargo build -p server` on Windows directly, stop any running `server.exe` via `python scripts/dev.py stop server`.
 - Run Angular editor component tests with `Set-Location web; npx ng test --watch=false --include src/app/editor-ui/editor-ui.component.spec.ts`.
+
+## World & Tile Format Evolution
+
+- Do not keep legacy version fallback or migration decoders in `shared` / runtime world loading code (`TileVisData`, `InsideVisData`, `TileSimData`, `InsideSimData`, `AreaMetadata`, `AssetCatalog`).
+- Whenever changing a tile, area, or catalog schema, directly upgrade any existing files in `world/` to the new format as part of that change.
+

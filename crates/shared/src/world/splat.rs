@@ -13,18 +13,6 @@ pub const MAT_PATCHY_GRASS: u8 = 6;
 pub const MAT_COBBLESTONE: u8 = 7;
 pub const MAT_BRICK: u8 = 8;
 
-/// Packs 4 legacy RGBA8 texture-splat weights into a little-endian `u32`.
-#[inline]
-pub const fn pack_splat(layer0: u8, layer1: u8, layer2: u8, layer3: u8) -> u32 {
-    u32::from_le_bytes([layer0, layer1, layer2, layer3])
-}
-
-/// Unpacks 4 legacy RGBA8 texture-splat weights from a little-endian `u32`.
-#[inline]
-pub const fn unpack_splat(packed: u32) -> [u8; 4] {
-    packed.to_le_bytes()
-}
-
 #[inline]
 pub const fn default_splat_ids() -> [u8; 4] {
     [MAT_GRASS, 0, 0, 0]
@@ -225,59 +213,6 @@ pub fn blend_splat_sample(
     normalize_splat_entries(&active)
 }
 
-/// Converts a legacy `width × length` RGBA8 cell splat grid into a `(width + 1) × (length + 1)`
-/// vertex-aligned `(splat_ids, splat_weights)` grid by averaging adjacent cells.
-pub fn convert_legacy_rgba_splat_grid(
-    legacy: &[u32],
-    width: usize,
-    length: usize,
-) -> (Vec<[u8; 4]>, Vec<[u8; 4]>) {
-    if legacy.is_empty() || width == 0 || length == 0 {
-        return (Vec::new(), Vec::new());
-    }
-
-    let vw = width + 1;
-    let vh = length + 1;
-    let verts = vw * vh;
-    if legacy.len() < width * length {
-        return (
-            vec![default_splat_ids(); verts],
-            vec![default_splat_weights(); verts],
-        );
-    }
-
-    let mut out_ids = Vec::with_capacity(verts);
-    let mut out_weights = Vec::with_capacity(verts);
-    for vz in 0..vh {
-        let cz0 = vz.saturating_sub(1);
-        let cz1 = vz.min(length - 1);
-        for vx in 0..vw {
-            let cx0 = vx.saturating_sub(1);
-            let cx1 = vx.min(width - 1);
-            let mut sums = [0.0f32; 4];
-            for cz in cz0..=cz1 {
-                for cx in cx0..=cx1 {
-                    let c = unpack_splat(legacy[cz * width + cx]);
-                    for ch in 0..4 {
-                        sums[ch] += c[ch] as f32;
-                    }
-                }
-            }
-            let entries = [
-                (MAT_GRASS, sums[0]),
-                (MAT_DIRT, sums[1]),
-                (MAT_ROCK, sums[2]),
-                (MAT_SAND, sums[3]),
-            ];
-            let (ids, weights) = normalize_splat_entries(&entries);
-            out_ids.push(ids);
-            out_weights.push(weights);
-        }
-    }
-
-    (out_ids, out_weights)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,23 +249,5 @@ mod tests {
         }
         assert_eq!(ids, [MAT_BRICK, 0, 0, 0]);
         assert_eq!(weights, [255, 0, 0, 0]);
-    }
-
-    #[test]
-    fn legacy_rgba_conversion_maps_channels_to_vertex_grid() {
-        let mut legacy = vec![pack_splat(255, 0, 0, 0); 4];
-        legacy[0] = pack_splat(0, 255, 0, 0);
-        legacy[3] = pack_splat(0, 0, 128, 127);
-
-        let (ids, weights) = convert_legacy_rgba_splat_grid(&legacy, 2, 2);
-        assert_eq!(ids.len(), 9);
-        assert_eq!(weights.len(), 9);
-        // Top-left corner (0,0) touches only cell (0,0) => pure Dirt (mat 1)
-        assert_eq!(ids[0], [MAT_DIRT, 0, 0, 0]);
-        assert_eq!(weights[0], [255, 0, 0, 0]);
-        // Center vertex (1,1) averages all 4 cells and keeps descending order summing to 255
-        let center_sum: u16 = weights[4].iter().map(|&w| w as u16).sum();
-        assert_eq!(center_sum, 255);
-        assert_eq!(ids[4][0], MAT_GRASS);
     }
 }

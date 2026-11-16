@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::road::RoadSpline;
 use super::splat::{
-    area_seed_from_id, convert_legacy_rgba_splat_grid, default_splat_ids, default_splat_weights,
-    grass_noise_splat_at,
+    area_seed_from_id, default_splat_ids, default_splat_weights, grass_noise_splat_at,
 };
 use super::types::{EntitySpawn, PropPlacement, TriggerVolume};
 use super::walk_mask::{MAX_WALKABLE_SLOPE_DELTA, TILE_SIZE, TILE_VERTICES, WalkMask};
@@ -154,73 +153,13 @@ impl TileVisData {
         }
     }
 
-    /// Decodes a postcard-encoded tile visual payload, falling back across `v4` (pre-roads),
-    /// `v3` (`splat_map: Vec<u32>`), `v2` (`rotation: [f32; 3]`), and `v1` (`rotation_y`) formats
-    /// so existing world files migrate seamlessly.
+    /// Decodes and validates a postcard-encoded tile visual payload.
     pub fn from_postcard_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
-        #[derive(Deserialize)]
-        struct TileVisV4 {
-            walkable: WalkMask,
-            heights: Vec<f32>,
-            splat_ids: Vec<[u8; 4]>,
-            splat_weights: Vec<[u8; 4]>,
-            props: Vec<PropPlacement>,
+        let vis = super::types::decode_exact::<Self>(bytes)?;
+        if !vis.has_valid_dimensions() {
+            return Err(postcard::Error::SerdeDeCustom);
         }
-
-        #[derive(Deserialize)]
-        struct LegacySplatTile<P> {
-            walkable: WalkMask,
-            heights: Vec<f32>,
-            splat_map: Vec<u32>,
-            props: Vec<P>,
-        }
-
-        fn upgrade_legacy<P: Into<PropPlacement>>(old: LegacySplatTile<P>) -> TileVisData {
-            let (splat_ids, splat_weights) =
-                convert_legacy_rgba_splat_grid(&old.splat_map, TILE_SIZE, TILE_SIZE);
-            TileVisData {
-                walkable: old.walkable,
-                heights: old.heights,
-                splat_ids,
-                splat_weights,
-                props: old.props.into_iter().map(Into::into).collect(),
-                roads: Vec::new(),
-            }
-        }
-
-        match super::types::decode_exact::<Self>(bytes) {
-            Ok(vis) if vis.has_valid_dimensions() => Ok(vis),
-            Ok(_) => Err(postcard::Error::SerdeDeCustom),
-            Err(primary_err) => super::types::decode_exact::<TileVisV4>(bytes)
-                .map(|v4| TileVisData {
-                    walkable: v4.walkable,
-                    heights: v4.heights,
-                    splat_ids: v4.splat_ids,
-                    splat_weights: v4.splat_weights,
-                    props: v4.props,
-                    roads: Vec::new(),
-                })
-                .ok()
-                .filter(TileVisData::has_valid_dimensions)
-                .ok_or(())
-                .or_else(|_| {
-                    super::types::decode_exact::<LegacySplatTile<PropPlacement>>(bytes)
-                        .map(upgrade_legacy)
-                })
-                .or_else(|_| {
-                    super::types::decode_exact::<LegacySplatTile<super::types::PropPlacementV2>>(
-                        bytes,
-                    )
-                    .map(upgrade_legacy)
-                })
-                .or_else(|_| {
-                    super::types::decode_exact::<LegacySplatTile<super::types::LegacyPropPlacement>>(
-                        bytes,
-                    )
-                    .map(upgrade_legacy)
-                })
-                .map_err(|_| primary_err),
-        }
+        Ok(vis)
     }
 }
 
@@ -259,7 +198,9 @@ pub fn compute_sim_from_vis(vis: &TileVisData, existing: Option<&TileSimData>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{MAT_BRICK, MAT_COBBLESTONE, MAT_DIRT, MAT_GRASS, pack_splat};
+    use crate::world::{
+        MAT_BRICK, MAT_COBBLESTONE, MAT_DIRT, MAT_GRASS, ROAD_MAT_ASPHALT, RoadSpline, RoadStyle,
+    };
 
     #[test]
     fn tile_vis_and_sim_roundtrip() {
@@ -267,6 +208,15 @@ mod tests {
         vis.heights[10 * TILE_VERTICES + 10] = 5.0;
         vis.splat_ids[12 * TILE_VERTICES + 12] = [MAT_COBBLESTONE, MAT_BRICK, MAT_DIRT, 0];
         vis.splat_weights[12 * TILE_VERTICES + 12] = [140, 80, 35, 0];
+        vis.roads.push(RoadSpline {
+            id: 42,
+            style: RoadStyle::Straight,
+            material: ROAD_MAT_ASPHALT,
+            width: 4.5,
+            shoulder: 2.5,
+            points: vec![[4.0, 0.0, 4.0], [20.0, 1.5, 4.0]],
+            profile_heights: vec![0.0, 0.75, 1.5],
+        });
         vis.recompute_slope_walkability();
         assert!(!vis.walkable.get(10, 10));
         assert!(vis.walkable.get(0, 0));
@@ -279,157 +229,6 @@ mod tests {
         let sim = compute_sim_from_vis(&vis, None);
         assert!(!sim.walkable.get(10, 10));
         assert!(sim.elevation[10 * TILE_SIZE + 10] > 1.0);
-    }
-
-    #[test]
-    fn legacy_tile_vis_decoding_migrates_splat_and_props() {
-        #[derive(Serialize)]
-        struct LegacyProp {
-            id: u64,
-            asset_id: String,
-            position: [f32; 3],
-            rotation_y: f32,
-            scale: [f32; 3],
-        }
-        #[derive(Serialize)]
-        struct LegacyTile {
-            walkable: WalkMask,
-            heights: Vec<f32>,
-            splat_map: Vec<u32>,
-            props: Vec<LegacyProp>,
-        }
-
-        let base = TileVisData::flat_default();
-        let mut legacy_splat = vec![pack_splat(255, 0, 0, 0); TILE_SIZE * TILE_SIZE];
-        legacy_splat[0] = pack_splat(0, 255, 0, 0);
-        let legacy = LegacyTile {
-            walkable: base.walkable,
-            heights: base.heights,
-            splat_map: legacy_splat,
-            props: vec![LegacyProp {
-                id: 7,
-                asset_id: "ruin_stone".to_owned(),
-                position: [12.0, 1.5, 34.0],
-                rotation_y: 1.25,
-                scale: [1.0, 1.0, 1.0],
-            }],
-        };
-
-        let bytes = postcard::to_allocvec(&legacy).unwrap();
-        let decoded = TileVisData::from_postcard_bytes(&bytes).unwrap();
-        assert!(decoded.has_valid_dimensions());
-        assert_eq!(decoded.splat_ids[0], [MAT_DIRT, 0, 0, 0]);
-        assert_eq!(decoded.splat_weights[0], [255, 0, 0, 0]);
-        assert_eq!(decoded.splat_ids[10 * TILE_VERTICES + 10], [MAT_GRASS, 0, 0, 0]);
-        assert_eq!(decoded.props.len(), 1);
-        assert_eq!(decoded.props[0].rotation, [0.0, 1.25, 0.0]);
-        assert!(decoded.props[0].cast_shadow);
-    }
-
-    #[test]
-    fn v2_and_v3_tile_vis_decoding_migrate_splat_and_props() {
-        #[derive(Serialize)]
-        struct V2Prop {
-            id: u64,
-            asset_id: String,
-            position: [f32; 3],
-            rotation: [f32; 3],
-            scale: [f32; 3],
-        }
-        #[derive(Serialize)]
-        struct V2Tile {
-            walkable: WalkMask,
-            heights: Vec<f32>,
-            splat_map: Vec<u32>,
-            props: Vec<V2Prop>,
-        }
-        #[derive(Serialize)]
-        struct V3Tile {
-            walkable: WalkMask,
-            heights: Vec<f32>,
-            splat_map: Vec<u32>,
-            props: Vec<PropPlacement>,
-        }
-
-        let base = TileVisData::flat_default();
-        let legacy_splat = vec![pack_splat(255, 0, 0, 0); TILE_SIZE * TILE_SIZE];
-        let v2 = V2Tile {
-            walkable: base.walkable,
-            heights: base.heights.clone(),
-            splat_map: legacy_splat.clone(),
-            props: vec![V2Prop {
-                id: 10,
-                asset_id: "boulder".to_owned(),
-                position: [15.0, 2.0, 20.0],
-                rotation: [0.3, 0.8, 0.1],
-                scale: [1.0, 1.0, 1.0],
-            }],
-        };
-
-        let v2_bytes = postcard::to_allocvec(&v2).unwrap();
-        let decoded_v2 = TileVisData::from_postcard_bytes(&v2_bytes).unwrap();
-        assert!(decoded_v2.has_valid_dimensions());
-        assert_eq!(decoded_v2.props.len(), 1);
-        assert_eq!(decoded_v2.props[0].rotation, [0.3, 0.8, 0.1]);
-        assert!(decoded_v2.props[0].cast_shadow);
-
-        let v3 = V3Tile {
-            walkable: base.walkable,
-            heights: base.heights,
-            splat_map: legacy_splat,
-            props: vec![PropPlacement {
-                id: 12,
-                asset_id: "boulder".to_owned(),
-                position: [18.0, 3.0, 19.0],
-                rotation: [0.0, 0.5, 0.0],
-                scale: [1.0, 1.0, 1.0],
-                cast_shadow: false,
-            }],
-        };
-        let v3_bytes = postcard::to_allocvec(&v3).unwrap();
-        let decoded_v3 = TileVisData::from_postcard_bytes(&v3_bytes).unwrap();
-        assert!(decoded_v3.has_valid_dimensions());
-        assert_eq!(decoded_v3.props.len(), 1);
-        assert!(!decoded_v3.props[0].cast_shadow);
-    }
-
-    #[test]
-    fn v4_tile_vis_decoding_migrates_with_empty_roads_and_v5_roundtrips_roads() {
-        use crate::world::{ROAD_MAT_ASPHALT, RoadSpline, RoadStyle};
-
-        #[derive(Serialize)]
-        struct V4Tile {
-            walkable: WalkMask,
-            heights: Vec<f32>,
-            splat_ids: Vec<[u8; 4]>,
-            splat_weights: Vec<[u8; 4]>,
-            props: Vec<PropPlacement>,
-        }
-
-        let mut base = TileVisData::flat_default();
-        let v4 = V4Tile {
-            walkable: base.walkable,
-            heights: base.heights.clone(),
-            splat_ids: base.splat_ids.clone(),
-            splat_weights: base.splat_weights.clone(),
-            props: Vec::new(),
-        };
-        let v4_bytes = postcard::to_allocvec(&v4).unwrap();
-        let decoded_v4 = TileVisData::from_postcard_bytes(&v4_bytes).unwrap();
-        assert!(decoded_v4.roads.is_empty());
-
-        base.roads.push(RoadSpline {
-            id: 42,
-            style: RoadStyle::Straight,
-            material: ROAD_MAT_ASPHALT,
-            width: 4.5,
-            shoulder: 2.5,
-            points: vec![[4.0, 0.0, 4.0], [20.0, 1.5, 4.0]],
-            profile_heights: vec![0.0, 0.75, 1.5],
-        });
-        let v5_bytes = postcard::to_allocvec(&base).unwrap();
-        let decoded_v5 = TileVisData::from_postcard_bytes(&v5_bytes).unwrap();
-        assert_eq!(decoded_v5.roads, base.roads);
     }
 
     #[test]

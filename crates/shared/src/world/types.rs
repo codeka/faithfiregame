@@ -57,50 +57,6 @@ pub(crate) fn decode_exact<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result
     Ok(value)
 }
 
-#[derive(Deserialize)]
-pub(crate) struct PropPlacementV2 {
-    pub id: u64,
-    pub asset_id: String,
-    pub position: [f32; 3],
-    pub rotation: [f32; 3],
-    pub scale: [f32; 3],
-}
-
-impl From<PropPlacementV2> for PropPlacement {
-    fn from(v2: PropPlacementV2) -> Self {
-        Self {
-            id: v2.id,
-            asset_id: v2.asset_id,
-            position: v2.position,
-            rotation: v2.rotation,
-            scale: v2.scale,
-            cast_shadow: true,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-pub(crate) struct LegacyPropPlacement {
-    pub id: u64,
-    pub asset_id: String,
-    pub position: [f32; 3],
-    pub rotation_y: f32,
-    pub scale: [f32; 3],
-}
-
-impl From<LegacyPropPlacement> for PropPlacement {
-    fn from(legacy: LegacyPropPlacement) -> Self {
-        Self {
-            id: legacy.id,
-            asset_id: legacy.asset_id,
-            position: legacy.position,
-            rotation: [0.0, legacy.rotation_y, 0.0],
-            scale: legacy.scale,
-            cast_shadow: true,
-        }
-    }
-}
-
 /// Prefix used in `PropPlacement::asset_id` for one-off `.glb` decorations scoped to a single area
 /// (`world/areas/<area_id>/assets/<slug>.glb`) rather than the global `catalog.json`.
 pub const LOCAL_ASSET_PREFIX: &str = "local:";
@@ -240,46 +196,13 @@ impl RoadTextureEntry {
 
 /// Unified asset catalog served from `/world/assets/catalog.json`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "AssetCatalogWire")]
 pub struct AssetCatalog {
+    #[serde(default)]
     pub decorations: Vec<AssetEntry>,
+    #[serde(default)]
     pub terrain_textures: Vec<TerrainTextureEntry>,
+    #[serde(default)]
     pub road_textures: Vec<RoadTextureEntry>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum AssetCatalogWire {
-    Structured {
-        #[serde(default)]
-        decorations: Vec<AssetEntry>,
-        #[serde(default)]
-        terrain_textures: Vec<TerrainTextureEntry>,
-        #[serde(default)]
-        road_textures: Vec<RoadTextureEntry>,
-    },
-    LegacyDecorations(Vec<AssetEntry>),
-}
-
-impl From<AssetCatalogWire> for AssetCatalog {
-    fn from(wire: AssetCatalogWire) -> Self {
-        match wire {
-            AssetCatalogWire::Structured {
-                decorations,
-                terrain_textures,
-                road_textures,
-            } => Self {
-                decorations,
-                terrain_textures,
-                road_textures,
-            },
-            AssetCatalogWire::LegacyDecorations(decorations) => Self {
-                decorations,
-                terrain_textures: Vec::new(),
-                road_textures: Vec::new(),
-            },
-        }
-    }
 }
 
 #[cfg(test)]

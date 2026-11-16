@@ -182,10 +182,10 @@ export class EditorStateService {
     try {
       const resp = await fetch('/world/assets/catalog.json', { cache: 'no-cache' });
       if (resp.ok) {
-        const raw = (await resp.json()) as AssetEntry[] | AssetCatalog;
-        const decorations = Array.isArray(raw) ? raw : (raw.decorations ?? []);
-        const terrainTextures = Array.isArray(raw) ? [] : (raw.terrain_textures ?? []);
-        const roadTextures = Array.isArray(raw) ? [] : (raw.road_textures ?? []);
+        const raw = (await resp.json()) as AssetCatalog;
+        const decorations = raw.decorations ?? [];
+        const terrainTextures = raw.terrain_textures ?? [];
+        const roadTextures = raw.road_textures ?? [];
         this.catalog.set(decorations);
         this.terrainCatalog.set(terrainTextures);
         this.roadCatalog.set(roadTextures);

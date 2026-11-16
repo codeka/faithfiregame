@@ -80,13 +80,8 @@ pub fn ensure_world_seeded(world_dir: &Path) -> anyhow::Result<()> {
     let catalog_path = world_dir.join("assets").join("catalog.json");
     if catalog_path.exists() {
         let raw = fs::read(&catalog_path)?;
-        let is_legacy_array = raw
-            .iter()
-            .copied()
-            .find(|b| !b.is_ascii_whitespace())
-            == Some(b'[');
         let mut existing: AssetCatalog = serde_json::from_slice(&raw)?;
-        let mut modified = is_legacy_array;
+        let mut modified = false;
 
         for entry in starter_decorations {
             if !existing.decorations.iter().any(|e| e.id == entry.id) {
@@ -291,18 +286,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn asset_catalog_deserializes_legacy_array_and_structured_object() {
-        let legacy_json = r#"[
-            { "id": "pine_tree", "name": "Pine Tree", "path": "/world/assets/decorations/pine_tree.glb", "category": "Nature" }
-        ]"#;
-        let legacy: AssetCatalog = serde_json::from_str(legacy_json).unwrap();
-        assert_eq!(legacy.decorations.len(), 1);
-        assert_eq!(legacy.decorations[0].id, "pine_tree");
-        assert!(legacy.terrain_textures.is_empty());
-        assert!(legacy.road_textures.is_empty());
-
+    fn asset_catalog_roundtrips_structured_object() {
         let structured = AssetCatalog {
-            decorations: legacy.decorations,
+            decorations: vec![AssetEntry {
+                id: "pine_tree".to_owned(),
+                name: "Pine Tree".to_owned(),
+                path: "/world/assets/decorations/pine_tree.glb".to_owned(),
+                category: "Nature".to_owned(),
+            }],
             terrain_textures: vec![TerrainTextureEntry {
                 layer: 0,
                 id: "grass".to_owned(),
@@ -338,26 +329,30 @@ mod tests {
         let assets_dir = root.join("assets");
         fs::create_dir_all(&assets_dir).unwrap();
 
-        let initial = vec![
-            AssetEntry {
-                id: "pine_tree".to_owned(),
-                name: "Pine Tree".to_owned(),
-                path: "/world/assets/decorations/pine_tree.glb".to_owned(),
-                category: "Nature".to_owned(),
-            },
-            AssetEntry {
-                id: "rock_boulder".to_owned(),
-                name: "Boulder".to_owned(),
-                path: "/world/assets/decorations/rock_boulder.glb".to_owned(),
-                category: "Rocks".to_owned(),
-            },
-            AssetEntry {
-                id: "custom_altar".to_owned(),
-                name: "Custom Altar".to_owned(),
-                path: "/world/assets/decorations/custom_altar.glb".to_owned(),
-                category: "Props".to_owned(),
-            },
-        ];
+        let initial = AssetCatalog {
+            decorations: vec![
+                AssetEntry {
+                    id: "pine_tree".to_owned(),
+                    name: "Pine Tree".to_owned(),
+                    path: "/world/assets/decorations/pine_tree.glb".to_owned(),
+                    category: "Nature".to_owned(),
+                },
+                AssetEntry {
+                    id: "rock_boulder".to_owned(),
+                    name: "Boulder".to_owned(),
+                    path: "/world/assets/decorations/rock_boulder.glb".to_owned(),
+                    category: "Rocks".to_owned(),
+                },
+                AssetEntry {
+                    id: "custom_altar".to_owned(),
+                    name: "Custom Altar".to_owned(),
+                    path: "/world/assets/decorations/custom_altar.glb".to_owned(),
+                    category: "Props".to_owned(),
+                },
+            ],
+            terrain_textures: Vec::new(),
+            road_textures: Vec::new(),
+        };
         let catalog_path = assets_dir.join("catalog.json");
         fs::write(&catalog_path, serde_json::to_vec_pretty(&initial).unwrap()).unwrap();
 

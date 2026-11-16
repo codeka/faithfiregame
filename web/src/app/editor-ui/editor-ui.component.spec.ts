@@ -58,11 +58,16 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
 
   beforeEach(async () => {
     origFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response('[]', {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.includes('/world/assets/catalog.json')
+        ? JSON.stringify({ decorations: [], terrain_textures: [], road_textures: [] })
+        : '[]';
+      return new Response(body, {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
-      })) as typeof fetch;
+      });
+    }) as typeof fetch;
 
     statusSig = signal<EditorStatus | null>(baseStatus('decoration'));
     heightCalls = [];
@@ -325,13 +330,17 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
   });
 
   it('filters the asset palette by category pill and search query while suppressing shortcuts inside search', async () => {
-    const mockCatalog = [
-      { id: 'pine_tree', name: 'Pine Tree', path: '/world/assets/decorations/pine_tree.glb', category: 'Nature' },
-      { id: 'rock_boulder', name: 'Boulder', path: '/world/assets/decorations/rock_boulder.glb', category: 'Rocks' },
-      { id: 'cliff_wall', name: 'Cliff Wall', path: '/world/assets/decorations/cliff_wall.glb', category: 'Rocks' },
-      { id: 'cliff_tall_pillar', name: 'Tall Cliff Pillar', path: '/world/assets/decorations/cliff_tall_pillar.glb', category: 'Rocks' },
-      { id: 'ruin_stone', name: 'Ruin Stone', path: '/world/assets/decorations/ruin_stone.glb', category: 'Props' },
-    ];
+    const mockCatalog = {
+      decorations: [
+        { id: 'pine_tree', name: 'Pine Tree', path: '/world/assets/decorations/pine_tree.glb', category: 'Nature' },
+        { id: 'rock_boulder', name: 'Boulder', path: '/world/assets/decorations/rock_boulder.glb', category: 'Rocks' },
+        { id: 'cliff_wall', name: 'Cliff Wall', path: '/world/assets/decorations/cliff_wall.glb', category: 'Rocks' },
+        { id: 'cliff_tall_pillar', name: 'Tall Cliff Pillar', path: '/world/assets/decorations/cliff_tall_pillar.glb', category: 'Rocks' },
+        { id: 'ruin_stone', name: 'Ruin Stone', path: '/world/assets/decorations/ruin_stone.glb', category: 'Props' },
+      ],
+      terrain_textures: [],
+      road_textures: [],
+    };
     globalThis.fetch = (async () =>
       new Response(JSON.stringify(mockCatalog), {
         status: 200,
