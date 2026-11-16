@@ -45,7 +45,7 @@ faith-and-fire/
 │   ├── server/                 # Authoritative Rust game server
 │   │   └── src/
 │   │       ├── main.rs
-│   │       ├── seed/           # mesh_builder.rs, decorations.rs, terrain_textures.rs, world_seed.rs
+│   │       ├── seed/           # mesh_builder.rs, decorations.rs, terrain_textures.rs, road_textures.rs, world_seed.rs
 │   │       ├── sim/            # world.rs (10Hz loop, 3x3 hibernation), player.rs
 │   │       ├── net/            # state.rs, auth.rs, world_files.rs, ws.rs
 │   │       ├── db/             # repository.rs (Storage trait), sqlite.rs (SQLite WAL)

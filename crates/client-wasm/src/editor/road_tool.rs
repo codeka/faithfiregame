@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use glam::Vec3;
 use shared::world::{
-    AreaKind, ROAD_MATERIAL_COUNT, RoadSpline, RoadStyle, TILE_SIZE, TILE_VERTICES,
+    AreaKind, MAX_ROAD_MATERIALS, RoadSpline, RoadStyle, TILE_SIZE, TILE_VERTICES,
     build_road_stations, compute_road_terrain_edits, compute_smoothed_profile, distance_to_road_xz,
     sample_road_xz,
 };
@@ -345,7 +345,8 @@ impl EditorState {
             let mut built = Vec::with_capacity(tile.vis.roads.len());
             for road in &tile.vis.roads {
                 let (s_dir, e_dir, tier) = self.compute_endpoint_joins(road);
-                if let Ok(mesh) = RoadMeshGpu::from_road(gl, road, s_dir, e_dir, tier) {
+                let is_soft = self.is_road_material_soft(road.material);
+                if let Ok(mesh) = RoadMeshGpu::from_road(gl, road, s_dir, e_dir, tier, is_soft) {
                     built.push((road.id, mesh));
                 }
             }
@@ -371,7 +372,8 @@ impl EditorState {
         let mut built = Vec::with_capacity(inside.vis.roads.len());
         for road in &inside.vis.roads {
             let (s_dir, e_dir, tier) = self.compute_endpoint_joins(road);
-            if let Ok(mesh) = RoadMeshGpu::from_road(gl, road, s_dir, e_dir, tier) {
+            let is_soft = self.is_road_material_soft(road.material);
+            if let Ok(mesh) = RoadMeshGpu::from_road(gl, road, s_dir, e_dir, tier, is_soft) {
                 built.push((road.id, mesh));
             }
         }
@@ -389,7 +391,7 @@ impl EditorState {
         }
     }
 
-    fn rebuild_all_active_road_meshes(&mut self, gl: &glow::Context) {
+    pub(super) fn rebuild_all_active_road_meshes(&mut self, gl: &glow::Context) {
         if self.active_area.kind == AreaKind::Outside {
             let coords: Vec<(i32, i32)> = self.outside_tiles.keys().copied().collect();
             for coord in coords {
@@ -399,7 +401,8 @@ impl EditorState {
                 let mut built = Vec::with_capacity(tile.vis.roads.len());
                 for road in &tile.vis.roads {
                     let (s_dir, e_dir, tier) = self.compute_endpoint_joins(road);
-                    if let Ok(mesh) = RoadMeshGpu::from_road(gl, road, s_dir, e_dir, tier) {
+                    let is_soft = self.is_road_material_soft(road.material);
+                    if let Ok(mesh) = RoadMeshGpu::from_road(gl, road, s_dir, e_dir, tier, is_soft) {
                         built.push((road.id, mesh));
                     }
                 }
@@ -642,7 +645,15 @@ impl EditorState {
                 points: preview_points,
                 profile_heights: profile,
             };
-            RoadMeshGpu::from_road(gl, &ghost, None, None, 2).ok()
+            RoadMeshGpu::from_road(
+                gl,
+                &ghost,
+                None,
+                None,
+                2,
+                self.is_road_material_soft(ghost.material),
+            )
+            .ok()
         } else {
             None
         };
@@ -1032,7 +1043,9 @@ impl EditorState {
     }
 
     pub fn set_road_material(&mut self, gl: &glow::Context, material: u8, now_ms: f64) {
-        let mat = material.min(ROAD_MATERIAL_COUNT as u8 - 1);
+        let mat = material
+            .min(self.max_road_material)
+            .min(MAX_ROAD_MATERIALS as u8 - 1);
         self.road_material = mat;
         if let Some(draft) = &mut self.road_draft {
             draft.preview_key = None;

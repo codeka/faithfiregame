@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use glam::Vec3;
 use shared::world::{
-    AreaKind, AreaMetadata, AssetCatalog, AssetEntry, InsideVisData, MAX_TERRAIN_MATERIALS,
-    ROAD_MAT_COBBLESTONE, RoadStyle, TERRAIN_MATERIAL_COUNT, TILE_SIZE, TileVisData,
+    AreaKind, AreaMetadata, AssetCatalog, AssetEntry, InsideVisData, MAX_ROAD_MATERIALS,
+    MAX_TERRAIN_MATERIALS, ROAD_MAT_COBBLESTONE, ROAD_MAT_DIRT, ROAD_MATERIAL_COUNT, RoadStyle,
+    TERRAIN_MATERIAL_COUNT, TILE_SIZE, TileVisData,
 };
 
 use crate::camera::{Camera, EditorCameraController};
@@ -40,6 +41,8 @@ pub struct EditorState {
     pub road_submode: RoadSubMode,
     pub road_style: RoadStyle,
     pub road_material: u8,
+    pub max_road_material: u8,
+    pub road_soft_edge_mask: u16,
     pub road_width: f32,
     pub road_shoulder: f32,
     pub road_draft: Option<RoadDraft>,
@@ -103,6 +106,8 @@ impl EditorState {
             road_submode: RoadSubMode::Place,
             road_style: RoadStyle::Curve,
             road_material: ROAD_MAT_COBBLESTONE,
+            max_road_material: ROAD_MATERIAL_COUNT as u8 - 1,
+            road_soft_edge_mask: 1u16 << ROAD_MAT_DIRT,
             road_width: 4.0,
             road_shoulder: 3.0,
             road_draft: None,
@@ -195,7 +200,12 @@ impl EditorState {
         self.active_area = meta;
     }
 
-    pub fn set_catalog(&mut self, catalog: &AssetCatalog) {
+    #[inline]
+    pub(super) fn is_road_material_soft(&self, mat: u8) -> bool {
+        (mat as usize) < 16 && (self.road_soft_edge_mask & (1u16 << mat)) != 0
+    }
+
+    pub fn set_catalog(&mut self, gl: &glow::Context, catalog: &AssetCatalog) {
         let entries = &catalog.decorations;
         if let Some(first) = entries.first() {
             if !entries.iter().any(|e| e.id == self.active_asset_id) {
@@ -218,6 +228,30 @@ impl EditorState {
             .max()
             .unwrap_or(TERRAIN_MATERIAL_COUNT - 1);
         self.texture_layer = self.texture_layer.min(self.max_texture_layer);
+
+        self.max_road_material = catalog
+            .road_textures
+            .iter()
+            .map(|r| r.layer)
+            .filter(|&l| (l as usize) < MAX_ROAD_MATERIALS)
+            .max()
+            .unwrap_or(ROAD_MATERIAL_COUNT as u8 - 1);
+        self.road_material = self.road_material.min(self.max_road_material);
+
+        let mut next_soft_mask = 1u16 << ROAD_MAT_DIRT;
+        for r in &catalog.road_textures {
+            if (r.layer as usize) < 16 {
+                if r.is_soft_edge() {
+                    next_soft_mask |= 1u16 << r.layer;
+                } else {
+                    next_soft_mask &= !(1u16 << r.layer);
+                }
+            }
+        }
+        if next_soft_mask != self.road_soft_edge_mask {
+            self.road_soft_edge_mask = next_soft_mask;
+            self.rebuild_all_active_road_meshes(gl);
+        }
     }
 
     pub fn on_glb_loaded(&mut self, gl: &glow::Context, asset_id: String, bytes: &[u8]) {

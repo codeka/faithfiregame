@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const ROAD_MATERIAL_COUNT: usize = 5;
+pub const MAX_ROAD_MATERIALS: usize = 16;
 
 pub const ROAD_MAT_DIRT: u8 = 0;
 pub const ROAD_MAT_COBBLESTONE: u8 = 1;

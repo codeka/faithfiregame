@@ -561,6 +561,22 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
           height_path: null,
         },
       ],
+      road_textures: [
+        {
+          layer: 0,
+          id: 'dirt_path',
+          name: 'Forest Trail',
+          edge: 'Soft',
+          path: '/world/assets/roads/dirt_path.png',
+        },
+        {
+          layer: 5,
+          id: 'marble_way',
+          name: 'Marble Way',
+          edge: 'Curbed',
+          path: '/world/assets/roads/marble_way.png',
+        },
+      ],
     };
 
     globalThis.fetch = (async () =>
@@ -600,5 +616,24 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     expect(filteredBtns.length).toBe(1);
     (filteredBtns[0] as HTMLButtonElement).click();
     expect(textureCalls.at(-1)).toBe(7);
+
+    // Switching to Roads tool displays catalog road_textures with PNG swatches and custom layer IDs
+    statusSig.set(baseStatus('road'));
+    fixture.detectChanges();
+    const roadBtns = Array.from(root.querySelectorAll('.road-mat-btn')) as HTMLButtonElement[];
+    expect(roadBtns.length).toBe(2);
+    expect(
+      roadBtns.map((b) => b.querySelector('.road-mat-main span:last-child')?.textContent?.trim()),
+    ).toEqual(['Forest Trail', 'Marble Way']);
+    expect(roadBtns.map((b) => b.querySelector('.mat-edge')?.textContent?.trim())).toEqual([
+      'Soft',
+      'Curbed',
+    ]);
+    const roadSwatches = Array.from(root.querySelectorAll('.road-mat-btn .swatch')) as HTMLElement[];
+    expect(roadSwatches[0].style.backgroundImage).toContain('/world/assets/roads/dirt_path.png');
+    expect(roadSwatches[1].style.backgroundImage).toContain('/world/assets/roads/marble_way.png');
+
+    roadBtns[1].click();
+    expect(roadMaterialCalls.at(-1)).toBe(5);
   });
 });

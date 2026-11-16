@@ -37,7 +37,7 @@
 <div class="tool-section">
   <span class="section-label">Surface</span>
   <div class="material-list">
-    @for (mat of materials; track mat.index) {
+    @for (mat of materials(); track mat.index) {
       <button
         type="button"
         class="btn btn-sm road-mat-btn"
@@ -46,7 +46,11 @@
         (click)="engine.setRoadMaterial(mat.index)"
       >
         <span class="road-mat-main">
-          <span class="swatch" [style.background]="mat.swatch"></span>
+          <span
+            class="swatch"
+            [style.background-color]="mat.swatch"
+            [style.background-image]="mat.path ? 'url(' + mat.path + ')' : null"
+          ></span>
           <span>{{ mat.label }}</span>
         </span>
         <span class="mat-edge">{{ mat.edge }}</span>

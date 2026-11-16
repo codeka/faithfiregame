@@ -3,19 +3,22 @@ use std::path::Path;
 
 use shared::world::{
     AreaKind, AreaMetadata, AssetCatalog, AssetEntry, InsideKind, InsideVisData, MAT_COBBLESTONE,
-    MAT_DIRT, PropPlacement, TILE_VERTICES, TerrainTextureEntry, TileVisData, blend_splat_sample,
-    compute_inside_sim_from_vis, compute_sim_from_vis,
+    MAT_DIRT, PropPlacement, RoadTextureEntry, TILE_VERTICES, TerrainTextureEntry, TileVisData,
+    blend_splat_sample, compute_inside_sim_from_vis, compute_sim_from_vis,
 };
 
 use super::decorations::starter_decoration_assets;
+use super::road_textures::starter_road_textures;
 use super::terrain_textures::starter_terrain_textures;
 
-/// Ensures starter `.glb` decorations, terrain `.png` textures, `catalog.json`, and default `main` / `village_shop` areas exist.
+/// Ensures starter `.glb` decorations, terrain & road `.png` textures, `catalog.json`, and default `main` / `village_shop` areas exist.
 pub fn ensure_world_seeded(world_dir: &Path) -> anyhow::Result<()> {
     let dec_dir = world_dir.join("assets").join("decorations");
     fs::create_dir_all(&dec_dir)?;
     let tex_dir = world_dir.join("assets").join("terrain");
     fs::create_dir_all(&tex_dir)?;
+    let road_dir = world_dir.join("assets").join("roads");
+    fs::create_dir_all(&road_dir)?;
 
     let assets = starter_decoration_assets();
     let mut starter_decorations = Vec::with_capacity(assets.len());
@@ -56,6 +59,23 @@ pub fn ensure_world_seeded(world_dir: &Path) -> anyhow::Result<()> {
         });
     }
 
+    let roads = starter_road_textures()?;
+    let mut starter_roads = Vec::with_capacity(roads.len());
+    for tex in roads {
+        let filename = format!("{}.png", tex.id);
+        let road_file = road_dir.join(&filename);
+        if !road_file.exists() {
+            fs::write(&road_file, tex.rgba_png)?;
+        }
+        starter_roads.push(RoadTextureEntry {
+            layer: tex.layer,
+            id: tex.id.to_owned(),
+            name: tex.name.to_owned(),
+            edge: tex.edge.to_owned(),
+            path: format!("/world/assets/roads/{filename}"),
+        });
+    }
+
     let catalog_path = world_dir.join("assets").join("catalog.json");
     if catalog_path.exists() {
         let raw = fs::read(&catalog_path)?;
@@ -83,6 +103,16 @@ pub fn ensure_world_seeded(world_dir: &Path) -> anyhow::Result<()> {
                 modified = true;
             }
         }
+        for entry in starter_roads {
+            if !existing
+                .road_textures
+                .iter()
+                .any(|e| e.layer == entry.layer || e.id == entry.id)
+            {
+                existing.road_textures.push(entry);
+                modified = true;
+            }
+        }
         if modified {
             fs::write(&catalog_path, serde_json::to_vec_pretty(&existing)?)?;
         }
@@ -90,6 +120,7 @@ pub fn ensure_world_seeded(world_dir: &Path) -> anyhow::Result<()> {
         let catalog = AssetCatalog {
             decorations: starter_decorations,
             terrain_textures: starter_terrain,
+            road_textures: starter_roads,
         };
         fs::write(&catalog_path, serde_json::to_vec_pretty(&catalog)?)?;
     }
@@ -266,6 +297,7 @@ mod tests {
         assert_eq!(legacy.decorations.len(), 1);
         assert_eq!(legacy.decorations[0].id, "pine_tree");
         assert!(legacy.terrain_textures.is_empty());
+        assert!(legacy.road_textures.is_empty());
 
         let structured = AssetCatalog {
             decorations: legacy.decorations,
@@ -276,6 +308,13 @@ mod tests {
                 category: "Grass".to_owned(),
                 albedo_path: "/world/assets/terrain/grass.png".to_owned(),
                 height_path: Some("/world/assets/terrain/grass_height.png".to_owned()),
+            }],
+            road_textures: vec![RoadTextureEntry {
+                layer: 0,
+                id: "dirt_path".to_owned(),
+                name: "Dirt Path".to_owned(),
+                edge: "Soft".to_owned(),
+                path: "/world/assets/roads/dirt_path.png".to_owned(),
             }],
         };
         let encoded = serde_json::to_string(&structured).unwrap();
@@ -338,10 +377,19 @@ mod tests {
             assert!(terrain_dir.join(format!("{}_height.png", entry.id)).exists());
         }
 
-        // Simulate artist replacing grass.png and adding a custom terrain layer in catalog.json
+        assert_eq!(merged.road_textures.len(), 5);
+        let road_dir = assets_dir.join("roads");
+        for entry in &merged.road_textures {
+            assert!(road_dir.join(format!("{}.png", entry.id)).exists());
+        }
+
+        // Simulate artist replacing grass.png / dirt_path.png and adding custom layers in catalog.json
         let custom_png = b"ARTIST_CUSTOM_GRASS_PNG".to_vec();
         let grass_path = terrain_dir.join("grass.png");
         fs::write(&grass_path, &custom_png).unwrap();
+        let custom_road_png = b"ARTIST_CUSTOM_ROAD_PNG".to_vec();
+        let dirt_road_path = road_dir.join("dirt_path.png");
+        fs::write(&dirt_road_path, &custom_road_png).unwrap();
         merged.terrain_textures.push(TerrainTextureEntry {
             layer: 9,
             id: "snow".to_owned(),
@@ -350,14 +398,29 @@ mod tests {
             albedo_path: "/world/assets/terrain/snow.png".to_owned(),
             height_path: None,
         });
+        merged.road_textures.push(RoadTextureEntry {
+            layer: 5,
+            id: "gravel_trail".to_owned(),
+            name: "Gravel Trail".to_owned(),
+            edge: "Soft".to_owned(),
+            path: "/world/assets/roads/gravel_trail.png".to_owned(),
+        });
         fs::write(&catalog_path, serde_json::to_vec_pretty(&merged).unwrap()).unwrap();
 
         ensure_world_seeded(&root).unwrap();
 
         assert_eq!(fs::read(&grass_path).unwrap(), custom_png);
+        assert_eq!(fs::read(&dirt_road_path).unwrap(), custom_road_png);
         let after: AssetCatalog = serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
         assert_eq!(after.terrain_textures.len(), 10);
         assert!(after.terrain_textures.iter().any(|t| t.layer == 9 && t.id == "snow"));
+        assert_eq!(after.road_textures.len(), 6);
+        assert!(
+            after
+                .road_textures
+                .iter()
+                .any(|r| r.layer == 5 && r.id == "gravel_trail" && r.is_soft_edge())
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

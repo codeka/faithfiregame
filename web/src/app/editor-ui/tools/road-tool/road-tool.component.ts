@@ -1,5 +1,6 @@
 import { Component, computed, inject } from '@angular/core';
-import { EditorEngineService } from '../../editor-engine.service';
+import { DEFAULT_ROAD_MATERIALS, EditorEngineService } from '../../editor-engine.service';
+import { EditorStateService } from '../../editor-state.service';
 
 export const ROAD_SUBMODES = [
   { id: 'place', label: 'Place', shortcut: '1' },
@@ -11,13 +12,7 @@ export const ROAD_STYLES = [
   { id: 'straight', label: 'Straight' },
 ] as const;
 
-export const ROAD_MATERIALS = [
-  { index: 0, label: 'Dirt Path', edge: 'Soft', swatch: '#8b6642' },
-  { index: 1, label: 'Cobblestone', edge: 'Curbed', swatch: '#767980' },
-  { index: 2, label: 'Brick', edge: 'Curbed', swatch: '#a14d3a' },
-  { index: 3, label: 'Asphalt', edge: 'Curbed', swatch: '#373a40' },
-  { index: 4, label: 'Flagstone', edge: 'Border', swatch: '#7f847c' },
-] as const;
+export const ROAD_MATERIALS = DEFAULT_ROAD_MATERIALS;
 
 @Component({
   selector: 'app-road-tool',
@@ -28,10 +23,11 @@ export const ROAD_MATERIALS = [
 })
 export class RoadToolComponent {
   readonly engine = inject(EditorEngineService);
+  readonly state = inject(EditorStateService);
 
   readonly submodes = ROAD_SUBMODES;
   readonly styles = ROAD_STYLES;
-  readonly materials = ROAD_MATERIALS;
+  readonly materials = this.state.roadMaterials;
 
   readonly activeSubmode = computed(() => this.engine.status()?.roadSubmode ?? 'place');
   readonly draftPoints = computed(() => this.engine.status()?.roadDraftPoints ?? 0);

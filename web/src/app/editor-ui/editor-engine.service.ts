@@ -29,9 +29,18 @@ export interface TerrainTextureEntry {
   height_path?: string | null;
 }
 
+export interface RoadTextureEntry {
+  layer: number;
+  id: string;
+  name: string;
+  edge: string;
+  path: string;
+}
+
 export interface AssetCatalog {
   decorations?: AssetEntry[];
   terrain_textures?: TerrainTextureEntry[];
+  road_textures?: RoadTextureEntry[];
 }
 
 export interface TextureLayerOption {
@@ -42,6 +51,22 @@ export interface TextureLayerOption {
   albedoPath: string | null;
   shortcut: string;
 }
+
+export interface RoadMaterialOption {
+  index: number;
+  label: string;
+  edge: string;
+  swatch: string;
+  path: string | null;
+}
+
+export const DEFAULT_ROAD_MATERIALS: readonly RoadMaterialOption[] = [
+  { index: 0, label: 'Dirt Path', edge: 'Soft', swatch: '#8b6642', path: null },
+  { index: 1, label: 'Cobblestone', edge: 'Curbed', swatch: '#767980', path: null },
+  { index: 2, label: 'Brick', edge: 'Curbed', swatch: '#a14d3a', path: null },
+  { index: 3, label: 'Asphalt', edge: 'Curbed', swatch: '#373a40', path: null },
+  { index: 4, label: 'Flagstone', edge: 'Border', swatch: '#7f847c', path: null },
+];
 
 export const DEFAULT_TEXTURE_LAYERS: readonly TextureLayerOption[] = [
   { index: 0, label: 'Grass', category: 'Grass', swatch: '#4a8f3d', albedoPath: null, shortcut: '1' },

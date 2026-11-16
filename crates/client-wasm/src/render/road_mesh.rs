@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 use glow::HasContext;
-use shared::world::{ROAD_MAT_DIRT, RoadSpline, build_road_stations};
+use shared::world::{RoadSpline, build_road_stations};
 
 pub struct RoadMeshGpu {
     pub(super) vao: glow::VertexArray,
@@ -18,9 +18,10 @@ impl RoadMeshGpu {
         start_away_dir: Option<[f32; 2]>,
         end_away_dir: Option<[f32; 2]>,
         overlap_tier: u8,
+        is_soft_edge: bool,
     ) -> Result<Self, String> {
         let (verts, indices) =
-            build_road_ribbon(road, start_away_dir, end_away_dir, overlap_tier);
+            build_road_ribbon(road, start_away_dir, end_away_dir, overlap_tier, is_soft_edge);
 
         unsafe {
             let vao = gl.create_vertex_array()?;
@@ -77,13 +78,14 @@ pub fn build_road_ribbon(
     start_away_dir: Option<[f32; 2]>,
     end_away_dir: Option<[f32; 2]>,
     overlap_tier: u8,
+    is_soft_edge: bool,
 ) -> (Vec<f32>, Vec<u32>) {
     let stations = build_road_stations(road, start_away_dir, end_away_dir);
     if stations.len() < 2 {
         return (Vec::new(), Vec::new());
     }
 
-    let is_dirt = road.material == ROAD_MAT_DIRT;
+    let is_dirt = is_soft_edge;
     let half_w = (road.width * 0.5).max(0.5);
     let lift = if is_dirt { 0.032 } else { 0.045 } + overlap_tier as f32 * 0.0006;
     let skirt_w = half_w + 0.06;
@@ -282,7 +284,8 @@ mod tests {
                 points: vec![[8.0, 0.0, 12.0], [20.0, 1.0, 16.0], [32.0, 2.0, 28.0]],
                 profile_heights: Vec::new(),
             };
-            let (verts, indices) = build_road_ribbon(&road, None, None, 0);
+            let (verts, indices) =
+                build_road_ribbon(&road, None, None, 0, mat == ROAD_MAT_DIRT);
             assert!(!verts.is_empty());
             assert!(!indices.is_empty());
             assert_eq!(indices.len() % 3, 0);

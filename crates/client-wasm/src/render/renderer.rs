@@ -7,7 +7,9 @@ use crate::camera::Camera;
 use super::gizmo_mesh::GizmoMeshGpu;
 use super::prop_mesh::{PropMeshGpu, create_selection_ring_mesh, prop_model_matrix};
 use super::road_mesh::RoadMeshGpu;
-use super::road_textures::create_road_texture_array;
+use super::road_textures::{
+    RoadLayerImage, create_placeholder_road_texture_array, create_road_texture_array_from_images,
+};
 use super::shaders::{
     GIZMO_FRAG, GIZMO_VERT, LINE_FRAG, LINE_VERT, PROP_FRAG, PROP_VERT, ROAD_FRAG, ROAD_VERT,
     TERRAIN_FRAG, TERRAIN_VERT, compile_program,
@@ -31,6 +33,8 @@ pub struct Renderer {
     tex_array: glow::Texture,
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     road_tex_array: glow::Texture,
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    road_soft_edge_mask: u16,
     ring_vao: glow::VertexArray,
     ring_vert_count: i32,
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
@@ -55,7 +59,7 @@ impl Renderer {
         let road_prog = compile_program(&gl, ROAD_VERT, ROAD_FRAG)?;
         let gizmo_prog = compile_program(&gl, GIZMO_VERT, GIZMO_FRAG)?;
         let tex_array = create_placeholder_terrain_texture_array(&gl)?;
-        let road_tex_array = create_road_texture_array(&gl)?;
+        let road_tex_array = create_placeholder_road_texture_array(&gl)?;
         let (ring_vao, ring_vert_count) = create_selection_ring_mesh(&gl)?;
         let (dyn_line_vao, dyn_line_vbo) = unsafe {
             let vao = gl.create_vertex_array()?;
@@ -87,6 +91,7 @@ impl Renderer {
             gizmo_prog,
             tex_array,
             road_tex_array,
+            road_soft_edge_mask: 1u16 << shared::world::ROAD_MAT_DIRT,
             ring_vao,
             ring_vert_count,
             dyn_line_vao,
@@ -107,6 +112,27 @@ impl Renderer {
             self.gl.delete_texture(self.tex_array);
         }
         self.tex_array = next_tex;
+        Ok(())
+    }
+
+    pub fn set_road_textures(&mut self, images: &[RoadLayerImage]) -> Result<(), String> {
+        let next_tex = create_road_texture_array_from_images(&self.gl, images)?;
+        unsafe {
+            self.gl.delete_texture(self.road_tex_array);
+        }
+        self.road_tex_array = next_tex;
+
+        let mut mask = 1u16 << shared::world::ROAD_MAT_DIRT;
+        for img in images {
+            if (img.layer as usize) < 16 {
+                if img.is_soft_edge {
+                    mask |= 1u16 << img.layer;
+                } else {
+                    mask &= !(1u16 << img.layer);
+                }
+            }
+        }
+        self.road_soft_edge_mask = mask;
         Ok(())
     }
 
@@ -347,7 +373,9 @@ impl Renderer {
             return;
         }
         let vp = camera.view_proj_matrix();
-        let write_depth = opacity >= 0.999 && material != shared::world::ROAD_MAT_DIRT;
+        let is_soft =
+            (material as usize) < 16 && (self.road_soft_edge_mask & (1u16 << material)) != 0;
+        let write_depth = opacity >= 0.999 && !is_soft;
 
         unsafe {
             let gl = &self.gl;

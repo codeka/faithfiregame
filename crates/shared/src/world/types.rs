@@ -122,12 +122,35 @@ pub struct TerrainTextureEntry {
     pub height_path: Option<String>,
 }
 
+fn default_road_edge() -> String {
+    "Curbed".to_owned()
+}
+
+/// Catalog entry for a road ribbon RGBA texture served over HTTP(S).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoadTextureEntry {
+    pub layer: u8,
+    pub id: String,
+    pub name: String,
+    #[serde(default = "default_road_edge")]
+    pub edge: String,
+    pub path: String,
+}
+
+impl RoadTextureEntry {
+    #[inline]
+    pub fn is_soft_edge(&self) -> bool {
+        self.edge.eq_ignore_ascii_case("soft")
+    }
+}
+
 /// Unified asset catalog served from `/world/assets/catalog.json`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "AssetCatalogWire")]
 pub struct AssetCatalog {
     pub decorations: Vec<AssetEntry>,
     pub terrain_textures: Vec<TerrainTextureEntry>,
+    pub road_textures: Vec<RoadTextureEntry>,
 }
 
 #[derive(Deserialize)]
@@ -138,6 +161,8 @@ enum AssetCatalogWire {
         decorations: Vec<AssetEntry>,
         #[serde(default)]
         terrain_textures: Vec<TerrainTextureEntry>,
+        #[serde(default)]
+        road_textures: Vec<RoadTextureEntry>,
     },
     LegacyDecorations(Vec<AssetEntry>),
 }
@@ -148,13 +173,16 @@ impl From<AssetCatalogWire> for AssetCatalog {
             AssetCatalogWire::Structured {
                 decorations,
                 terrain_textures,
+                road_textures,
             } => Self {
                 decorations,
                 terrain_textures,
+                road_textures,
             },
             AssetCatalogWire::LegacyDecorations(decorations) => Self {
                 decorations,
                 terrain_textures: Vec::new(),
+                road_textures: Vec::new(),
             },
         }
     }

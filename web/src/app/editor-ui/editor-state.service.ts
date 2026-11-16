@@ -3,14 +3,20 @@ import {
   AreaMetadata,
   AssetCatalog,
   AssetEntry,
+  DEFAULT_ROAD_MATERIALS,
   DEFAULT_TEXTURE_LAYERS,
   EditorEngineService,
+  RoadMaterialOption,
+  RoadTextureEntry,
   TerrainTextureEntry,
   TextureLayerOption,
 } from './editor-engine.service';
 
 const DEFAULT_SWATCH_BY_LAYER = new Map<number, string>(
   DEFAULT_TEXTURE_LAYERS.map((layer) => [layer.index, layer.swatch]),
+);
+const DEFAULT_ROAD_SWATCH_BY_LAYER = new Map<number, string>(
+  DEFAULT_ROAD_MATERIALS.map((mat) => [mat.index, mat.swatch]),
 );
 
 @Injectable()
@@ -20,6 +26,7 @@ export class EditorStateService {
   readonly areas = signal<AreaMetadata[]>([]);
   readonly catalog = signal<AssetEntry[]>([]);
   readonly terrainCatalog = signal<TerrainTextureEntry[]>([]);
+  readonly roadCatalog = signal<RoadTextureEntry[]>([]);
   readonly selectedAreaId = signal<string>('main');
 
   readonly brushRadius = signal<number>(4.5);
@@ -58,6 +65,20 @@ export class EditorStateService {
       }
     }
     return cats;
+  });
+
+  readonly roadMaterials = computed<readonly RoadMaterialOption[]>(() => {
+    const entries = this.roadCatalog();
+    if (entries.length === 0) {
+      return DEFAULT_ROAD_MATERIALS;
+    }
+    return entries.map((entry) => ({
+      index: entry.layer,
+      label: entry.name,
+      edge: entry.edge || 'Curbed',
+      swatch: DEFAULT_ROAD_SWATCH_BY_LAYER.get(entry.layer) ?? '#6b7280',
+      path: entry.path || null,
+    }));
   });
 
   readonly assetCategories = computed<readonly string[]>(() => {
@@ -126,8 +147,10 @@ export class EditorStateService {
         const raw = (await resp.json()) as AssetEntry[] | AssetCatalog;
         const decorations = Array.isArray(raw) ? raw : (raw.decorations ?? []);
         const terrainTextures = Array.isArray(raw) ? [] : (raw.terrain_textures ?? []);
+        const roadTextures = Array.isArray(raw) ? [] : (raw.road_textures ?? []);
         this.catalog.set(decorations);
         this.terrainCatalog.set(terrainTextures);
+        this.roadCatalog.set(roadTextures);
         if (
           this.assetCategory() !== 'All' &&
           !decorations.some((a) => a.category === this.assetCategory())

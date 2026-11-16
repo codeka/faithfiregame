@@ -1,255 +1,170 @@
+use std::io::Cursor;
+
 use glow::HasContext;
-use shared::world::ROAD_MATERIAL_COUNT;
+use shared::world::{MAX_ROAD_MATERIALS, ROAD_MAT_DIRT};
 
-fn hash2(x: i32, y: i32) -> f32 {
-    let n = (x.wrapping_mul(374761393) ^ y.wrapping_mul(668265263)).wrapping_mul(1274126177);
-    ((n ^ (n >> 13)) as u32 & 0xFFFF) as f32 / 65535.0
+pub struct RoadLayerImage {
+    pub layer: u8,
+    pub is_soft_edge: bool,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<[u8; 4]>,
 }
 
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn lerp_rgb(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [
-        a[0] + (b[0] - a[0]) * t,
-        a[1] + (b[1] - a[1]) * t,
-        a[2] + (b[2] - a[2]) * t,
-    ]
-}
-
-fn tileable_noise(u: f32, v: f32, period: i32) -> f32 {
-    let x = u * period as f32;
-    let y = v * period as f32;
-    let x0 = x.floor() as i32;
-    let y0 = y.floor() as i32;
-    let fx = x - x0 as f32;
-    let fy = y - y0 as f32;
-    let sx = fx * fx * (3.0 - 2.0 * fx);
-    let sy = fy * fy * (3.0 - 2.0 * fy);
-
-    let wrap = |val: i32| val.rem_euclid(period);
-    let n00 = hash2(wrap(x0), wrap(y0));
-    let n10 = hash2(wrap(x0 + 1), wrap(y0));
-    let n01 = hash2(wrap(x0), wrap(y0 + 1));
-    let n11 = hash2(wrap(x0 + 1), wrap(y0 + 1));
-
-    let nx0 = n00 + (n10 - n00) * sx;
-    let nx1 = n01 + (n11 - n01) * sx;
-    nx0 + (nx1 - nx0) * sy
-}
-
-fn fbm_tileable(u: f32, v: f32) -> f32 {
-    0.55 * tileable_noise(u, v, 8)
-        + 0.30 * tileable_noise(u, v, 16)
-        + 0.15 * tileable_noise(u, v, 32)
-}
-
-fn wrap_voronoi(u: f32, v: f32, cells: i32) -> (f32, f32, i32, i32) {
-    let px = u * cells as f32;
-    let py = v * cells as f32;
-    let gx = px.floor() as i32;
-    let gy = py.floor() as i32;
-
-    let mut d1 = f32::MAX;
-    let mut d2 = f32::MAX;
-    let mut id1 = (0, 0);
-
-    for oy in -1..=1 {
-        for ox in -1..=1 {
-            let cx = gx + ox;
-            let cy = gy + oy;
-            let wx = cx.rem_euclid(cells);
-            let wy = cy.rem_euclid(cells);
-            let jx = cx as f32 + 0.18 + 0.64 * hash2(wx, wy);
-            let jy = cy as f32 + 0.18 + 0.64 * hash2(wx + 71, wy + 137);
-            let dist = ((px - jx).powi(2) + (py - jy).powi(2)).sqrt();
-            if dist < d1 {
-                d2 = d1;
-                d1 = dist;
-                id1 = (wx, wy);
-            } else if dist < d2 {
-                d2 = dist;
-            }
-        }
-    }
-
-    (d1, d2, id1.0, id1.1)
-}
-
-fn stone_curb_rgb(u: f32, v: f32, curb_w: f32, blocks_per_v: f32, fine: f32, warm: [f32; 3]) -> [f32; 3] {
-    let side = if u < 0.5 { 0 } else { 1 };
-    let local_u = if side == 0 {
-        u / curb_w
-    } else {
-        (1.0 - u) / curb_w
-    }
-    .clamp(0.0, 1.0);
-    let gv = v * blocks_per_v;
-    let row = (gv.floor() as i32).rem_euclid(blocks_per_v as i32);
-    let fv = gv.fract();
-
-    let joint_v = smoothstep(0.04, 0.10, fv.min(1.0 - fv));
-    let inner_bevel = smoothstep(0.0, 0.20, local_u);
-    let outer_bevel = smoothstep(0.0, 0.18, 1.0 - local_u);
-    let block_mask = joint_v * (0.72 + 0.28 * inner_bevel * outer_bevel);
-    let tone = hash2(row + 19 + side * 73, 101 + side * 41);
-    let shade = 0.86 + tone * 0.20 + (fine - 0.5) * 0.08;
-    let mortar = [warm[0] * 0.50, warm[1] * 0.50, warm[2] * 0.50];
-    let block = [warm[0] * shade, warm[1] * shade, warm[2] * shade];
-    lerp_rgb(mortar, block, block_mask)
-}
-
-fn sample_road_rgba(layer: usize, u: f32, v: f32) -> [f32; 4] {
-    let n = fbm_tileable(u, v);
-    let fine = tileable_noise(u, v, 64);
-
+fn fallback_road_rgba(layer: usize) -> [u8; 4] {
     match layer {
-        // 0: Dirt Path (packed soil + twin wheel ruts + organic feathered edges)
-        0 => {
-            let rut_l = (-((u - 0.30) / 0.085).powi(2)).exp();
-            let rut_r = (-((u - 0.70) / 0.085).powi(2)).exp();
-            let ruts = (rut_l + rut_r).clamp(0.0, 1.0);
-            let center_wear = (-((u - 0.50) / 0.14).powi(2)).exp();
-            let grit = tileable_noise(u, v, 32);
-
-            let base = 0.49 + (n - 0.5) * 0.13 + (fine - 0.5) * 0.08 + (grit - 0.5) * 0.05;
-            let soil = [base * 1.13, base * 0.85, base * 0.57];
-            let rut_rgb = [soil[0] * 0.78, soil[1] * 0.76, soil[2] * 0.74];
-            let dusty_rgb = [soil[0] * 1.08, soil[1] * 1.04, soil[2] * 0.96];
-            let mut rgb = lerp_rgb(soil, dusty_rgb, center_wear * 0.35);
-            rgb = lerp_rgb(rgb, rut_rgb, ruts * 0.42);
-
-            let edge_d = u.min(1.0 - u);
-            let jittered = edge_d + (n - 0.5) * 0.055 + (grit - 0.5) * 0.025;
-            let hard_mask = smoothstep(0.012, 0.032, edge_d);
-            let alpha = (smoothstep(0.025, 0.14, jittered) * hard_mask).clamp(0.0, 1.0);
-            [rgb[0], rgb[1], rgb[2], alpha]
-        }
-        // 1: Cobblestone with dressed stone curbstones
-        1 => {
-            const CURB: f32 = 0.085;
-            if u < CURB || u > (1.0 - CURB) {
-                let c = stone_curb_rgb(u, v, CURB, 8.0, fine, [0.56, 0.55, 0.53]);
-                return [c[0], c[1], c[2], 1.0];
-            }
-            let inner_u = ((u - CURB) / (1.0 - 2.0 * CURB)).clamp(0.0, 1.0);
-            let (d1, d2, id_x, id_y) = wrap_voronoi(inner_u, v, 10);
-            let stone_mask = smoothstep(0.05, 0.13, d2 - d1);
-            let crown = (1.0 - (d1 / 0.65).clamp(0.0, 1.0)).sqrt();
-            let seed = hash2(id_x + 41, id_y + 83);
-            let tint = hash2(id_x + 173, id_y + 29) - 0.5;
-            let shade = 0.38 + 0.18 * crown + 0.13 * seed + (fine - 0.5) * 0.07;
-            let stone_rgb = [shade + tint * 0.06, shade + tint * 0.02, shade - tint * 0.05];
-            let mortar_rgb = [0.22 + (fine - 0.5) * 0.04, 0.21, 0.20];
-            let rgb = lerp_rgb(mortar_rgb, stone_rgb, stone_mask);
-            [rgb[0], rgb[1], rgb[2], 1.0]
-        }
-        // 2: Brick with soldier-course brick borders
-        2 => {
-            const CURB: f32 = 0.085;
-            if u < CURB || u > (1.0 - CURB) {
-                let c = stone_curb_rgb(u, v, CURB, 14.0, fine, [0.55, 0.28, 0.21]);
-                return [c[0], c[1], c[2], 1.0];
-            }
-            const COLS: i32 = 6;
-            const ROWS: i32 = 16;
-            let inner_u = ((u - CURB) / (1.0 - 2.0 * CURB)).clamp(0.0, 1.0);
-            let gy = v * ROWS as f32;
-            let row = (gy.floor() as i32).rem_euclid(ROWS);
-            let stagger = if row % 2 == 1 { 0.5 / COLS as f32 } else { 0.0 };
-            let su = (inner_u + stagger).fract();
-            let gx = su * COLS as f32;
-            let col = (gx.floor() as i32).rem_euclid(COLS);
-            let fu = gx.fract();
-            let fv = gy.fract();
-
-            let brick_mask =
-                smoothstep(0.045, 0.075, fu.min(1.0 - fu)) * smoothstep(0.09, 0.15, fv.min(1.0 - fv));
-            let kiln = hash2(col + 17, row + 59);
-            let tint = hash2(col + 97, row + 139);
-            let bevel = (1.0 - fv) * 0.05 + (fine - 0.5) * 0.05 + (n - 0.5) * 0.04;
-            let brick_rgb = [
-                0.50 + kiln * 0.13 + bevel,
-                0.24 + tint * 0.07 + bevel * 0.65,
-                0.19 + (1.0 - kiln) * 0.04 + bevel * 0.5,
-            ];
-            let mortar_rgb = [0.54 + (fine - 0.5) * 0.04, 0.51, 0.46];
-            let rgb = lerp_rgb(mortar_rgb, brick_rgb, brick_mask);
-            [rgb[0], rgb[1], rgb[2], 1.0]
-        }
-        // 3: Asphalt tarmac with pale concrete curbs
-        3 => {
-            const CURB: f32 = 0.070;
-            if u < CURB || u > (1.0 - CURB) {
-                let c = stone_curb_rgb(u, v, CURB, 4.0, fine, [0.64, 0.64, 0.62]);
-                return [c[0], c[1], c[2], 1.0];
-            }
-            let aggregate = tileable_noise(u, v, 48);
-            let sparkle = tileable_noise(u, v, 96);
-            let spec = smoothstep(0.80, 0.94, sparkle) * 0.045;
-            let wear = ((-((u - 0.33) / 0.10).powi(2)).exp() + (-((u - 0.67) / 0.10).powi(2)).exp())
-                .clamp(0.0, 1.0);
-            let base = 0.19 + (n - 0.5) * 0.04 + (aggregate - 0.5) * 0.04 + (fine - 0.5) * 0.03 + spec - wear * 0.025;
-            [base * 0.98, base, base * 1.04, 1.0]
-        }
-        // 4: Flagstone slabs with dressed border stones
-        _ => {
-            const CURB: f32 = 0.080;
-            if u < CURB || u > (1.0 - CURB) {
-                let c = stone_curb_rgb(u, v, CURB, 6.0, fine, [0.52, 0.54, 0.51]);
-                return [c[0], c[1], c[2], 1.0];
-            }
-            let inner_u = ((u - CURB) / (1.0 - 2.0 * CURB)).clamp(0.0, 1.0);
-            let (d1, d2, id_x, id_y) = wrap_voronoi(inner_u, v, 5);
-            let seam = smoothstep(0.035, 0.085, d2 - d1);
-            let slab_tone = hash2(id_x + 23, id_y + 71);
-            let warm_cool = hash2(id_x + 157, id_y + 11) - 0.5;
-            let flat_tex = 0.45 + 0.14 * slab_tone + (n - 0.5) * 0.07 + (fine - 0.5) * 0.05;
-            let slab_rgb = [
-                flat_tex + warm_cool * 0.07,
-                flat_tex + 0.02 + warm_cool * 0.02,
-                flat_tex - warm_cool * 0.05,
-            ];
-            let mortar_rgb = [0.27 + (fine - 0.5) * 0.04, 0.27, 0.25];
-            let rgb = lerp_rgb(mortar_rgb, slab_rgb, seam);
-            [rgb[0], rgb[1], rgb[2], 1.0]
-        }
+        0 => [139, 102, 66, 255],  // Dirt Path
+        1 => [118, 121, 128, 255], // Cobblestone
+        2 => [161, 77, 58, 255],   // Brick
+        3 => [55, 58, 64, 255],    // Asphalt
+        4 => [127, 132, 124, 255], // Flagstone
+        _ => [120, 120, 124, 255],
     }
 }
 
-pub(super) fn create_road_texture_array(gl: &glow::Context) -> Result<glow::Texture, String> {
-    const SIZE: usize = 256;
-    const LAYERS: usize = ROAD_MATERIAL_COUNT;
-    let mut pixels = vec![0u8; SIZE * SIZE * LAYERS * 4];
+pub fn decode_road_rgba_png(bytes: &[u8]) -> Result<(u32, u32, Vec<[u8; 4]>), String> {
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("Road PNG header decode failed: {e}"))?;
+    let buf_size = reader
+        .output_buffer_size()
+        .ok_or_else(|| "Road PNG output buffer size overflow".to_owned())?;
+    let mut buf = vec![0u8; buf_size];
+    let frame = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("Road PNG frame decode failed: {e}"))?;
+    if frame.width == 0 || frame.height == 0 {
+        return Err("Road PNG has zero dimensions".to_owned());
+    }
+    let data = &buf[..frame.buffer_size()];
+    let pixel_count = (frame.width as usize)
+        .checked_mul(frame.height as usize)
+        .ok_or_else(|| "Road PNG dimensions overflow".to_owned())?;
+    let mut out = Vec::with_capacity(pixel_count);
 
-    for layer in 0..LAYERS {
-        for y in 0..SIZE {
-            for x in 0..SIZE {
-                let u = x as f32 / (SIZE - 1) as f32;
-                let v = y as f32 / SIZE as f32;
-                let rgba = sample_road_rgba(layer, u, v);
-                let idx = ((layer * SIZE * SIZE) + y * SIZE + x) * 4;
-                pixels[idx] = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
-                pixels[idx + 1] = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
-                pixels[idx + 2] = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
-                pixels[idx + 3] = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
+    match frame.color_type {
+        png::ColorType::Rgba => {
+            for px in data.chunks_exact(4) {
+                out.push([px[0], px[1], px[2], px[3]]);
             }
+        }
+        png::ColorType::Rgb => {
+            for px in data.chunks_exact(3) {
+                out.push([px[0], px[1], px[2], 255]);
+            }
+        }
+        png::ColorType::Grayscale => {
+            for &v in data {
+                out.push([v, v, v, 255]);
+            }
+        }
+        png::ColorType::GrayscaleAlpha => {
+            for px in data.chunks_exact(2) {
+                out.push([px[0], px[0], px[0], px[1]]);
+            }
+        }
+        other => {
+            return Err(format!("Unsupported road PNG color type: {other:?}"));
         }
     }
 
+    if out.len() != pixel_count {
+        return Err("Decoded road PNG byte count mismatch".to_owned());
+    }
+    Ok((frame.width, frame.height, out))
+}
+
+/// Resamples a road texture with `CLAMP_TO_EDGE` in U (across road width) and `REPEAT` in V (along road length).
+fn sample_rgba_clamp_u_wrap_v(
+    pixels: &[[u8; 4]],
+    w: usize,
+    h: usize,
+    u: f32,
+    v: f32,
+) -> [u8; 4] {
+    let sx = (u.clamp(0.0, 1.0) * (w.saturating_sub(1)) as f32).clamp(0.0, w.saturating_sub(1) as f32);
+    let sy = v * h as f32;
+
+    let x0 = (sx.floor() as usize).min(w - 1);
+    let x1 = (x0 + 1).min(w - 1);
+    let fx = sx - sx.floor();
+
+    let y0 = (sy.floor() as isize).rem_euclid(h as isize) as usize;
+    let y1 = (y0 + 1) % h;
+    let fy = sy - sy.floor();
+
+    let p00 = pixels[y0 * w + x0];
+    let p10 = pixels[y0 * w + x1];
+    let p01 = pixels[y1 * w + x0];
+    let p11 = pixels[y1 * w + x1];
+
+    let mut out = [0u8; 4];
+    for c in 0..4 {
+        let top = p00[c] as f32 + (p10[c] as f32 - p00[c] as f32) * fx;
+        let bot = p01[c] as f32 + (p11[c] as f32 - p01[c] as f32) * fx;
+        let val = top + (bot - top) * fy;
+        out[c] = val.round().clamp(0.0, 255.0) as u8;
+    }
+    out
+}
+
+pub fn pack_road_layer_rgba(img: &RoadLayerImage, target_size: usize) -> Vec<u8> {
+    let pixel_count = target_size * target_size;
+    let mut out = vec![0u8; pixel_count * 4];
+    let w = img.width as usize;
+    let h = img.height as usize;
+
+    if w == target_size && h == target_size && img.rgba.len() == pixel_count {
+        for (i, px) in img.rgba.iter().enumerate() {
+            out[i * 4..i * 4 + 4].copy_from_slice(px);
+        }
+        return out;
+    }
+
+    let u_denom = target_size.saturating_sub(1).max(1) as f32;
+    for y in 0..target_size {
+        let v = y as f32 / target_size as f32;
+        for x in 0..target_size {
+            let u = if target_size > 1 {
+                x as f32 / u_denom
+            } else {
+                0.5
+            };
+            let rgba = if w > 0 && h > 0 && !img.rgba.is_empty() {
+                sample_rgba_clamp_u_wrap_v(&img.rgba, w, h, u, v)
+            } else {
+                let mut fb = fallback_road_rgba(img.layer as usize);
+                if img.layer == ROAD_MAT_DIRT && (x == 0 || x + 1 == target_size) && target_size > 2 {
+                    fb[3] = 0;
+                }
+                fb
+            };
+            let idx = (y * target_size + x) * 4;
+            out[idx..idx + 4].copy_from_slice(&rgba);
+        }
+    }
+    out
+}
+
+unsafe fn upload_road_texture_array(
+    gl: &glow::Context,
+    size: usize,
+    layers: usize,
+    pixels: &[u8],
+) -> Result<glow::Texture, String> {
     unsafe {
         let tex = gl.create_texture()?;
         gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex));
-        let mip_levels = (SIZE.ilog2() + 1) as i32;
+        let mip_levels = (size.ilog2() + 1) as i32;
         gl.tex_storage_3d(
             glow::TEXTURE_2D_ARRAY,
             mip_levels,
             glow::RGBA8,
-            SIZE as i32,
-            SIZE as i32,
-            LAYERS as i32,
+            size as i32,
+            size as i32,
+            layers as i32,
         );
         gl.tex_sub_image_3d(
             glow::TEXTURE_2D_ARRAY,
@@ -257,12 +172,12 @@ pub(super) fn create_road_texture_array(gl: &glow::Context) -> Result<glow::Text
             0,
             0,
             0,
-            SIZE as i32,
-            SIZE as i32,
-            LAYERS as i32,
+            size as i32,
+            size as i32,
+            layers as i32,
             glow::RGBA,
             glow::UNSIGNED_BYTE,
-            glow::PixelUnpackData::Slice(Some(&pixels)),
+            glow::PixelUnpackData::Slice(Some(pixels)),
         );
         gl.generate_mipmap(glow::TEXTURE_2D_ARRAY);
         gl.tex_parameter_i32(
@@ -282,31 +197,131 @@ pub(super) fn create_road_texture_array(gl: &glow::Context) -> Result<glow::Text
     }
 }
 
+pub(super) fn create_placeholder_road_texture_array(
+    gl: &glow::Context,
+) -> Result<glow::Texture, String> {
+    let mut pixels = Vec::with_capacity(MAX_ROAD_MATERIALS * 4);
+    for layer in 0..MAX_ROAD_MATERIALS {
+        pixels.extend_from_slice(&fallback_road_rgba(layer));
+    }
+    unsafe { upload_road_texture_array(gl, 1, MAX_ROAD_MATERIALS, &pixels) }
+}
+
+pub(super) fn create_road_texture_array_from_images(
+    gl: &glow::Context,
+    images: &[RoadLayerImage],
+) -> Result<glow::Texture, String> {
+    let max_dim = images
+        .iter()
+        .flat_map(|img| [img.width, img.height])
+        .max()
+        .unwrap_or(256) as usize;
+    let size = max_dim.max(256).next_power_of_two().clamp(256, 1024);
+
+    let layer_bytes = size * size * 4;
+    let mut pixels = vec![0u8; MAX_ROAD_MATERIALS * layer_bytes];
+
+    for layer in 0..MAX_ROAD_MATERIALS {
+        let rgba = fallback_road_rgba(layer);
+        let base = layer * layer_bytes;
+        for px in pixels[base..base + layer_bytes].chunks_exact_mut(4) {
+            px.copy_from_slice(&rgba);
+        }
+    }
+
+    for img in images {
+        let layer = img.layer as usize;
+        if layer >= MAX_ROAD_MATERIALS {
+            continue;
+        }
+        let packed = pack_road_layer_rgba(img, size);
+        let base = layer * layer_bytes;
+        pixels[base..base + layer_bytes].copy_from_slice(&packed);
+    }
+
+    unsafe { upload_road_texture_array(gl, size, MAX_ROAD_MATERIALS, &pixels) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn encode_test_png(width: u32, height: u32, color: png::ColorType, data: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut out, width, height);
+            encoder.set_color(color);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(data).unwrap();
+        }
+        out
+    }
+
     #[test]
-    fn road_textures_are_valid_tile_in_v_and_feather_dirt_edges() {
-        for layer in 0..ROAD_MATERIAL_COUNT {
-            for i in 0..32 {
-                let u = i as f32 / 31.0;
-                let a = sample_road_rgba(layer, u, 0.0);
-                let b = sample_road_rgba(layer, u, 0.999999);
-                for ch in 0..4 {
-                    assert!(a[ch].is_finite() && (0.0..=1.0).contains(&a[ch]));
-                    assert!(
-                        (a[ch] - b[ch]).abs() < 0.02,
-                        "V seam on road layer {layer} u={u}: {a:?} vs {b:?}"
-                    );
-                }
-                if layer == 0 {
-                    assert!(sample_road_rgba(0, 0.0, 0.5)[3] < 0.01);
-                    assert!(sample_road_rgba(0, 1.0, 0.5)[3] < 0.01);
-                    assert!(sample_road_rgba(0, 0.5, 0.5)[3] > 0.95);
-                } else {
-                    assert!((a[3] - 1.0).abs() < 1e-5);
-                }
+    fn decodes_rgba_and_rgb_road_pngs_and_clamps_u_while_wrapping_v() {
+        let rgba_bytes = encode_test_png(
+            2,
+            2,
+            png::ColorType::Rgba,
+            &[
+                100, 80, 60, 0,   // left edge transparent
+                120, 90, 70, 255, // right edge opaque
+                100, 80, 60, 0,
+                120, 90, 70, 255,
+            ],
+        );
+        let (w, h, rgba) = decode_road_rgba_png(&rgba_bytes).unwrap();
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(rgba[0][3], 0);
+        assert_eq!(rgba[1][3], 255);
+
+        let packed = pack_road_layer_rgba(
+            &RoadLayerImage {
+                layer: 0,
+                is_soft_edge: true,
+                width: w,
+                height: h,
+                rgba,
+            },
+            4,
+        );
+        // x=0 clamps to u=0 (alpha 0), x=3 clamps to u=1 (alpha 255) without wrapping across width!
+        assert_eq!(packed[3], 0);
+        assert_eq!(packed[3 * 4 + 3], 255);
+
+        let rgb_bytes = encode_test_png(1, 1, png::ColorType::Rgb, &[50, 60, 70]);
+        let (_, _, rgb_as_rgba) = decode_road_rgba_png(&rgb_bytes).unwrap();
+        assert_eq!(rgb_as_rgba, vec![[50, 60, 70, 255]]);
+    }
+
+    #[test]
+    fn seeded_disk_road_pngs_decode_and_preserve_dirt_alpha_when_present() {
+        let road_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("world")
+            .join("assets")
+            .join("roads");
+        if !road_dir.exists() {
+            return;
+        }
+        for (id, is_dirt) in [
+            ("dirt_path", true),
+            ("cobblestone", false),
+            ("brick", false),
+            ("asphalt", false),
+            ("flagstone", false),
+        ] {
+            let bytes = std::fs::read(road_dir.join(format!("{id}.png"))).unwrap();
+            let (w, h, rgba) = decode_road_rgba_png(&bytes).unwrap();
+            assert_eq!((w, h), (256, 256));
+            if is_dirt {
+                assert_eq!(rgba[128 * 256][3], 0, "dirt left border must be transparent");
+                assert_eq!(rgba[128 * 256 + 255][3], 0, "dirt right border must be transparent");
+                assert!(rgba[128 * 256 + 128][3] > 240, "dirt center must be opaque");
+            } else {
+                assert!(rgba.iter().all(|px| px[3] == 255), "{id} must be opaque");
             }
         }
     }
