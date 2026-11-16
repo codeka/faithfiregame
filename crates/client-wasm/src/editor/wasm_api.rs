@@ -1,13 +1,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use shared::world::AreaMetadata;
+use shared::world::{AreaMetadata, RoadStyle};
 use wasm_bindgen::prelude::*;
 
 use crate::EngineHandle;
 use crate::engine::EngineInner;
 
-use super::{DecorationSubMode, EditorTool, HeightMode, io::dispatch_pending_saves};
+use super::{DecorationSubMode, EditorTool, HeightMode, RoadSubMode, io::dispatch_pending_saves};
 
 #[wasm_bindgen]
 pub struct EditorEngineHandle {
@@ -38,12 +38,20 @@ impl EditorEngineHandle {
     }
 
     pub fn set_editor_tool(&self, tool: &str) {
-        let mut st = self.inner.borrow_mut();
-        st.editor.tool = match tool {
+        let next = match tool {
             "texture" => EditorTool::Texture,
+            "road" => EditorTool::Road,
             "decoration" => EditorTool::Decoration,
             _ => EditorTool::Heightmap,
         };
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        if editor.tool == EditorTool::Road && next != EditorTool::Road {
+            editor.cancel_road_draft(&renderer.gl);
+        }
+        editor.tool = next;
     }
 
     pub fn set_height_mode(&self, mode: &str) {
@@ -68,6 +76,102 @@ impl EditorEngineHandle {
     pub fn set_texture_layer(&self, layer: u32) {
         self.inner.borrow_mut().editor.texture_layer =
             (layer as usize).min(shared::world::TERRAIN_MATERIAL_COUNT - 1);
+    }
+
+    pub fn set_road_submode(&self, submode: &str) {
+        let mode = match submode {
+            "edit" => RoadSubMode::Edit,
+            _ => RoadSubMode::Place,
+        };
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.set_road_submode(&renderer.gl, mode);
+    }
+
+    pub fn set_road_style(&self, style: &str) {
+        let now_ms = browser_now_ms();
+        let road_style = match style {
+            "straight" => RoadStyle::Straight,
+            _ => RoadStyle::Curve,
+        };
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.set_road_style(&renderer.gl, road_style, now_ms);
+    }
+
+    pub fn set_road_material(&self, material: u8) {
+        let now_ms = browser_now_ms();
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.set_road_material(&renderer.gl, material, now_ms);
+    }
+
+    pub fn set_road_width(&self, width: f32) {
+        let now_ms = browser_now_ms();
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.set_road_width(&renderer.gl, width, now_ms);
+    }
+
+    pub fn set_road_shoulder(&self, shoulder: f32) {
+        let now_ms = browser_now_ms();
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.set_road_shoulder(&renderer.gl, shoulder, now_ms);
+    }
+
+    pub fn finish_active_road(&self) {
+        let now_ms = browser_now_ms();
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.finish_road_draft(&renderer.gl, now_ms);
+    }
+
+    pub fn cancel_active_road(&self) {
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.cancel_road_draft(&renderer.gl);
+    }
+
+    pub fn relevel_selected_road(&self) {
+        let now_ms = browser_now_ms();
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.relevel_selected_road(&renderer.gl, now_ms);
+    }
+
+    pub fn delete_selected_road_node(&self) {
+        let now_ms = browser_now_ms();
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.delete_selected_road_node(&renderer.gl, now_ms);
+    }
+
+    pub fn delete_selected_road(&self) {
+        let now_ms = browser_now_ms();
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.delete_selected_road(&renderer.gl, now_ms);
     }
 
     pub fn set_decoration_submode(&self, submode: &str) {

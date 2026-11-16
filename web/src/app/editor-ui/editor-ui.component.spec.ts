@@ -16,6 +16,13 @@ function baseStatus(tool: EditorStatus['tool'] = 'decoration'): EditorStatus {
     tool,
     heightMode: 'raise',
     textureLayer: 0,
+    roadSubmode: 'place',
+    roadStyle: 'curve',
+    roadMaterial: 1,
+    roadWidth: 4,
+    roadShoulder: 3,
+    roadDraftPoints: 0,
+    selectedRoad: null,
     decorationSubmode: 'place',
     selectedProp: null,
     previewRotationDeg: [0, 0, 0],
@@ -30,6 +37,16 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
   let statusSig = signal<EditorStatus | null>(baseStatus('decoration'));
   let heightCalls: string[];
   let textureCalls: number[];
+  let roadSubmodeCalls: string[];
+  let roadStyleCalls: string[];
+  let roadMaterialCalls: number[];
+  let roadWidthCalls: number[];
+  let roadShoulderCalls: number[];
+  let finishRoadCalls: number;
+  let cancelRoadCalls: number;
+  let relevelRoadCalls: number;
+  let deleteRoadNodeCalls: number;
+  let deleteRoadCalls: number;
   let decorationCalls: string[];
   let duplicateCalls: number;
   let origFetch: typeof globalThis.fetch;
@@ -45,6 +62,16 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     statusSig = signal<EditorStatus | null>(baseStatus('decoration'));
     heightCalls = [];
     textureCalls = [];
+    roadSubmodeCalls = [];
+    roadStyleCalls = [];
+    roadMaterialCalls = [];
+    roadWidthCalls = [];
+    roadShoulderCalls = [];
+    finishRoadCalls = 0;
+    cancelRoadCalls = 0;
+    relevelRoadCalls = 0;
+    deleteRoadNodeCalls = 0;
+    deleteRoadCalls = 0;
     decorationCalls = [];
     duplicateCalls = 0;
 
@@ -66,6 +93,41 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
       setTextureLayer: (layer: number) => {
         textureCalls.push(layer);
         statusSig.update((s) => (s ? { ...s, textureLayer: layer } : s));
+      },
+      setRoadSubmode: (submode: EditorStatus['roadSubmode']) => {
+        roadSubmodeCalls.push(submode);
+        statusSig.update((s) => (s ? { ...s, roadSubmode: submode } : s));
+      },
+      setRoadStyle: (style: EditorStatus['roadStyle']) => {
+        roadStyleCalls.push(style);
+        statusSig.update((s) => (s ? { ...s, roadStyle: style } : s));
+      },
+      setRoadMaterial: (material: number) => {
+        roadMaterialCalls.push(material);
+        statusSig.update((s) => (s ? { ...s, roadMaterial: material } : s));
+      },
+      setRoadWidth: (width: number) => {
+        roadWidthCalls.push(width);
+        statusSig.update((s) => (s ? { ...s, roadWidth: width } : s));
+      },
+      setRoadShoulder: (shoulder: number) => {
+        roadShoulderCalls.push(shoulder);
+        statusSig.update((s) => (s ? { ...s, roadShoulder: shoulder } : s));
+      },
+      finishActiveRoad: () => {
+        finishRoadCalls++;
+      },
+      cancelActiveRoad: () => {
+        cancelRoadCalls++;
+      },
+      relevelSelectedRoad: () => {
+        relevelRoadCalls++;
+      },
+      deleteSelectedRoadNode: () => {
+        deleteRoadNodeCalls++;
+      },
+      deleteSelectedRoad: () => {
+        deleteRoadCalls++;
       },
       setDecorationSubmode: (submode: EditorStatus['decorationSubmode']) => {
         decorationCalls.push(submode);
@@ -359,5 +421,107 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     statusSig.set(baseStatus('texture'));
     fixture.detectChanges();
     expect(matNames()).toEqual(['Rock', 'Cobblestone', 'Brick']);
+  });
+
+  it('orders Roads between Texture and Decoration and dispatches road shortcuts and controls', () => {
+    const root = fixture.nativeElement as HTMLElement;
+    const primaryBtns = Array.from(
+      root.querySelectorAll('app-editor-toolbar .group:nth-of-type(3) button'),
+    ) as HTMLButtonElement[];
+    expect(primaryBtns.map((b) => b.textContent?.trim())).toEqual([
+      'Heightmap',
+      'Texture',
+      'Roads',
+      'Decoration',
+    ]);
+
+    primaryBtns[2].click();
+    fixture.detectChanges();
+    expect(statusSig()?.tool).toBe('road');
+    expect(root.querySelector('app-road-tool')).not.toBeNull();
+
+    // Hotkeys 1 and 2 toggle Place / Edit; 3-9 are ignored in Road tool
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '2' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '3' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }));
+    expect(roadSubmodeCalls).toEqual(['edit', 'place']);
+    fixture.detectChanges();
+
+    // Place mode controls: style, surface, profile sliders, draft Finish / Cancel
+    const styleBtns = Array.from(root.querySelectorAll('.road-style-btn')) as HTMLButtonElement[];
+    expect(styleBtns.map((b) => b.textContent?.trim())).toEqual(['Curve', 'Straight']);
+    styleBtns[1].click();
+    expect(roadStyleCalls).toEqual(['straight']);
+
+    const matBtns = Array.from(root.querySelectorAll('.road-mat-btn')) as HTMLButtonElement[];
+    expect(matBtns.length).toBe(5);
+    matBtns[3].click();
+    expect(roadMaterialCalls).toEqual([3]);
+
+    const widthInput = root.querySelector('input[name="roadWidth"]') as HTMLInputElement;
+    widthInput.value = '6';
+    widthInput.dispatchEvent(new Event('input', { bubbles: true }));
+    const shoulderInput = root.querySelector('input[name="roadShoulder"]') as HTMLInputElement;
+    shoulderInput.value = '4.5';
+    shoulderInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(roadWidthCalls).toEqual([6]);
+    expect(roadShoulderCalls).toEqual([4.5]);
+
+    const finishBtn = () => root.querySelector('.road-finish-btn') as HTMLButtonElement;
+    const cancelBtn = () => root.querySelector('.road-cancel-btn') as HTMLButtonElement;
+    expect(finishBtn().disabled).toBe(true);
+    expect(cancelBtn().disabled).toBe(true);
+
+    statusSig.update((s) => (s ? { ...s, roadDraftPoints: 1 } : s));
+    fixture.detectChanges();
+    expect(finishBtn().disabled).toBe(true);
+    expect(cancelBtn().disabled).toBe(false);
+
+    statusSig.update((s) => (s ? { ...s, roadDraftPoints: 3 } : s));
+    fixture.detectChanges();
+    expect(finishBtn().disabled).toBe(false);
+    finishBtn().click();
+    cancelBtn().click();
+    expect(finishRoadCalls).toBe(1);
+    expect(cancelRoadCalls).toBe(1);
+
+    // Edit mode: disabled without selection, enabled with selected road/node
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '2' }));
+    fixture.detectChanges();
+    expect((root.querySelector('.road-relevel-btn') as HTMLButtonElement).disabled).toBe(true);
+    expect((root.querySelector('.road-del-node-btn') as HTMLButtonElement).disabled).toBe(true);
+    expect((root.querySelector('.road-del-btn') as HTMLButtonElement).disabled).toBe(true);
+    expect((root.querySelector('.road-style-btn') as HTMLButtonElement).disabled).toBe(true);
+
+    statusSig.update((s) =>
+      s
+        ? {
+            ...s,
+            selectedRoad: {
+              id: 1004,
+              style: 'straight',
+              material: 2,
+              width: 5,
+              shoulder: 3.5,
+              pointCount: 3,
+              selectedNode: 1,
+            },
+          }
+        : s,
+    );
+    fixture.detectChanges();
+
+    const relevelBtn = root.querySelector('.road-relevel-btn') as HTMLButtonElement;
+    const delNodeBtn = root.querySelector('.road-del-node-btn') as HTMLButtonElement;
+    const delRoadBtn = root.querySelector('.road-del-btn') as HTMLButtonElement;
+    expect(relevelBtn.disabled).toBe(false);
+    expect(delNodeBtn.disabled).toBe(false);
+    expect(delRoadBtn.disabled).toBe(false);
+    relevelBtn.click();
+    delNodeBtn.click();
+    delRoadBtn.click();
+    expect(relevelRoadCalls).toBe(1);
+    expect(deleteRoadNodeCalls).toBe(1);
+    expect(deleteRoadCalls).toBe(1);
   });
 });

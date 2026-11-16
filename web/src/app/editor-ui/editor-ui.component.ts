@@ -11,6 +11,7 @@ import {
   HEIGHT_MODES,
   HeightmapToolComponent,
 } from './tools/heightmap-tool/heightmap-tool.component';
+import { ROAD_SUBMODES, RoadToolComponent } from './tools/road-tool/road-tool.component';
 import {
   TEXTURE_LAYERS,
   TextureToolComponent,
@@ -43,6 +44,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
     EditorToolbarComponent,
     HeightmapToolComponent,
     TextureToolComponent,
+    RoadToolComponent,
     DecorationToolComponent,
     CreateAreaModalComponent,
   ],
@@ -82,6 +84,11 @@ export class EditorUiComponent implements OnInit {
       case 'texture': {
         const layer = TEXTURE_LAYERS[idx];
         if (layer) this.engine.setTextureLayer(layer.index);
+        break;
+      }
+      case 'road': {
+        const submode = ROAD_SUBMODES[idx];
+        if (submode) this.engine.setRoadSubmode(submode.id);
         break;
       }
       case 'decoration': {

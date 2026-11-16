@@ -29,6 +29,16 @@ export interface SelectedPropInfo {
   castShadow: boolean;
 }
 
+export interface SelectedRoadInfo {
+  id: number;
+  style: 'curve' | 'straight';
+  material: number;
+  width: number;
+  shoulder: number;
+  pointCount: number;
+  selectedNode: number | null;
+}
+
 export interface EditorStatus {
   areaId: string;
   areaName: string;
@@ -38,9 +48,16 @@ export interface EditorStatus {
   cursorPos: [number, number, number] | null;
   dirtyCount: number;
   saveState: string;
-  tool: 'heightmap' | 'texture' | 'decoration';
+  tool: 'heightmap' | 'texture' | 'road' | 'decoration';
   heightMode: 'raise' | 'lower' | 'smooth' | 'flatten';
   textureLayer: number;
+  roadSubmode: 'place' | 'edit';
+  roadStyle: 'curve' | 'straight';
+  roadMaterial: number;
+  roadWidth: number;
+  roadShoulder: number;
+  roadDraftPoints: number;
+  selectedRoad: SelectedRoadInfo | null;
   decorationSubmode: 'place' | 'move' | 'free_move' | 'rotate';
   selectedProp: SelectedPropInfo | null;
   previewRotationDeg: [number, number, number];
@@ -128,7 +145,7 @@ export class EditorEngineService implements OnDestroy {
     this.refreshStatus();
   }
 
-  setTool(tool: 'heightmap' | 'texture' | 'decoration'): void {
+  setTool(tool: 'heightmap' | 'texture' | 'road' | 'decoration'): void {
     this.ensureHandle()?.set_editor_tool(tool);
     this.refreshStatus();
   }
@@ -148,6 +165,56 @@ export class EditorEngineService implements OnDestroy {
 
   setTextureLayer(layer: number): void {
     this.ensureHandle()?.set_texture_layer(layer);
+    this.refreshStatus();
+  }
+
+  setRoadSubmode(submode: 'place' | 'edit'): void {
+    this.ensureHandle()?.set_road_submode(submode);
+    this.refreshStatus();
+  }
+
+  setRoadStyle(style: 'curve' | 'straight'): void {
+    this.ensureHandle()?.set_road_style(style);
+    this.refreshStatus();
+  }
+
+  setRoadMaterial(material: number): void {
+    this.ensureHandle()?.set_road_material(material);
+    this.refreshStatus();
+  }
+
+  setRoadWidth(width: number): void {
+    this.ensureHandle()?.set_road_width(width);
+    this.refreshStatus();
+  }
+
+  setRoadShoulder(shoulder: number): void {
+    this.ensureHandle()?.set_road_shoulder(shoulder);
+    this.refreshStatus();
+  }
+
+  finishActiveRoad(): void {
+    this.ensureHandle()?.finish_active_road();
+    this.refreshStatus();
+  }
+
+  cancelActiveRoad(): void {
+    this.ensureHandle()?.cancel_active_road();
+    this.refreshStatus();
+  }
+
+  relevelSelectedRoad(): void {
+    this.ensureHandle()?.relevel_selected_road();
+    this.refreshStatus();
+  }
+
+  deleteSelectedRoadNode(): void {
+    this.ensureHandle()?.delete_selected_road_node();
+    this.refreshStatus();
+  }
+
+  deleteSelectedRoad(): void {
+    this.ensureHandle()?.delete_selected_road();
     this.refreshStatus();
   }
 

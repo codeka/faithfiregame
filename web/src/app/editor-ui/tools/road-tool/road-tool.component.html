@@ -1,0 +1,168 @@
+<div class="toolbox-title">Roads & Paths</div>
+
+<div class="tool-section">
+  <span class="section-label">Mode</span>
+  <div class="option-grid">
+    @for (sub of submodes; track sub.id) {
+      <button
+        type="button"
+        class="btn btn-sm"
+        [class.active]="activeSubmode() === sub.id"
+        (click)="engine.setRoadSubmode(sub.id)"
+      >
+        <span class="key-hint">{{ sub.shortcut }}</span>
+        <span>{{ sub.label }}</span>
+      </button>
+    }
+  </div>
+</div>
+
+<div class="tool-section">
+  <span class="section-label">Style</span>
+  <div class="option-grid">
+    @for (st of styles; track st.id) {
+      <button
+        type="button"
+        class="btn btn-sm road-style-btn"
+        [disabled]="controlsDisabled()"
+        [class.active]="activeStyle() === st.id"
+        (click)="engine.setRoadStyle(st.id)"
+      >
+        {{ st.label }}
+      </button>
+    }
+  </div>
+</div>
+
+<div class="tool-section">
+  <span class="section-label">Surface</span>
+  <div class="material-list">
+    @for (mat of materials; track mat.index) {
+      <button
+        type="button"
+        class="btn btn-sm road-mat-btn"
+        [disabled]="controlsDisabled()"
+        [class.active]="activeMaterial() === mat.index"
+        (click)="engine.setRoadMaterial(mat.index)"
+      >
+        <span class="road-mat-main">
+          <span class="swatch" [style.background]="mat.swatch"></span>
+          <span>{{ mat.label }}</span>
+        </span>
+        <span class="mat-edge">{{ mat.edge }}</span>
+      </button>
+    }
+  </div>
+</div>
+
+<div class="tool-section">
+  <span class="section-label">Profile</span>
+  <label class="slider-field" [class.disabled]="controlsDisabled()">
+    <span class="slider-head">
+      <span>Width</span>
+      <span>{{ activeWidth().toFixed(1) }} m</span>
+    </span>
+    <input
+      type="range"
+      name="roadWidth"
+      min="1.5"
+      max="14"
+      step="0.5"
+      [disabled]="controlsDisabled()"
+      [value]="activeWidth()"
+      (input)="onWidthInput($event)"
+    />
+  </label>
+  <label class="slider-field" [class.disabled]="controlsDisabled()">
+    <span class="slider-head">
+      <span>Shoulder</span>
+      <span>{{ activeShoulder().toFixed(1) }} m</span>
+    </span>
+    <input
+      type="range"
+      name="roadShoulder"
+      min="0.5"
+      max="12"
+      step="0.5"
+      [disabled]="controlsDisabled()"
+      [value]="activeShoulder()"
+      (input)="onShoulderInput($event)"
+    />
+  </label>
+</div>
+
+@if (activeSubmode() === 'place') {
+  <div class="tool-section">
+    <span class="section-label">Draft</span>
+    <div class="status-readout" [class.muted]="draftPoints() === 0">
+      @if (draftPoints() > 0) {
+        Draft · {{ draftPoints() }} control {{ draftPoints() === 1 ? 'point' : 'points' }}
+      } @else {
+        Click terrain or snap to an endpoint to start
+      }
+    </div>
+    <div class="action-row">
+      <button
+        type="button"
+        class="btn btn-sm road-finish-btn"
+        [disabled]="draftPoints() < 2"
+        (click)="engine.finishActiveRoad()"
+      >
+        Finish Road
+      </button>
+      <button
+        type="button"
+        class="btn btn-sm road-cancel-btn"
+        [disabled]="draftPoints() === 0"
+        (click)="engine.cancelActiveRoad()"
+      >
+        Cancel
+      </button>
+    </div>
+  </div>
+
+  <div class="toolbox-hint">
+    1–2: Mode · Click: Add point · Right-click/Enter: Finish · Green ring: Snap
+  </div>
+} @else {
+  <div class="tool-section">
+    <span class="section-label">Selection</span>
+    <div class="status-readout" [class.muted]="!selectedRoad()">
+      @if (selectedRoad(); as sel) {
+        Selected #{{ sel.id }} · {{ sel.pointCount }} pts@if (sel.selectedNode !== null) { · Node #{{ sel.selectedNode + 1 }} }
+      } @else {
+        Click a road or control node to select
+      }
+    </div>
+    <div class="road-actions">
+      <div class="action-row">
+        <button
+          type="button"
+          class="btn btn-sm road-relevel-btn"
+          [disabled]="!selectedRoad()"
+          (click)="engine.relevelSelectedRoad()"
+        >
+          Re-level Terrain
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm road-del-node-btn"
+          [disabled]="!canDeleteNode()"
+          (click)="engine.deleteSelectedRoadNode()"
+        >
+          Delete Node
+        </button>
+      </div>
+      <button
+        type="button"
+        class="btn btn-sm btn-danger road-del-btn"
+        [disabled]="!selectedRoad()"
+        (click)="engine.deleteSelectedRoad()"
+      >
+        Delete Road
+      </button>
+    </div>
+  </div>
+
+  <div class="toolbox-hint">1–2: Mode · Drag nodes to reshape · Del: Remove node/road</div>
+}

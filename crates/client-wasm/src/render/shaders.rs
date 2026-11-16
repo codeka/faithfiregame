@@ -273,6 +273,87 @@ void main() {
 "#;
 
 #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+pub(super) const ROAD_VERT: &str = r#"#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec2 a_uv;
+
+uniform mat4 u_view_proj;
+
+out vec3 v_world_pos;
+out vec3 v_normal;
+out vec2 v_uv;
+
+void main() {
+    v_world_pos = a_pos;
+    v_normal = a_normal;
+    v_uv = a_uv;
+    gl_Position = u_view_proj * vec4(a_pos, 1.0);
+}
+"#;
+
+#[cfg_attr(not(feature = "editor"), allow(dead_code))]
+pub(super) const ROAD_FRAG: &str = concat!(
+    r#"#version 300 es
+precision highp float;
+precision highp sampler2DArray;
+precision highp sampler2DShadow;
+
+in vec3 v_world_pos;
+in vec3 v_normal;
+in vec2 v_uv;
+
+uniform sampler2DArray u_road_tex_array;
+uniform int u_material;
+uniform float u_opacity;
+uniform vec3 u_tint;
+uniform vec3 u_camera_pos;
+uniform vec3 u_brush_center;
+uniform float u_brush_radius;
+uniform vec3 u_brush_color;
+uniform float u_fog_start;
+uniform float u_fog_end;
+uniform vec3 u_fog_color;
+
+out vec4 frag_color;
+"#,
+    shadow_sampler_glsl!(),
+    r#"
+void main() {
+    vec4 tex = texture(u_road_tex_array, vec3(v_uv, float(u_material)));
+    float alpha = tex.a * u_opacity;
+    if (alpha < 0.01) {
+        discard;
+    }
+
+    vec3 n = normalize(v_normal);
+    vec3 sun_dir = normalize(u_sun_dir);
+    float diff = max(dot(n, sun_dir), 0.0);
+    float shadow = (diff > 0.0) ? sample_shadow(v_world_pos, n) : 1.0;
+    float hemi = 0.5 + 0.5 * n.y;
+    vec3 ambient = mix(vec3(0.22, 0.25, 0.30), vec3(0.34, 0.38, 0.45), hemi);
+    vec3 sun_light = diff * vec3(1.06, 1.00, 0.88) * 1.05;
+    vec3 lit = (tex.rgb * u_tint) * (ambient + sun_light * shadow);
+
+    if (u_brush_radius > 0.05) {
+        float d = length(v_world_pos.xz - u_brush_center.xz);
+        float ring = 1.0 - smoothstep(0.0, 0.16, abs(d - u_brush_radius));
+        float fill = smoothstep(u_brush_radius, 0.0, d) * 0.12;
+        lit = mix(lit, u_brush_color, clamp(ring * 0.85 + fill, 0.0, 1.0));
+    }
+
+    float cam_dist = length(v_world_pos - u_camera_pos);
+    float fog_t = smoothstep(u_fog_start, u_fog_end, cam_dist);
+    vec3 final_rgb = mix(lit, u_fog_color, fog_t);
+
+    frag_color = vec4(final_rgb, alpha);
+}
+"#
+);
+
+#[cfg_attr(not(feature = "editor"), allow(dead_code))]
 pub(super) const GIZMO_VERT: &str = r#"#version 300 es
 precision highp float;
 

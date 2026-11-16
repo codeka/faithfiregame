@@ -1,7 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use glam::Vec3;
-use shared::world::{AreaKind, AreaMetadata, AssetEntry, InsideVisData, TILE_SIZE, TileVisData};
+use shared::world::{
+    AreaKind, AreaMetadata, AssetEntry, InsideVisData, ROAD_MAT_COBBLESTONE, RoadStyle, TILE_SIZE,
+    TileVisData,
+};
 
 use crate::camera::{Camera, EditorCameraController};
 use crate::glb_loader::parse_glb;
@@ -11,7 +14,7 @@ use crate::render::{PropMeshGpu, TerrainMeshGpu};
 use super::gizmo::{GizmoAxis, GizmoDragState};
 use super::types::{
     DecorationSubMode, EditorInsideState, EditorStatusSnapshot, EditorTileState, EditorTool,
-    HeightMode, PendingSave, SelectedPropInfo,
+    HeightMode, PendingSave, RoadDraft, RoadSubMode, SelectedPropInfo, SelectedRoadInfo,
 };
 
 pub struct EditorState {
@@ -32,6 +35,20 @@ pub struct EditorState {
     pub brush_radius: f32,
     pub brush_strength: f32,
     pub texture_layer: usize,
+
+    pub road_submode: RoadSubMode,
+    pub road_style: RoadStyle,
+    pub road_material: u8,
+    pub road_width: f32,
+    pub road_shoulder: f32,
+    pub road_draft: Option<RoadDraft>,
+    pub hover_road_point: Option<([f32; 3], bool)>,
+    pub selected_road_id: Option<u64>,
+    pub selected_road_node: Option<usize>,
+    pub dragging_road_node: bool,
+    pub road_drag_moved: bool,
+    pub welded_drag_peers: Vec<(Option<(i32, i32)>, u64, usize)>,
+    pub next_road_id: u64,
 
     pub decoration_submode: DecorationSubMode,
     pub active_asset_id: String,
@@ -81,6 +98,19 @@ impl EditorState {
             brush_radius: 4.5,
             brush_strength: 3.5,
             texture_layer: 1, // Default brush paints Dirt so clicking immediately shows contrast on Grass
+            road_submode: RoadSubMode::Place,
+            road_style: RoadStyle::Curve,
+            road_material: ROAD_MAT_COBBLESTONE,
+            road_width: 4.0,
+            road_shoulder: 3.0,
+            road_draft: None,
+            hover_road_point: None,
+            selected_road_id: None,
+            selected_road_node: None,
+            dragging_road_node: false,
+            road_drag_moved: false,
+            welded_drag_peers: Vec::new(),
+            next_road_id: 1000,
             decoration_submode: DecorationSubMode::Place,
             active_asset_id: "pine_tree".to_owned(),
             preview_rotation: [0.0; 3],
@@ -112,15 +142,32 @@ impl EditorState {
         cam_ctrl: &mut EditorCameraController,
     ) {
         for (_, tile) in self.outside_tiles.drain() {
+            for mesh in tile.road_meshes.into_values() {
+                mesh.destroy(gl);
+            }
             tile.gpu.destroy(gl);
         }
         if let Some(inside) = self.inside_area.take() {
+            for mesh in inside.road_meshes.into_values() {
+                mesh.destroy(gl);
+            }
             inside.gpu.destroy(gl);
+        }
+        if let Some(mut draft) = self.road_draft.take() {
+            if let Some(mesh) = draft.preview_gpu.take() {
+                mesh.destroy(gl);
+            }
         }
         self.requested_tiles.clear();
         self.requested_inside = None;
         self.pending_tile_fetches.clear();
         self.pending_inside_fetch = None;
+        self.hover_road_point = None;
+        self.selected_road_id = None;
+        self.selected_road_node = None;
+        self.dragging_road_node = false;
+        self.road_drag_moved = false;
+        self.welded_drag_peers.clear();
         self.selected_prop_id = None;
         self.hovered_gizmo_axis = None;
         self.gizmo_drag = None;
@@ -194,6 +241,9 @@ impl EditorState {
         if let Some(max_id) = vis.props.iter().map(|p| p.id).max() {
             self.next_prop_id = self.next_prop_id.max(max_id + 1);
         }
+        if let Some(max_road_id) = vis.roads.iter().map(|r| r.id).max() {
+            self.next_road_id = self.next_road_id.max(max_road_id + 1);
+        }
 
         if is_new_blank {
             self.copy_loaded_borders_into(tx, ty, &mut vis);
@@ -212,6 +262,7 @@ impl EditorState {
                 EditorTileState {
                     vis,
                     gpu,
+                    road_meshes: HashMap::new(),
                     dirty: false,
                 },
             );
@@ -226,6 +277,7 @@ impl EditorState {
                 }
             }
             self.refresh_outside_tile_meshes(gl, &refresh);
+            self.rebuild_outside_road_meshes_near(gl, tx, ty);
         }
     }
 
@@ -236,7 +288,13 @@ impl EditorState {
         if let Some(max_id) = vis.props.iter().map(|p| p.id).max() {
             self.next_prop_id = self.next_prop_id.max(max_id + 1);
         }
+        if let Some(max_road_id) = vis.roads.iter().map(|r| r.id).max() {
+            self.next_road_id = self.next_road_id.max(max_road_id + 1);
+        }
         if let Some(old) = self.inside_area.take() {
+            for mesh in old.road_meshes.into_values() {
+                mesh.destroy(gl);
+            }
             old.gpu.destroy(gl);
         }
         if let Ok(gpu) = TerrainMeshGpu::new(
@@ -250,10 +308,12 @@ impl EditorState {
             let state = EditorInsideState {
                 vis,
                 gpu,
+                road_meshes: HashMap::new(),
                 dirty: false,
             };
             self.inside_area = Some(state);
             self.refresh_inside_mesh(gl);
+            self.rebuild_inside_road_meshes(gl);
         }
     }
 
@@ -295,9 +355,11 @@ impl EditorState {
             )
             .and_then(|(orig, dir)| self.raycast_terrain(orig, dir));
 
-        // 3. Hotkeys for decoration mode (Q/E rotate, Delete removes selected prop)
+        // 3. Hotkeys for active tool
         if self.tool == EditorTool::Decoration {
             self.handle_decoration_hotkeys(input, dt, now_ms);
+        } else if self.tool == EditorTool::Road {
+            self.handle_road_hotkeys(gl, input, now_ms);
         }
 
         // 4. Mouse tool interaction (ignore left-click while middle-mouse orbiting)
@@ -317,11 +379,17 @@ impl EditorState {
             match self.tool {
                 EditorTool::Heightmap => self.handle_heightmap_tool(gl, input, dt, now_ms),
                 EditorTool::Texture => self.handle_texture_tool(gl, input, dt, now_ms),
+                EditorTool::Road => self.handle_road_tool(gl, camera, input, now_ms),
                 EditorTool::Decoration => self.handle_decoration_tool(camera, input, now_ms),
             }
+        } else if self.tool == EditorTool::Road {
+            self.update_road_hover_preview(gl);
         }
 
         if input.left_just_released {
+            if self.dragging_road_node {
+                self.finish_road_node_drag(gl, now_ms);
+            }
             self.flatten_target_y = None;
             self.dragging_prop = false;
             self.gizmo_drag = None;
@@ -405,6 +473,18 @@ impl EditorState {
             scale: p.scale[0],
             cast_shadow: p.cast_shadow,
         });
+        let selected_road = self.find_selected_road().map(|r| SelectedRoadInfo {
+            id: r.id,
+            style: match r.style {
+                RoadStyle::Curve => "curve",
+                RoadStyle::Straight => "straight",
+            },
+            material: r.material,
+            width: r.width,
+            shoulder: r.shoulder,
+            point_count: r.points.len(),
+            selected_node: self.selected_road_node,
+        });
 
         EditorStatusSnapshot {
             area_id: self.active_area.id.clone(),
@@ -418,6 +498,7 @@ impl EditorState {
             tool: match self.tool {
                 EditorTool::Heightmap => "heightmap",
                 EditorTool::Texture => "texture",
+                EditorTool::Road => "road",
                 EditorTool::Decoration => "decoration",
             },
             height_mode: match self.height_mode {
@@ -427,6 +508,19 @@ impl EditorState {
                 HeightMode::Flatten => "flatten",
             },
             texture_layer: self.texture_layer,
+            road_submode: match self.road_submode {
+                RoadSubMode::Place => "place",
+                RoadSubMode::Edit => "edit",
+            },
+            road_style: match self.road_style {
+                RoadStyle::Curve => "curve",
+                RoadStyle::Straight => "straight",
+            },
+            road_material: self.road_material,
+            road_width: self.road_width,
+            road_shoulder: self.road_shoulder,
+            road_draft_points: self.road_draft.as_ref().map(|d| d.points.len()).unwrap_or(0),
+            selected_road,
             decoration_submode: match self.decoration_submode {
                 DecorationSubMode::Place => "place",
                 DecorationSubMode::Move => "move",

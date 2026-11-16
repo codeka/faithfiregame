@@ -7,9 +7,11 @@ use crate::camera::Camera;
 use super::gizmo_mesh::GizmoMeshGpu;
 use super::procedural_textures::create_terrain_texture_array;
 use super::prop_mesh::{PropMeshGpu, create_selection_ring_mesh, prop_model_matrix};
+use super::road_mesh::RoadMeshGpu;
+use super::road_textures::create_road_texture_array;
 use super::shaders::{
-    GIZMO_FRAG, GIZMO_VERT, LINE_FRAG, LINE_VERT, PROP_FRAG, PROP_VERT, TERRAIN_FRAG, TERRAIN_VERT,
-    compile_program,
+    GIZMO_FRAG, GIZMO_VERT, LINE_FRAG, LINE_VERT, PROP_FRAG, PROP_VERT, ROAD_FRAG, ROAD_VERT,
+    TERRAIN_FRAG, TERRAIN_VERT, compile_program,
 };
 use super::shadow_map::{ShadowMapGpu, compute_light_space_matrix, sun_direction};
 use super::terrain_mesh::{BrushOverlay, TerrainMeshGpu};
@@ -20,10 +22,18 @@ pub struct Renderer {
     prop_prog: glow::Program,
     line_prog: glow::Program,
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    road_prog: glow::Program,
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     gizmo_prog: glow::Program,
     tex_array: glow::Texture,
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    road_tex_array: glow::Texture,
     ring_vao: glow::VertexArray,
     ring_vert_count: i32,
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    dyn_line_vao: glow::VertexArray,
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    dyn_line_vbo: glow::Buffer,
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     gizmo_mesh: GizmoMeshGpu,
     shadow_map: ShadowMapGpu,
@@ -39,9 +49,22 @@ impl Renderer {
         let terrain_prog = compile_program(&gl, TERRAIN_VERT, TERRAIN_FRAG)?;
         let prop_prog = compile_program(&gl, PROP_VERT, PROP_FRAG)?;
         let line_prog = compile_program(&gl, LINE_VERT, LINE_FRAG)?;
+        let road_prog = compile_program(&gl, ROAD_VERT, ROAD_FRAG)?;
         let gizmo_prog = compile_program(&gl, GIZMO_VERT, GIZMO_FRAG)?;
         let tex_array = create_terrain_texture_array(&gl)?;
+        let road_tex_array = create_road_texture_array(&gl)?;
         let (ring_vao, ring_vert_count) = create_selection_ring_mesh(&gl)?;
+        let (dyn_line_vao, dyn_line_vbo) = unsafe {
+            let vao = gl.create_vertex_array()?;
+            let vbo = gl.create_buffer()?;
+            gl.bind_vertex_array(Some(vao));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+            gl.enable_vertex_attrib_array(0);
+            gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 12, 0);
+            gl.bind_vertex_array(None);
+            gl.bind_buffer(glow::ARRAY_BUFFER, None);
+            (vao, vbo)
+        };
         let gizmo_mesh = GizmoMeshGpu::new(&gl)?;
         let shadow_map = ShadowMapGpu::new(&gl)?;
 
@@ -57,10 +80,14 @@ impl Renderer {
             terrain_prog,
             prop_prog,
             line_prog,
+            road_prog,
             gizmo_prog,
             tex_array,
+            road_tex_array,
             ring_vao,
             ring_vert_count,
+            dyn_line_vao,
+            dyn_line_vbo,
             gizmo_mesh,
             shadow_map,
             light_view_proj: Mat4::IDENTITY,
@@ -291,6 +318,145 @@ impl Renderer {
             gl.bind_vertex_array(Some(self.ring_vao));
             gl.draw_arrays(glow::LINES, 0, self.ring_vert_count);
             gl.bind_vertex_array(None);
+        }
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_road(
+        &self,
+        camera: &Camera,
+        mesh: &RoadMeshGpu,
+        material: u8,
+        opacity: f32,
+        tint: Vec3,
+        brush: &BrushOverlay,
+    ) {
+        if mesh.index_count <= 0 {
+            return;
+        }
+        let vp = camera.view_proj_matrix();
+        let write_depth = opacity >= 0.999 && material != shared::world::ROAD_MAT_DIRT;
+
+        unsafe {
+            let gl = &self.gl;
+            gl.use_program(Some(self.road_prog));
+            let loc = |name| gl.get_uniform_location(self.road_prog, name);
+
+            gl.uniform_matrix_4_f32_slice(loc("u_view_proj").as_ref(), false, vp.as_ref());
+            gl.uniform_1_i32(loc("u_material").as_ref(), material as i32);
+            gl.uniform_1_f32(loc("u_opacity").as_ref(), opacity);
+            gl.uniform_3_f32(loc("u_tint").as_ref(), tint.x, tint.y, tint.z);
+            gl.uniform_3_f32(loc("u_camera_pos").as_ref(), camera.eye.x, camera.eye.y, camera.eye.z);
+            gl.uniform_3_f32(
+                loc("u_brush_center").as_ref(),
+                brush.center.x,
+                brush.center.y,
+                brush.center.z,
+            );
+            gl.uniform_1_f32(
+                loc("u_brush_radius").as_ref(),
+                if brush.active { brush.radius } else { 0.0 },
+            );
+            gl.uniform_3_f32(
+                loc("u_brush_color").as_ref(),
+                brush.color[0],
+                brush.color[1],
+                brush.color[2],
+            );
+            gl.uniform_1_f32(loc("u_fog_start").as_ref(), self.fog_start);
+            gl.uniform_1_f32(loc("u_fog_end").as_ref(), self.fog_end);
+            gl.uniform_3_f32(
+                loc("u_fog_color").as_ref(),
+                self.fog_color[0],
+                self.fog_color[1],
+                self.fog_color[2],
+            );
+
+            self.bind_shadow_uniforms(self.road_prog);
+
+            gl.active_texture(glow::TEXTURE3);
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(self.road_tex_array));
+            gl.uniform_1_i32(loc("u_road_tex_array").as_ref(), 3);
+
+            gl.enable(glow::POLYGON_OFFSET_FILL);
+            gl.polygon_offset(-1.0, -1.0);
+            gl.depth_mask(write_depth);
+
+            gl.bind_vertex_array(Some(mesh.vao));
+            gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_INT, 0);
+            gl.bind_vertex_array(None);
+
+            gl.depth_mask(true);
+            gl.disable(glow::POLYGON_OFFSET_FILL);
+        }
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_world_lines(
+        &self,
+        camera: &Camera,
+        points: &[[f32; 3]],
+        color: [f32; 4],
+        on_top: bool,
+    ) {
+        if points.len() < 2 {
+            return;
+        }
+        let vp = camera.view_proj_matrix();
+        let floats: Vec<f32> = points.iter().flat_map(|p| *p).collect();
+
+        unsafe {
+            let gl = &self.gl;
+            if on_top {
+                gl.disable(glow::DEPTH_TEST);
+            }
+            gl.use_program(Some(self.line_prog));
+            let loc = |name| gl.get_uniform_location(self.line_prog, name);
+            gl.uniform_matrix_4_f32_slice(loc("u_view_proj").as_ref(), false, vp.as_ref());
+            gl.uniform_matrix_4_f32_slice(loc("u_model").as_ref(), false, Mat4::IDENTITY.as_ref());
+            gl.uniform_4_f32(loc("u_color").as_ref(), color[0], color[1], color[2], color[3]);
+
+            gl.bind_vertex_array(Some(self.dyn_line_vao));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.dyn_line_vbo));
+            let bytes: &[u8] =
+                std::slice::from_raw_parts(floats.as_ptr() as *const u8, floats.len() * 4);
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::DYNAMIC_DRAW);
+            gl.draw_arrays(glow::LINE_STRIP, 0, points.len() as i32);
+            gl.bind_vertex_array(None);
+            gl.bind_buffer(glow::ARRAY_BUFFER, None);
+            if on_top {
+                gl.enable(glow::DEPTH_TEST);
+            }
+        }
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_node_ring(
+        &self,
+        camera: &Camera,
+        pos: Vec3,
+        radius: f32,
+        color: [f32; 4],
+        on_top: bool,
+    ) {
+        let vp = camera.view_proj_matrix();
+        let model = Mat4::from_translation(pos) * Mat4::from_scale(Vec3::splat(radius.max(0.25)));
+        unsafe {
+            let gl = &self.gl;
+            if on_top {
+                gl.disable(glow::DEPTH_TEST);
+            }
+            gl.use_program(Some(self.line_prog));
+            let loc = |name| gl.get_uniform_location(self.line_prog, name);
+            gl.uniform_matrix_4_f32_slice(loc("u_view_proj").as_ref(), false, vp.as_ref());
+            gl.uniform_matrix_4_f32_slice(loc("u_model").as_ref(), false, model.as_ref());
+            gl.uniform_4_f32(loc("u_color").as_ref(), color[0], color[1], color[2], color[3]);
+            gl.bind_vertex_array(Some(self.ring_vao));
+            gl.draw_arrays(glow::LINES, 0, self.ring_vert_count);
+            gl.bind_vertex_array(None);
+            if on_top {
+                gl.enable(glow::DEPTH_TEST);
+            }
         }
     }
 

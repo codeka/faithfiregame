@@ -40,7 +40,7 @@ faith-and-fire/
 │   ├── shared/                 # Pure Rust (compiles to native & wasm32-unknown-unknown)
 │   │   └── src/
 │   │       ├── protocol.rs     # ClientMessage, ServerMessage, PROTOCOL_VERSION
-│   │       ├── world/          # walk_mask.rs, splat.rs, types.rs, outside.rs, inside.rs
+│   │       ├── world/          # walk_mask.rs, splat.rs, road.rs, types.rs, outside.rs, inside.rs
 │   │       └── pathfinding.rs  # 1m grid A* + Line-of-Sight (Theta* / string-pulling)
 │   ├── server/                 # Authoritative Rust game server
 │   │   └── src/
@@ -56,18 +56,18 @@ faith-and-fire/
 │           ├── engine.rs       # EngineInner state & frame loop
 │           ├── input/          # state.rs, dom.rs (keyboard/mouse listeners)
 │           ├── camera/         # projection.rs, controller.rs, gameplay_camera.rs, editor_camera.rs
-│           ├── render/         # renderer.rs, shaders.rs, shadow_map.rs, gizmo_mesh.rs, terrain_mesh.rs, prop_mesh.rs, procedural_textures.rs
+│           ├── render/         # renderer.rs, shaders.rs, shadow_map.rs, gizmo_mesh.rs, terrain_mesh.rs, prop_mesh.rs, road_mesh.rs, procedural_textures.rs, road_textures.rs
 │           ├── glb_loader.rs   # Binary .glb scene-graph mesh parser
 │           ├── net/            # ws_client.rs, http.rs
 │           └── editor/         # #[cfg(feature = "editor")] state.rs, types.rs, wasm_api.rs, gizmo.rs, terrain_ops.rs,
-│                               # heightmap_tool.rs, texture_tool.rs, decoration_tool.rs, scene_render.rs, io.rs
+│                               # heightmap_tool.rs, texture_tool.rs, road_tool.rs, decoration_tool.rs, scene_render.rs, io.rs
 ├── scripts/                    # Tooling scripts (build_wasm.py, backup_world.py)
 ├── web/                        # Angular (TypeScript) frontend shell
 │   └── src/
 │       └── app/
 │           ├── game-canvas/    # Hosts <canvas> and initializes WASM module
 │           ├── hud/            # Action bars, target frame, inventory, chat, trade modals
-│           └── editor-ui/      # Dev-only Angular editor shell: editor-engine.service.ts, toolbar/, create-area-modal/, and tools/{heightmap-tool,texture-tool,decoration-tool}/ (stripped in prod builds)
+│           └── editor-ui/      # Dev-only Angular editor shell: editor-engine.service.ts, toolbar/, create-area-modal/, and tools/{heightmap-tool,texture-tool,road-tool,decoration-tool}/ (stripped in prod builds)
 └── world/                      # Gitignored runtime/authored world data (seeded on boot; backed up via scripts/backup_world.py)
     ├── assets/                 # Shared .glb models and terrain textures
     └── areas/
@@ -145,6 +145,7 @@ World files are serialized with `postcard` and split so the server never loads v
   - `heights: Vec<f32>` — **65 × 65** heightmap vertices (4,225 floats) so adjacent 64m tiles share border vertices without terrain seams.
   - `splat_ids: Vec<[u8; 4]>`, `splat_weights: Vec<[u8; 4]>` — **65 × 65** vertex-aligned top-4 terrain material IDs and normalized blend weights (sum = `255`).
   - `props: Vec<PropPlacement>` — Static `.glb` prop references (`asset_id`, `position`, `rotation`, `scale`).
+  - `roads: Vec<RoadSpline>` — Per-tile spline/polyline road & path geometry (`RoadStyle::Curve` / `RoadStyle::Straight`, material, width, shoulder, and smoothed elevation profile).
 - **Inside Area Schemas:** Fixed Inside areas (`Ephemeral` / `Permanent`) store arbitrary `(width, length)` walkability/elevation grids and prop placements (with terrain heightmaps/splatmaps optional when interiors are built purely from `.glb` meshes). **Generated** Inside areas transmit their assembled layout, `.glb` piece placements, and walkability grid to the client via `ServerMessage` upon entry.
 
 ---

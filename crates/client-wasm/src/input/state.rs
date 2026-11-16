@@ -3,10 +3,12 @@ use std::collections::HashSet;
 #[derive(Debug, Default, Clone)]
 pub struct InputState {
     pub keys: HashSet<String>,
+    pub just_pressed_keys: HashSet<String>,
     pub middle_mouse_down: bool,
     pub left_mouse_down: bool,
     pub left_just_pressed: bool,
     pub left_just_released: bool,
+    pub right_just_pressed: bool,
     pub mouse_x: f32,
     pub mouse_y: f32,
     pub mouse_delta: (f32, f32),
@@ -21,9 +23,16 @@ impl InputState {
         self.scroll_delta = 0.0;
         self.left_just_pressed = false;
         self.left_just_released = false;
+        self.right_just_pressed = false;
+        self.just_pressed_keys.clear();
     }
 
     pub fn is_key_down(&self, code: &str) -> bool {
         self.keys.contains(code)
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn is_key_just_pressed(&self, code: &str) -> bool {
+        self.just_pressed_keys.contains(code)
     }
 }

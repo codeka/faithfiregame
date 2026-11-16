@@ -56,6 +56,14 @@
     <button
       type="button"
       class="btn"
+      [class.active]="state.activeTool() === 'road'"
+      (click)="engine.setTool('road')"
+    >
+      Roads
+    </button>
+    <button
+      type="button"
+      class="btn"
       [class.active]="state.activeTool() === 'decoration'"
       (click)="engine.setTool('decoration')"
     >

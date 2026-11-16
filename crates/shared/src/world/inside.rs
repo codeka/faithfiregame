@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::road::RoadSpline;
 use super::splat::{
     area_seed_from_id, convert_legacy_rgba_splat_grid, default_splat_ids, default_splat_weights,
     grass_noise_splat_at,
@@ -46,6 +47,7 @@ pub struct InsideVisData {
     /// Optional `(width + 1) × (length + 1)` top-4 normalized `u8` weights (sum = `255`).
     pub splat_weights: Vec<[u8; 4]>,
     pub props: Vec<PropPlacement>,
+    pub roads: Vec<RoadSpline>,
 }
 
 impl InsideVisData {
@@ -60,6 +62,7 @@ impl InsideVisData {
             splat_ids: vec![default_splat_ids(); verts],
             splat_weights: vec![default_splat_weights(); verts],
             props: Vec::new(),
+            roads: Vec::new(),
         }
     }
 
@@ -88,6 +91,7 @@ impl InsideVisData {
             splat_ids,
             splat_weights,
             props: Vec::new(),
+            roads: Vec::new(),
         }
     }
 
@@ -148,10 +152,21 @@ impl InsideVisData {
         }
     }
 
-    /// Decodes a postcard-encoded inside visual payload, falling back across prior `v3`
-    /// (`splat_map: Vec<u32>`), `v2` (`rotation: [f32; 3]`), and legacy `v1` (`rotation_y`) formats
-    /// so existing interior world files migrate seamlessly.
+    /// Decodes a postcard-encoded inside visual payload, falling back across `v4` (pre-roads),
+    /// `v3` (`splat_map: Vec<u32>`), `v2` (`rotation: [f32; 3]`), and legacy `v1` (`rotation_y`)
+    /// formats so existing interior world files migrate seamlessly.
     pub fn from_postcard_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
+        #[derive(Deserialize)]
+        struct InsideVisV4 {
+            width: u32,
+            length: u32,
+            walkable: Vec<u64>,
+            heights: Vec<f32>,
+            splat_ids: Vec<[u8; 4]>,
+            splat_weights: Vec<[u8; 4]>,
+            props: Vec<PropPlacement>,
+        }
+
         #[derive(Deserialize)]
         struct LegacySplatInside<P> {
             width: u32,
@@ -176,29 +191,44 @@ impl InsideVisData {
                 splat_ids,
                 splat_weights,
                 props: old.props.into_iter().map(Into::into).collect(),
+                roads: Vec::new(),
             }
         }
 
         match super::types::decode_exact::<Self>(bytes) {
             Ok(vis) if vis.has_valid_dimensions() => Ok(vis),
             Ok(_) => Err(postcard::Error::SerdeDeCustom),
-            Err(primary_err) => {
-                super::types::decode_exact::<LegacySplatInside<PropPlacement>>(bytes)
+            Err(primary_err) => super::types::decode_exact::<InsideVisV4>(bytes)
+                .map(|v4| InsideVisData {
+                    width: v4.width,
+                    length: v4.length,
+                    walkable: v4.walkable,
+                    heights: v4.heights,
+                    splat_ids: v4.splat_ids,
+                    splat_weights: v4.splat_weights,
+                    props: v4.props,
+                    roads: Vec::new(),
+                })
+                .ok()
+                .filter(InsideVisData::has_valid_dimensions)
+                .ok_or(())
+                .or_else(|_| {
+                    super::types::decode_exact::<LegacySplatInside<PropPlacement>>(bytes)
+                        .map(upgrade_legacy)
+                })
+                .or_else(|_| {
+                    super::types::decode_exact::<LegacySplatInside<super::types::PropPlacementV2>>(
+                        bytes,
+                    )
                     .map(upgrade_legacy)
-                    .or_else(|_| {
-                        super::types::decode_exact::<LegacySplatInside<super::types::PropPlacementV2>>(
-                            bytes,
-                        )
-                        .map(upgrade_legacy)
-                    })
-                    .or_else(|_| {
-                        super::types::decode_exact::<
-                            LegacySplatInside<super::types::LegacyPropPlacement>,
-                        >(bytes)
-                        .map(upgrade_legacy)
-                    })
-                    .map_err(|_| primary_err)
-            }
+                })
+                .or_else(|_| {
+                    super::types::decode_exact::<
+                        LegacySplatInside<super::types::LegacyPropPlacement>,
+                    >(bytes)
+                    .map(upgrade_legacy)
+                })
+                .map_err(|_| primary_err),
         }
     }
 }
@@ -274,5 +304,29 @@ mod tests {
         assert!(migrated.has_valid_dimensions());
         assert_eq!(migrated.splat_ids[0], [MAT_DIRT, 0, 0, 0]);
         assert_eq!(migrated.splat_weights[0], [255, 0, 0, 0]);
+        assert!(migrated.roads.is_empty());
+
+        #[derive(Serialize)]
+        struct InsideV4 {
+            width: u32,
+            length: u32,
+            walkable: Vec<u64>,
+            heights: Vec<f32>,
+            splat_ids: Vec<[u8; 4]>,
+            splat_weights: Vec<[u8; 4]>,
+            props: Vec<PropPlacement>,
+        }
+        let v4 = InsideV4 {
+            width: 4,
+            length: 4,
+            walkable: vec![u64::MAX; 1],
+            heights: vec![0.0; 25],
+            splat_ids: vec![default_splat_ids(); 25],
+            splat_weights: vec![default_splat_weights(); 25],
+            props: Vec::new(),
+        };
+        let v4_bytes = postcard::to_allocvec(&v4).unwrap();
+        let migrated_v4 = InsideVisData::from_postcard_bytes(&v4_bytes).unwrap();
+        assert!(migrated_v4.roads.is_empty());
     }
 }

@@ -63,6 +63,7 @@ pub(crate) fn attach_input_listeners(
                 st.input.left_just_pressed = true;
             }
             1 => st.input.middle_mouse_down = true,
+            2 => st.input.right_just_pressed = true,
             _ => {}
         }
     });
@@ -128,7 +129,11 @@ pub(crate) fn attach_input_listeners(
         ) {
             ev.prevent_default();
         }
-        st_kd.borrow_mut().input.keys.insert(code);
+        let mut st = st_kd.borrow_mut();
+        if !ev.repeat() {
+            st.input.just_pressed_keys.insert(code.clone());
+        }
+        st.input.keys.insert(code);
     });
     window.add_event_listener_with_callback("keydown", on_keydown.as_ref().unchecked_ref())?;
     kept.push(Box::new(on_keydown));
@@ -146,7 +151,9 @@ pub(crate) fn attach_input_listeners(
     let on_blur = Closure::<dyn FnMut()>::new(move || {
         let mut st = st_blur.borrow_mut();
         st.input.keys.clear();
+        st.input.just_pressed_keys.clear();
         st.input.left_mouse_down = false;
+        st.input.right_just_pressed = false;
         st.input.middle_mouse_down = false;
     });
     window.add_event_listener_with_callback("blur", on_blur.as_ref().unchecked_ref())?;

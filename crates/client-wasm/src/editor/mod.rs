@@ -2,6 +2,7 @@ mod decoration_tool;
 mod gizmo;
 mod heightmap_tool;
 pub mod io;
+mod road_tool;
 mod scene_render;
 mod state;
 mod terrain_ops;
@@ -13,6 +14,6 @@ pub use state::EditorState;
 #[allow(unused_imports)]
 pub use types::{
     DecorationSubMode, EditorInsideState, EditorStatusSnapshot, EditorTileState, EditorTool,
-    HeightMode, PendingSave, SelectedPropInfo,
+    HeightMode, PendingSave, RoadDraft, RoadSubMode, SelectedPropInfo, SelectedRoadInfo,
 };
 pub use wasm_api::EditorEngineHandle;
