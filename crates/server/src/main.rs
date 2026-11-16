@@ -65,6 +65,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/ws", get(net::ws_handler))
         .route("/world/areas/{area_id}/area.bin", get(net::get_area_bin))
         .route(
+            "/world/areas/{area_id}/assets/{file_name}",
+            get(net::get_area_asset_glb),
+        )
+        .route(
             "/world/areas/{area_id}/{tile_coord}/vis.bin",
             get(net::get_outside_vis_bin),
         )
@@ -81,11 +85,20 @@ async fn main() -> anyhow::Result<()> {
 
     #[cfg(feature = "editor")]
     let app = {
+        use axum::extract::DefaultBodyLimit;
         use axum::routing::put;
         info!("Editor API endpoints ENABLED");
         app.route(
             "/api/editor/areas",
             get(editor_api::list_areas).post(editor_api::create_area),
+        )
+        .route(
+            "/api/editor/areas/{area_id}/assets",
+            get(editor_api::list_area_assets),
+        )
+        .route(
+            "/api/editor/areas/{area_id}/assets/{slug}",
+            put(editor_api::upload_area_asset).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
         )
         .route(
             "/api/editor/areas/{area_id}/tiles/{tile_coord}",

@@ -11,6 +11,13 @@ pub enum EditorTool {
     Texture,
     Road,
     Decoration,
+    Walkability,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkabilityMode {
+    Block,
+    Walkable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,4 +125,5 @@ pub struct EditorStatusSnapshot {
     pub preview_rotation_deg: [f32; 3],
     pub preview_scale: f32,
     pub preview_cast_shadow: bool,
+    pub walkability_mode: &'static str,
 }

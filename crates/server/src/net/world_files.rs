@@ -1,7 +1,9 @@
 use std::fs;
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
+use axum::response::IntoResponse;
+use shared::world::is_valid_asset_slug;
 
 use super::state::{AppState, is_valid_area_id, parse_tile_coord};
 
@@ -42,4 +44,33 @@ pub async fn get_inside_vis_bin(
     }
     let path = state.world_dir.join("areas").join(&area_id).join("vis.bin");
     fs::read(path).map_err(|_| StatusCode::NOT_FOUND)
+}
+
+pub async fn get_area_asset_glb(
+    State(state): State<AppState>,
+    Path((area_id, file_name)): Path<(String, String)>,
+) -> Result<impl IntoResponse, StatusCode> {
+    if !is_valid_area_id(&area_id) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let slug = file_name
+        .strip_suffix(".glb")
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    if !is_valid_asset_slug(slug) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let path = state
+        .world_dir
+        .join("areas")
+        .join(&area_id)
+        .join("assets")
+        .join(format!("{slug}.glb"));
+    let bytes = fs::read(path).map_err(|_| StatusCode::NOT_FOUND)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "model/gltf-binary"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        bytes,
+    ))
 }

@@ -89,21 +89,67 @@ impl TileVisData {
             && self.splat_weights.len() == verts
     }
 
-    /// Recomputes `walkable` cells based on terrain slope across each 1m cell.
+    /// Returns `true` when the terrain slope across cell `(x, z)` is within walkable limits.
+    pub fn is_cell_slope_walkable(&self, x: usize, z: usize) -> bool {
+        if x >= TILE_SIZE || z >= TILE_SIZE || self.heights.len() != TILE_VERTICES * TILE_VERTICES {
+            return false;
+        }
+        let h00 = self.heights[z * TILE_VERTICES + x];
+        let h10 = self.heights[z * TILE_VERTICES + x + 1];
+        let h01 = self.heights[(z + 1) * TILE_VERTICES + x];
+        let h11 = self.heights[(z + 1) * TILE_VERTICES + x + 1];
+        let min_h = h00.min(h10).min(h01).min(h11);
+        let max_h = h00.max(h10).max(h01).max(h11);
+        (max_h - min_h) <= MAX_WALKABLE_SLOPE_DELTA
+    }
+
+    /// Recomputes `walkable` cells based purely on terrain slope across each 1m cell.
     pub fn recompute_slope_walkability(&mut self) {
         if self.heights.len() != TILE_VERTICES * TILE_VERTICES {
             return;
         }
         for z in 0..TILE_SIZE {
             for x in 0..TILE_SIZE {
-                let h00 = self.heights[z * TILE_VERTICES + x];
-                let h10 = self.heights[z * TILE_VERTICES + x + 1];
-                let h01 = self.heights[(z + 1) * TILE_VERTICES + x];
-                let h11 = self.heights[(z + 1) * TILE_VERTICES + x + 1];
-                let min_h = h00.min(h10).min(h01).min(h11);
-                let max_h = h00.max(h10).max(h01).max(h11);
-                self.walkable
-                    .set(x, z, (max_h - min_h) <= MAX_WALKABLE_SLOPE_DELTA);
+                let ok = self.is_cell_slope_walkable(x, z);
+                self.walkable.set(x, z, ok);
+            }
+        }
+    }
+
+    /// Recomputes slope walkability only for cells inside `[min_x..=max_x, min_z..=max_z]`.
+    pub fn recompute_slope_walkability_in_rect(
+        &mut self,
+        min_x: usize,
+        min_z: usize,
+        max_x: usize,
+        max_z: usize,
+    ) {
+        if self.heights.len() != TILE_VERTICES * TILE_VERTICES || TILE_SIZE == 0 {
+            return;
+        }
+        let x1 = max_x.min(TILE_SIZE - 1);
+        let z1 = max_z.min(TILE_SIZE - 1);
+        if min_x > x1 || min_z > z1 {
+            return;
+        }
+        for z in min_z..=z1 {
+            for x in min_x..=x1 {
+                let ok = self.is_cell_slope_walkable(x, z);
+                self.walkable.set(x, z, ok);
+            }
+        }
+    }
+
+    /// Marks cells steeper than `MAX_WALKABLE_SLOPE_DELTA` impassable while preserving manual blockers on flat ground.
+    pub fn enforce_slope_walkability(&mut self) {
+        if self.heights.len() != TILE_VERTICES * TILE_VERTICES {
+            return;
+        }
+        for z in 0..TILE_SIZE {
+            for x in 0..TILE_SIZE {
+                if !self.is_cell_slope_walkable(x, z) {
+                    self.walkable.set(x, z, false);
+                }
             }
         }
     }

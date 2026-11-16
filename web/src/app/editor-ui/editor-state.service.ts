@@ -19,15 +19,31 @@ const DEFAULT_ROAD_SWATCH_BY_LAYER = new Map<number, string>(
   DEFAULT_ROAD_MATERIALS.map((mat) => [mat.index, mat.swatch]),
 );
 
+async function readBlobBytes(blob: Blob): Promise<Uint8Array<ArrayBuffer>> {
+  if (typeof blob.arrayBuffer === 'function') {
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+  return new Promise<Uint8Array<ArrayBuffer>>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
+    reader.onerror = () => reject(reader.error ?? new Error('Failed reading file'));
+    reader.readAsArrayBuffer(blob);
+  });
+}
+
 @Injectable()
 export class EditorStateService {
   private readonly engine = inject(EditorEngineService);
 
   readonly areas = signal<AreaMetadata[]>([]);
   readonly catalog = signal<AssetEntry[]>([]);
+  readonly areaAssets = signal<AssetEntry[]>([]);
   readonly terrainCatalog = signal<TerrainTextureEntry[]>([]);
   readonly roadCatalog = signal<RoadTextureEntry[]>([]);
   readonly selectedAreaId = signal<string>('main');
+  readonly importingGlb = signal<boolean>(false);
+  readonly importMessage = signal<string | null>(null);
+  readonly importError = signal<string | null>(null);
 
   readonly brushRadius = signal<number>(4.5);
   readonly brushStrength = signal<number>(3.5);
@@ -119,6 +135,7 @@ export class EditorStateService {
           this.syncedInitialArea = true;
           this.selectedAreaId.set(mainArea.id);
           this.engine.setArea(mainArea);
+          void this.loadAreaAssets(mainArea.id);
         }
       }
     });
@@ -126,6 +143,27 @@ export class EditorStateService {
 
   async initData(): Promise<void> {
     await Promise.all([this.loadAreas(), this.loadCatalog()]);
+    await this.loadAreaAssets(this.selectedAreaId());
+  }
+
+  async loadAreaAssets(areaId: string): Promise<void> {
+    if (!areaId) {
+      this.areaAssets.set([]);
+      return;
+    }
+    try {
+      const resp = await fetch(`/api/editor/areas/${encodeURIComponent(areaId)}/assets`, {
+        cache: 'no-cache',
+      });
+      if (resp.ok) {
+        const list = (await resp.json()) as AssetEntry[];
+        if (this.selectedAreaId() === areaId) {
+          this.areaAssets.set(list);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load area-unique assets:', e);
+    }
   }
 
   async loadAreas(): Promise<void> {
@@ -175,9 +213,75 @@ export class EditorStateService {
 
   selectArea(areaId: string): void {
     this.selectedAreaId.set(areaId);
+    this.importMessage.set(null);
+    this.importError.set(null);
+    if (this.selectedAssetId().startsWith('local:')) {
+      const first = this.catalog()[0];
+      if (first) {
+        this.selectedAssetId.set(first.id);
+      }
+    }
     const meta = this.areas().find((a) => a.id === areaId);
     if (meta) {
       this.engine.setArea(meta);
+    }
+    void this.loadAreaAssets(areaId);
+  }
+
+  async importUniqueGlbFiles(files: FileList | readonly File[]): Promise<void> {
+    const glbFiles = Array.from(files).filter((f) => f.name.toLowerCase().endsWith('.glb'));
+    if (glbFiles.length === 0) {
+      this.importError.set('Select one or more binary .glb files.');
+      this.importMessage.set(null);
+      return;
+    }
+
+    const areaId = this.selectedAreaId();
+    this.importingGlb.set(true);
+    this.importError.set(null);
+    this.importMessage.set(null);
+
+    let importedCount = 0;
+    try {
+      for (const file of glbFiles) {
+        const stem = file.name.replace(/\.glb$/i, '');
+        const slug =
+          stem
+            .trim()
+            .replace(/[^a-zA-Z0-9-]+/g, '_')
+            .replace(/^[_-]+|[_-]+$/g, '')
+            .toLowerCase()
+            .slice(0, 64) || 'imported_prop';
+
+        const bytes = await readBlobBytes(file);
+        const resp = await fetch(
+          `/api/editor/areas/${encodeURIComponent(areaId)}/assets/${encodeURIComponent(slug)}`,
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'model/gltf-binary' },
+            body: file,
+          },
+        );
+        if (!resp.ok) {
+          const errText = await resp.text();
+          throw new Error(errText || `Upload failed (HTTP ${resp.status})`);
+        }
+        const entry = (await resp.json()) as AssetEntry;
+        const rawSlug = entry.id.startsWith('local:') ? entry.id.slice('local:'.length) : slug;
+        this.engine.importLocalGlb(rawSlug, bytes, true);
+        importedCount += 1;
+      }
+
+      await this.loadAreaAssets(areaId);
+      this.importMessage.set(
+        importedCount === 1
+          ? `Imported ${glbFiles[0].name} into ${areaId}`
+          : `Imported ${importedCount} .glb assets into ${areaId}`,
+      );
+    } catch (e) {
+      this.importError.set(e instanceof Error ? e.message : String(e));
+    } finally {
+      this.importingGlb.set(false);
     }
   }
 
@@ -222,6 +326,7 @@ export class EditorStateService {
     await this.loadAreas();
     this.selectedAreaId.set(created.id);
     this.engine.setArea(created);
+    await this.loadAreaAssets(created.id);
     this.showNewAreaModal.set(false);
   }
 }

@@ -31,6 +31,7 @@ pub struct Renderer {
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     gizmo_prog: glow::Program,
     tex_array: glow::Texture,
+    white_tex: glow::Texture,
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     road_tex_array: glow::Texture,
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
@@ -59,6 +60,25 @@ impl Renderer {
         let road_prog = compile_program(&gl, ROAD_VERT, ROAD_FRAG)?;
         let gizmo_prog = compile_program(&gl, GIZMO_VERT, GIZMO_FRAG)?;
         let tex_array = create_placeholder_terrain_texture_array(&gl)?;
+        let white_tex = unsafe {
+            let tex = gl.create_texture()?;
+            gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA8 as i32,
+                1,
+                1,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(&[255, 255, 255, 255])),
+            );
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
+            gl.bind_texture(glow::TEXTURE_2D, None);
+            tex
+        };
         let road_tex_array = create_placeholder_road_texture_array(&gl)?;
         let (ring_vao, ring_vert_count) = create_selection_ring_mesh(&gl)?;
         let (dyn_line_vao, dyn_line_vbo) = unsafe {
@@ -90,6 +110,7 @@ impl Renderer {
             road_prog,
             gizmo_prog,
             tex_array,
+            white_tex,
             road_tex_array,
             road_soft_edge_mask: 1u16 << shared::world::ROAD_MAT_DIRT,
             ring_vao,
@@ -166,6 +187,9 @@ impl Renderer {
     /// Renders any static prop or dynamic entity mesh into the active shadow depth map.
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     pub fn draw_mesh_shadow(&self, mesh: &PropMeshGpu, model: &Mat4) {
+        if mesh.total_index_count <= 0 {
+            return;
+        }
         unsafe {
             let gl = &self.gl;
             gl.uniform_matrix_4_f32_slice(
@@ -174,7 +198,12 @@ impl Renderer {
                 model.as_ref(),
             );
             gl.bind_vertex_array(Some(mesh.vao));
-            gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_SHORT, 0);
+            gl.draw_elements(
+                glow::TRIANGLES,
+                mesh.total_index_count,
+                glow::UNSIGNED_INT,
+                0,
+            );
             gl.bind_vertex_array(None);
         }
     }
@@ -243,6 +272,7 @@ impl Renderer {
         origin_x: f32,
         origin_z: f32,
         show_grid: bool,
+        show_walkability: bool,
         brush: &BrushOverlay,
     ) {
         let vp = camera.view_proj_matrix();
@@ -256,6 +286,10 @@ impl Renderer {
             gl.uniform_3_f32(loc("u_tile_origin").as_ref(), origin_x, 0.0, origin_z);
             gl.uniform_2_f32(loc("u_tile_size").as_ref(), mesh.width as f32, mesh.length as f32);
             gl.uniform_1_i32(loc("u_show_grid").as_ref(), i32::from(show_grid));
+            gl.uniform_1_i32(
+                loc("u_show_walkability").as_ref(),
+                i32::from(show_walkability),
+            );
             gl.uniform_3_f32(
                 loc("u_brush_center").as_ref(),
                 brush.center.x,
@@ -295,15 +329,22 @@ impl Renderer {
             gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(self.tex_array));
             gl.uniform_1_i32(loc("u_tex_array").as_ref(), 3);
 
+            gl.active_texture(glow::TEXTURE4);
+            gl.bind_texture(glow::TEXTURE_2D, Some(mesh.walk_tex));
+            gl.uniform_1_i32(loc("u_walk_tex").as_ref(), 4);
+
             gl.bind_vertex_array(Some(mesh.vao));
             gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_INT, 0);
             gl.bind_vertex_array(None);
         }
     }
 
-    /// Renders any static prop or dynamic entity mesh with directional shadow receiving.
+    /// Renders any static prop or dynamic entity mesh with embedded textures, emissive highlights, and shadows.
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     pub fn draw_mesh(&self, camera: &Camera, mesh: &PropMeshGpu, model: &Mat4, tint: Vec4) {
+        if mesh.submeshes.is_empty() {
+            return;
+        }
         let vp = camera.view_proj_matrix();
         unsafe {
             let gl = &self.gl;
@@ -325,8 +366,46 @@ impl Renderer {
 
             self.bind_shadow_uniforms(self.prop_prog);
 
+            let base_tex_loc = loc("u_base_tex");
+            let emissive_loc = loc("u_emissive");
+            let cutoff_loc = loc("u_alpha_cutoff");
+            gl.uniform_1_i32(base_tex_loc.as_ref(), 0);
+            gl.active_texture(glow::TEXTURE0);
             gl.bind_vertex_array(Some(mesh.vao));
-            gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_SHORT, 0);
+
+            let mut culling_enabled = true;
+            for sub in &mesh.submeshes {
+                if sub.double_sided && culling_enabled {
+                    gl.disable(glow::CULL_FACE);
+                    culling_enabled = false;
+                } else if !sub.double_sided && !culling_enabled {
+                    gl.enable(glow::CULL_FACE);
+                    culling_enabled = true;
+                }
+
+                let tex = sub
+                    .texture_index
+                    .and_then(|idx| mesh.textures.get(idx).copied())
+                    .unwrap_or(self.white_tex);
+                gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+                gl.uniform_3_f32(
+                    emissive_loc.as_ref(),
+                    sub.emissive[0],
+                    sub.emissive[1],
+                    sub.emissive[2],
+                );
+                gl.uniform_1_f32(cutoff_loc.as_ref(), sub.alpha_cutoff);
+                gl.draw_elements(
+                    glow::TRIANGLES,
+                    sub.index_count,
+                    glow::UNSIGNED_INT,
+                    sub.index_offset_bytes,
+                );
+            }
+
+            if !culling_enabled {
+                gl.enable(glow::CULL_FACE);
+            }
             gl.bind_vertex_array(None);
         }
     }

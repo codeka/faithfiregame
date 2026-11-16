@@ -1,5 +1,45 @@
 <div class="toolbox-title">Decorations</div>
 
+<div
+  class="tool-section import-dropzone"
+  [class.drag-over]="dragOver()"
+  (dragover)="onDragOver($event)"
+  (dragleave)="onDragLeave($event)"
+  (drop)="onDrop($event)"
+>
+  <div class="section-head">
+    <span class="section-label">Unique Scene Asset</span>
+    <span class="asset-count">{{ state.selectedAreaId() }}</span>
+  </div>
+  <input
+    #glbFileInput
+    type="file"
+    accept=".glb"
+    multiple
+    hidden
+    (change)="onGlbFileSelected($event)"
+  />
+  <button
+    type="button"
+    class="btn btn-sm btn-import"
+    [disabled]="state.importingGlb()"
+    (click)="glbFileInput.click()"
+  >
+    @if (state.importingGlb()) {
+      Importing .glb…
+    } @else {
+      + Import Unique .glb…
+    }
+  </button>
+  <span class="import-caption">Drops straight into this area without adding to global catalog</span>
+  @if (state.importMessage(); as msg) {
+    <div class="import-feedback ok">{{ msg }}</div>
+  }
+  @if (state.importError(); as err) {
+    <div class="import-feedback err">{{ err }}</div>
+  }
+</div>
+
 <div class="tool-section">
   <span class="section-label">Mode</span>
   <div class="option-grid">
@@ -85,6 +125,25 @@
     </div>
   </div>
 
+  @if (state.areaAssets().length > 0) {
+    <details class="area-unique-drawer">
+      <summary class="section-label">Area Unique ({{ state.areaAssets().length }})</summary>
+      <div class="asset-list unique-list">
+        @for (item of state.areaAssets(); track item.id) {
+          <button
+            type="button"
+            class="btn btn-sm asset-btn"
+            [class.active]="state.selectedAssetId() === item.id"
+            (click)="state.selectAsset(item.id)"
+          >
+            <span>{{ item.name }}</span>
+            <span class="asset-cat">local</span>
+          </button>
+        }
+      </div>
+    </details>
+  }
+
   <div class="toolbox-hint">
     1–4: Mode · Click terrain to place · Q/E: Rotate ({{ previewYawDeg() }}°)
   </div>
@@ -92,7 +151,7 @@
   <div class="tool-section">
     <span class="section-label">
       @if (selectedProp(); as sel) {
-        Transform · Selected #{{ sel.id }}
+        #{{ sel.id }} · {{ sel.assetId }}
       } @else {
         Transform · No Selection
       }
@@ -131,9 +190,9 @@
       <input
         type="range"
         name="propScale"
-        min="0.4"
-        max="2.5"
-        step="0.1"
+        min="0.1"
+        max="5.0"
+        step="0.05"
         [disabled]="!selectedProp()"
         [value]="activeScale()"
         (input)="onScaleInput($event)"

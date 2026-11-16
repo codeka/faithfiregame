@@ -8,6 +8,7 @@ mod state;
 mod terrain_ops;
 mod texture_tool;
 mod types;
+mod walkability_tool;
 mod wasm_api;
 
 pub use state::EditorState;
@@ -15,5 +16,6 @@ pub use state::EditorState;
 pub use types::{
     DecorationSubMode, EditorInsideState, EditorStatusSnapshot, EditorTileState, EditorTool,
     HeightMode, PendingSave, RoadDraft, RoadSubMode, SelectedPropInfo, SelectedRoadInfo,
+    WalkabilityMode,
 };
 pub use wasm_api::EditorEngineHandle;

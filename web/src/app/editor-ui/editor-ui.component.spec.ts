@@ -28,6 +28,7 @@ function baseStatus(tool: EditorStatus['tool'] = 'decoration'): EditorStatus {
     previewRotationDeg: [0, 0, 0],
     previewScale: 1,
     previewCastShadow: true,
+    walkabilityMode: 'block',
   };
 }
 
@@ -48,6 +49,10 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
   let deleteRoadNodeCalls: number;
   let deleteRoadCalls: number;
   let decorationCalls: string[];
+  let walkabilityModeCalls: string[];
+  let bakeWalkCalls: number;
+  let resetWalkCalls: number;
+  let importedLocalGlbs: { slug: string; byteLen: number; spawn: boolean }[];
   let duplicateCalls: number;
   let origFetch: typeof globalThis.fetch;
 
@@ -73,6 +78,10 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     deleteRoadNodeCalls = 0;
     deleteRoadCalls = 0;
     decorationCalls = [];
+    walkabilityModeCalls = [];
+    bakeWalkCalls = 0;
+    resetWalkCalls = 0;
+    importedLocalGlbs = [];
     duplicateCalls = 0;
 
     const mockEngine = {
@@ -143,6 +152,20 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
         duplicateCalls++;
       },
       deleteSelectedProp: () => {},
+      setWalkabilityMode: (mode: EditorStatus['walkabilityMode']) => {
+        walkabilityModeCalls.push(mode);
+        statusSig.update((s) => (s ? { ...s, walkabilityMode: mode } : s));
+      },
+      bakePropsToWalkability: () => {
+        bakeWalkCalls++;
+      },
+      resetWalkabilityToSlope: () => {
+        resetWalkCalls++;
+      },
+      importLocalGlb: (slug: string, bytes: Uint8Array, spawnInScene = true) => {
+        importedLocalGlbs.push({ slug, byteLen: bytes.byteLength, spawn: spawnInScene });
+        return `local:${slug}`;
+      },
       saveNow: () => {},
     };
 
@@ -433,6 +456,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
       'Texture',
       'Roads',
       'Decoration',
+      'Walkability',
     ]);
 
     primaryBtns[2].click();
@@ -635,5 +659,77 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
 
     roadBtns[1].click();
     expect(roadMaterialCalls.at(-1)).toBe(5);
+  });
+
+  it('dispatches Walkability tool shortcuts and room blockout actions', () => {
+    const root = fixture.nativeElement as HTMLElement;
+    const walkBtn = Array.from(
+      root.querySelectorAll('app-editor-toolbar .group:nth-of-type(3) button'),
+    ).find((b) => b.textContent?.trim() === 'Walkability') as HTMLButtonElement;
+    walkBtn.click();
+    fixture.detectChanges();
+
+    expect(statusSig()?.tool).toBe('walkability');
+    expect(root.querySelector('app-walkability-tool')).not.toBeNull();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '2' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }));
+    expect(walkabilityModeCalls).toEqual(['walkable', 'block']);
+
+    (root.querySelector('.btn-bake') as HTMLButtonElement).click();
+    expect(bakeWalkCalls).toBe(1);
+
+    const resetBtn = Array.from(root.querySelectorAll('app-walkability-tool button')).find((b) =>
+      b.textContent?.includes('Reset to Terrain Slope'),
+    ) as HTMLButtonElement;
+    resetBtn.click();
+    expect(resetWalkCalls).toBe(1);
+  });
+
+  it('imports unique .glb files directly into the active area without polluting global catalog', async () => {
+    component.state.selectedAreaId.set('cryo_prison');
+    const uploadedUrls: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'PUT') {
+        uploadedUrls.push(url);
+        return new Response(
+          JSON.stringify({
+            id: 'local:hero_cryo_pod',
+            name: 'Hero Cryo Pod',
+            path: '/world/areas/cryo_prison/assets/hero_cryo_pod.glb',
+            category: 'Area Unique',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url.includes('/api/editor/areas/cryo_prison/assets')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'local:hero_cryo_pod',
+              name: 'Hero Cryo Pod',
+              path: '/world/areas/cryo_prison/assets/hero_cryo_pod.glb',
+              category: 'Area Unique',
+            },
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+
+    const fakeGlb = new File([new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 12, 0, 0, 0])], 'Hero Cryo Pod.glb');
+    await component.state.importUniqueGlbFiles([fakeGlb]);
+    fixture.detectChanges();
+
+    expect(uploadedUrls).toEqual(['/api/editor/areas/cryo_prison/assets/hero_cryo_pod']);
+    expect(importedLocalGlbs).toEqual([{ slug: 'hero_cryo_pod', byteLen: 12, spawn: true }]);
+    expect(component.state.catalog()).toEqual([]);
+    expect(component.state.areaAssets().map((a) => a.id)).toEqual(['local:hero_cryo_pod']);
+
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('.area-unique-drawer')).not.toBeNull();
   });
 });

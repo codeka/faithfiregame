@@ -8,6 +8,7 @@ pub struct TerrainMeshGpu {
     ebo: glow::Buffer,
     pub(super) splat_id_tex: glow::Texture,
     pub(super) splat_weight_tex: glow::Texture,
+    pub(super) walk_tex: glow::Texture,
     pub(super) index_count: i32,
     pub(super) width: usize,
     pub(super) length: usize,
@@ -28,6 +29,7 @@ impl TerrainMeshGpu {
             let ebo = gl.create_buffer()?;
             let splat_id_tex = gl.create_texture()?;
             let splat_weight_tex = gl.create_texture()?;
+            let walk_tex = gl.create_texture()?;
 
             let mut indices: Vec<u32> = Vec::with_capacity(width * length * 6);
             let vw = width + 1;
@@ -57,8 +59,8 @@ impl TerrainMeshGpu {
             gl.vertex_attrib_pointer_f32(2, 2, glow::FLOAT, false, stride, 24);
             gl.bind_vertex_array(None);
 
-            // Both splat textures use NEAREST + CLAMP_TO_EDGE; integer RGBA8UI requires NEAREST in WebGL2.
-            for tex in [splat_id_tex, splat_weight_tex] {
+            // Splat and walkability textures use NEAREST + CLAMP_TO_EDGE; integer RGBA8UI requires NEAREST in WebGL2.
+            for tex in [splat_id_tex, splat_weight_tex, walk_tex] {
                 gl.bind_texture(glow::TEXTURE_2D, Some(tex));
                 gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
                 gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
@@ -73,6 +75,7 @@ impl TerrainMeshGpu {
                 ebo,
                 splat_id_tex,
                 splat_weight_tex,
+                walk_tex,
                 index_count: indices.len() as i32,
                 width,
                 length,
@@ -81,6 +84,7 @@ impl TerrainMeshGpu {
             let default_normals = vec![[0.0, 1.0, 0.0]; (width + 1) * (length + 1)];
             mesh.upload_vertices(gl, 0.0, 0.0, heights, &default_normals);
             mesh.upload_splat(gl, splat_ids, splat_weights);
+            mesh.upload_walkability(gl, |_, _| true);
             Ok(mesh)
         }
     }
@@ -178,6 +182,36 @@ impl TerrainMeshGpu {
         }
     }
 
+    pub fn upload_walkability(
+        &self,
+        gl: &glow::Context,
+        mut is_walkable: impl FnMut(usize, usize) -> bool,
+    ) {
+        let mut bytes = Vec::with_capacity(self.width * self.length);
+        for z in 0..self.length {
+            for x in 0..self.width {
+                bytes.push(if is_walkable(x, z) { 255 } else { 0 });
+            }
+        }
+        unsafe {
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.walk_tex));
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::R8 as i32,
+                self.width as i32,
+                self.length as i32,
+                0,
+                glow::RED,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(&bytes)),
+            );
+            gl.bind_texture(glow::TEXTURE_2D, None);
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+        }
+    }
+
     pub fn destroy(&self, gl: &glow::Context) {
         unsafe {
             gl.delete_vertex_array(self.vao);
@@ -185,6 +219,7 @@ impl TerrainMeshGpu {
             gl.delete_buffer(self.ebo);
             gl.delete_texture(self.splat_id_tex);
             gl.delete_texture(self.splat_weight_tex);
+            gl.delete_texture(self.walk_tex);
         }
     }
 }

@@ -7,6 +7,7 @@ use shared::world::{
     blend_splat_sample, compute_inside_sim_from_vis, compute_sim_from_vis,
 };
 
+use super::cryo_prison::seed_cryo_prison_inside_area;
 use super::decorations::starter_decoration_assets;
 use super::road_textures::starter_road_textures;
 use super::terrain_textures::starter_terrain_textures;
@@ -127,6 +128,7 @@ pub fn ensure_world_seeded(world_dir: &Path) -> anyhow::Result<()> {
 
     seed_main_outside_area(world_dir)?;
     seed_village_shop_inside_area(world_dir)?;
+    seed_cryo_prison_inside_area(world_dir)?;
     Ok(())
 }
 
@@ -369,6 +371,18 @@ mod tests {
         assert!(merged.decorations.iter().any(|e| e.id == "custom_altar"));
         assert!(merged.decorations.iter().any(|e| e.id == "cliff_wall"));
         assert!(merged.decorations.iter().any(|e| e.id == "rock_scree"));
+        assert!(
+            !merged.decorations.iter().any(|e| e.id.contains("cryo")),
+            "cryo_prison one-off assets must not pollute global catalog.json"
+        );
+        assert!(
+            root.join("areas")
+                .join("cryo_prison")
+                .join("assets")
+                .join("hero_cryo_pod.glb")
+                .exists()
+        );
+        assert!(root.join("areas").join("cryo_prison").join("vis.bin").exists());
 
         assert_eq!(merged.terrain_textures.len(), 9);
         let terrain_dir = assets_dir.join("terrain");

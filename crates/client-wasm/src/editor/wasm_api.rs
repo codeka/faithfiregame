@@ -7,7 +7,10 @@ use wasm_bindgen::prelude::*;
 use crate::EngineHandle;
 use crate::engine::EngineInner;
 
-use super::{DecorationSubMode, EditorTool, HeightMode, RoadSubMode, io::dispatch_pending_saves};
+use super::{
+    DecorationSubMode, EditorTool, HeightMode, RoadSubMode, WalkabilityMode,
+    io::dispatch_pending_saves,
+};
 
 #[wasm_bindgen]
 pub struct EditorEngineHandle {
@@ -42,6 +45,7 @@ impl EditorEngineHandle {
             "texture" => EditorTool::Texture,
             "road" => EditorTool::Road,
             "decoration" => EditorTool::Decoration,
+            "walkability" => EditorTool::Walkability,
             _ => EditorTool::Heightmap,
         };
         let mut st = self.inner.borrow_mut();
@@ -194,7 +198,10 @@ impl EditorEngineHandle {
     }
 
     pub fn set_decoration_asset(&self, asset_id: &str) {
-        self.inner.borrow_mut().editor.active_asset_id = asset_id.to_owned();
+        self.inner
+            .borrow_mut()
+            .editor
+            .select_decoration_asset(asset_id);
     }
 
     pub fn set_selected_prop_rotation_axis_deg(&self, axis: u8, degrees: f32) {
@@ -248,6 +255,51 @@ impl EditorEngineHandle {
             .borrow_mut()
             .editor
             .snap_selected_prop_to_terrain(now_ms);
+    }
+
+    pub fn set_walkability_mode(&self, mode: &str) {
+        let mut st = self.inner.borrow_mut();
+        st.editor.walkability_mode = match mode {
+            "walkable" => WalkabilityMode::Walkable,
+            _ => WalkabilityMode::Block,
+        };
+    }
+
+    pub fn bake_props_to_walkability(&self) {
+        let now_ms = browser_now_ms();
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.bake_props_into_walkability(&renderer.gl, now_ms);
+    }
+
+    pub fn reset_walkability_to_slope(&self) {
+        let now_ms = browser_now_ms();
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor.reset_walkability_to_slope(&renderer.gl, now_ms);
+    }
+
+    pub fn import_local_glb(
+        &self,
+        slug: &str,
+        bytes: &[u8],
+        spawn_in_scene: bool,
+    ) -> Result<String, JsValue> {
+        let now_ms = browser_now_ms();
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer,
+            editor,
+            editor_cam,
+            ..
+        } = &mut *st;
+        editor
+            .import_local_glb(&renderer.gl, editor_cam, slug, bytes, spawn_in_scene, now_ms)
+            .map_err(|e| JsValue::from_str(&e))
     }
 
     pub fn save_editor_changes(&self) {

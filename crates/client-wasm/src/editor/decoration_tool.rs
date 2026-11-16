@@ -186,6 +186,10 @@ impl EditorState {
         }
     }
 
+    pub(super) fn insert_prop_placement(&mut self, prop: PropPlacement) -> bool {
+        self.insert_prop(prop)
+    }
+
     fn insert_prop(&mut self, prop: PropPlacement) -> bool {
         if self.active_area.kind == AreaKind::Outside {
             let tx = (prop.position[0] / TILE_SIZE as f32).floor() as i32;
@@ -340,7 +344,7 @@ impl EditorState {
     }
 
     pub fn set_selected_or_preview_scale(&mut self, scale: f32, now_ms: f64) {
-        let s = scale.clamp(0.25, 4.0);
+        let s = scale.clamp(0.05, 20.0);
         self.edit_selected_or_preview(
             now_ms,
             |p| p.scale = [s, s, s],

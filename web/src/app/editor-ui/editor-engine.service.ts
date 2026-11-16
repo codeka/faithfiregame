@@ -108,7 +108,7 @@ export interface EditorStatus {
   cursorPos: [number, number, number] | null;
   dirtyCount: number;
   saveState: string;
-  tool: 'heightmap' | 'texture' | 'road' | 'decoration';
+  tool: 'heightmap' | 'texture' | 'road' | 'decoration' | 'walkability';
   heightMode: 'raise' | 'lower' | 'smooth' | 'flatten';
   textureLayer: number;
   roadSubmode: 'place' | 'edit';
@@ -123,6 +123,7 @@ export interface EditorStatus {
   previewRotationDeg: [number, number, number];
   previewScale: number;
   previewCastShadow: boolean;
+  walkabilityMode: 'block' | 'walkable';
 }
 
 export function formatAreaKind(meta: AreaMetadata): string {
@@ -205,9 +206,34 @@ export class EditorEngineService implements OnDestroy {
     this.refreshStatus();
   }
 
-  setTool(tool: 'heightmap' | 'texture' | 'road' | 'decoration'): void {
+  setTool(tool: 'heightmap' | 'texture' | 'road' | 'decoration' | 'walkability'): void {
     this.ensureHandle()?.set_editor_tool(tool);
     this.refreshStatus();
+  }
+
+  setWalkabilityMode(mode: 'block' | 'walkable'): void {
+    this.ensureHandle()?.set_walkability_mode(mode);
+    this.refreshStatus();
+  }
+
+  bakePropsToWalkability(): void {
+    this.ensureHandle()?.bake_props_to_walkability();
+    this.refreshStatus();
+  }
+
+  resetWalkabilityToSlope(): void {
+    this.ensureHandle()?.reset_walkability_to_slope();
+    this.refreshStatus();
+  }
+
+  importLocalGlb(slug: string, bytes: Uint8Array, spawnInScene = true): string | null {
+    const h = this.ensureHandle();
+    if (!h) {
+      return null;
+    }
+    const assetId = h.import_local_glb(slug, bytes, spawnInScene);
+    this.refreshStatus();
+    return assetId;
   }
 
   setHeightMode(mode: 'raise' | 'lower' | 'smooth' | 'flatten'): void {

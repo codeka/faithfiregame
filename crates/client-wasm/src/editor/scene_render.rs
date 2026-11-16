@@ -8,7 +8,7 @@ use crate::render::{BrushOverlay, Renderer, RoadMeshGpu};
 
 use super::gizmo::gizmo_scale;
 use super::state::EditorState;
-use super::types::{DecorationSubMode, EditorTool, RoadSubMode};
+use super::types::{DecorationSubMode, EditorTool, RoadSubMode, WalkabilityMode};
 
 impl EditorState {
     pub fn render_shadows(&self, renderer: &mut Renderer, camera: &Camera) {
@@ -28,7 +28,10 @@ impl EditorState {
 
     pub fn render(&self, renderer: &Renderer, camera: &Camera) {
         let show_brush = self.hover_world.is_some()
-            && matches!(self.tool, EditorTool::Heightmap | EditorTool::Texture);
+            && matches!(
+                self.tool,
+                EditorTool::Heightmap | EditorTool::Texture | EditorTool::Walkability
+            );
 
         let brush = BrushOverlay {
             active: show_brush,
@@ -49,10 +52,15 @@ impl EditorState {
                 },
                 EditorTool::Road => [0.95, 0.76, 0.30],
                 EditorTool::Decoration => [1.0, 1.0, 1.0],
+                EditorTool::Walkability => match self.walkability_mode {
+                    WalkabilityMode::Block => [0.96, 0.30, 0.28],
+                    WalkabilityMode::Walkable => [0.28, 0.92, 0.52],
+                },
             },
         };
 
-        let road_opacity = if self.tool == EditorTool::Heightmap {
+        let show_walkability = self.tool == EditorTool::Walkability;
+        let road_opacity = if matches!(self.tool, EditorTool::Heightmap | EditorTool::Walkability) {
             0.42
         } else {
             1.0
@@ -62,7 +70,15 @@ impl EditorState {
             for (&(tx, ty), tile) in &self.outside_tiles {
                 let ox = (tx * TILE_SIZE as i32) as f32;
                 let oz = (ty * TILE_SIZE as i32) as f32;
-                renderer.draw_terrain_chunk(camera, &tile.gpu, ox, oz, true, &brush);
+                renderer.draw_terrain_chunk(
+                    camera,
+                    &tile.gpu,
+                    ox,
+                    oz,
+                    true,
+                    show_walkability,
+                    &brush,
+                );
             }
             for tile in self.outside_tiles.values() {
                 self.draw_prop_list(renderer, camera, &tile.vis.props);
@@ -78,7 +94,15 @@ impl EditorState {
                 );
             }
         } else if let Some(inside) = &self.inside_area {
-            renderer.draw_terrain_chunk(camera, &inside.gpu, 0.0, 0.0, true, &brush);
+            renderer.draw_terrain_chunk(
+                camera,
+                &inside.gpu,
+                0.0,
+                0.0,
+                true,
+                show_walkability,
+                &brush,
+            );
             self.draw_prop_list(renderer, camera, &inside.vis.props);
             self.draw_road_list(
                 renderer,

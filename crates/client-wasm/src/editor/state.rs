@@ -3,8 +3,10 @@ use std::collections::{HashMap, HashSet};
 use glam::Vec3;
 use shared::world::{
     AreaKind, AreaMetadata, AssetCatalog, AssetEntry, InsideVisData, MAX_ROAD_MATERIALS,
-    MAX_TERRAIN_MATERIALS, ROAD_MAT_COBBLESTONE, ROAD_MAT_DIRT, ROAD_MATERIAL_COUNT, RoadStyle,
-    TERRAIN_MATERIAL_COUNT, TILE_SIZE, TileVisData,
+    MAX_TERRAIN_MATERIALS, PropPlacement, ROAD_MAT_COBBLESTONE, ROAD_MAT_DIRT, ROAD_MATERIAL_COUNT,
+    RoadStyle, TERRAIN_MATERIAL_COUNT, TILE_SIZE, TileVisData, format_local_asset_id,
+    is_local_asset_id, local_asset_http_path, local_asset_slug, prettify_asset_slug,
+    sanitize_asset_slug,
 };
 
 use crate::camera::{Camera, EditorCameraController};
@@ -16,6 +18,7 @@ use super::gizmo::{GizmoAxis, GizmoDragState};
 use super::types::{
     DecorationSubMode, EditorInsideState, EditorStatusSnapshot, EditorTileState, EditorTool,
     HeightMode, PendingSave, RoadDraft, RoadSubMode, SelectedPropInfo, SelectedRoadInfo,
+    WalkabilityMode,
 };
 
 pub struct EditorState {
@@ -33,6 +36,7 @@ pub struct EditorState {
 
     pub tool: EditorTool,
     pub height_mode: HeightMode,
+    pub walkability_mode: WalkabilityMode,
     pub brush_radius: f32,
     pub brush_strength: f32,
     pub texture_layer: usize,
@@ -99,6 +103,7 @@ impl EditorState {
             requested_assets: HashSet::new(),
             tool: EditorTool::Heightmap,
             height_mode: HeightMode::Raise,
+            walkability_mode: WalkabilityMode::Block,
             brush_radius: 4.5,
             brush_strength: 3.5,
             texture_layer: 1, // Default brush paints Dirt so clicking immediately shows contrast on Grass
@@ -165,6 +170,28 @@ impl EditorState {
                 mesh.destroy(gl);
             }
         }
+        let stale_local_ids: Vec<String> = self
+            .prop_meshes
+            .keys()
+            .filter(|id| is_local_asset_id(id))
+            .cloned()
+            .collect();
+        for id in stale_local_ids {
+            if let Some(mesh) = self.prop_meshes.remove(&id) {
+                mesh.destroy(gl);
+            }
+        }
+        self.requested_assets.retain(|id| !is_local_asset_id(id));
+        self.pending_asset_fetches
+            .retain(|entry| !is_local_asset_id(&entry.id));
+        if is_local_asset_id(&self.active_asset_id) {
+            self.active_asset_id = self
+                .catalog
+                .first()
+                .map(|e| e.id.clone())
+                .unwrap_or_else(|| "pine_tree".to_owned());
+        }
+
         self.requested_tiles.clear();
         self.requested_inside = None;
         self.pending_tile_fetches.clear();
@@ -254,15 +281,96 @@ impl EditorState {
         }
     }
 
-    pub fn on_glb_loaded(&mut self, gl: &glow::Context, asset_id: String, bytes: &[u8]) {
-        match parse_glb(bytes) {
-            Ok(parsed) => match PropMeshGpu::from_parsed(gl, &parsed) {
-                Ok(mesh) => {
-                    self.prop_meshes.insert(asset_id, mesh);
+    pub fn on_glb_loaded(
+        &mut self,
+        gl: &glow::Context,
+        asset_id: String,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        let parsed = parse_glb(bytes).map_err(|e| format!("GLB parse failed: {e}"))?;
+        let mesh = PropMeshGpu::from_parsed(gl, &parsed)
+            .map_err(|e| format!("Prop GPU upload failed: {e}"))?;
+        if let Some(old) = self.prop_meshes.insert(asset_id, mesh) {
+            old.destroy(gl);
+        }
+        Ok(())
+    }
+
+    pub fn import_local_glb(
+        &mut self,
+        gl: &glow::Context,
+        cam_ctrl: &EditorCameraController,
+        raw_slug: &str,
+        bytes: &[u8],
+        spawn_in_scene: bool,
+        now_ms: f64,
+    ) -> Result<String, String> {
+        let slug = sanitize_asset_slug(raw_slug);
+        let asset_id = format_local_asset_id(&slug);
+        self.on_glb_loaded(gl, asset_id.clone(), bytes)?;
+        self.requested_assets.insert(asset_id.clone());
+
+        if spawn_in_scene {
+            let (mut sx, mut sz) = (cam_ctrl.target.x, cam_ctrl.target.z);
+            if self.active_area.kind != AreaKind::Outside {
+                if let Some((w, l)) = self.active_area.dimensions {
+                    let max_x = (w as f32 - 1.0).max(1.0);
+                    let max_z = (l as f32 - 1.0).max(1.0);
+                    sx = sx.clamp(1.0, max_x);
+                    sz = sz.clamp(1.0, max_z);
                 }
-                Err(e) => web_sys::console::error_1(&format!("Prop GPU upload failed: {e}").into()),
-            },
-            Err(e) => web_sys::console::error_1(&format!("GLB parse failed: {e}").into()),
+            }
+            let sy = self.terrain_height_at(sx, sz).unwrap_or(0.0);
+            let id = self.next_prop_id;
+            self.next_prop_id += 1;
+            let placement = PropPlacement {
+                id,
+                asset_id: asset_id.clone(),
+                position: [sx, sy, sz],
+                rotation: [0.0; 3],
+                scale: [1.0; 3],
+                cast_shadow: true,
+            };
+            if self.insert_prop_placement(placement) {
+                self.selected_prop_id = Some(id);
+                self.tool = EditorTool::Decoration;
+                self.decoration_submode = DecorationSubMode::FreeMove;
+                self.mark_unsaved(now_ms);
+            }
+        }
+        Ok(asset_id)
+    }
+
+    pub fn select_decoration_asset(&mut self, asset_id: &str) {
+        self.active_asset_id = asset_id.to_owned();
+        if let Some(slug) = local_asset_slug(asset_id) {
+            if !self.prop_meshes.contains_key(asset_id)
+                && self.requested_assets.insert(asset_id.to_owned())
+            {
+                self.pending_asset_fetches.push(AssetEntry {
+                    id: asset_id.to_owned(),
+                    name: prettify_asset_slug(slug),
+                    path: local_asset_http_path(&self.active_area.id, slug),
+                    category: "Area Unique".to_owned(),
+                });
+            }
+        }
+    }
+
+    fn ensure_local_prop_assets_requested(&mut self, area_id: &str, props: &[PropPlacement]) {
+        for prop in props {
+            if let Some(slug) = local_asset_slug(&prop.asset_id) {
+                if !self.prop_meshes.contains_key(&prop.asset_id)
+                    && self.requested_assets.insert(prop.asset_id.clone())
+                {
+                    self.pending_asset_fetches.push(AssetEntry {
+                        id: prop.asset_id.clone(),
+                        name: prettify_asset_slug(slug),
+                        path: local_asset_http_path(area_id, slug),
+                        category: "Area Unique".to_owned(),
+                    });
+                }
+            }
         }
     }
 
@@ -294,6 +402,7 @@ impl EditorState {
         if is_new_blank {
             self.copy_loaded_borders_into(tx, ty, &mut vis);
         }
+        self.ensure_local_prop_assets_requested(&area_id, &vis.props);
 
         if let Ok(gpu) = TerrainMeshGpu::new(
             gl,
@@ -303,6 +412,7 @@ impl EditorState {
             &vis.splat_ids,
             &vis.splat_weights,
         ) {
+            gpu.upload_walkability(gl, |x, z| vis.walkable.get(x, z));
             self.outside_tiles.insert(
                 (tx, ty),
                 EditorTileState {
@@ -337,6 +447,7 @@ impl EditorState {
         if let Some(max_road_id) = vis.roads.iter().map(|r| r.id).max() {
             self.next_road_id = self.next_road_id.max(max_road_id + 1);
         }
+        self.ensure_local_prop_assets_requested(&area_id, &vis.props);
         if let Some(old) = self.inside_area.take() {
             for mesh in old.road_meshes.into_values() {
                 mesh.destroy(gl);
@@ -351,6 +462,7 @@ impl EditorState {
             &vis.splat_ids,
             &vis.splat_weights,
         ) {
+            gpu.upload_walkability(gl, |x, z| vis.get_walkable(x, z));
             let state = EditorInsideState {
                 vis,
                 gpu,
@@ -427,6 +539,7 @@ impl EditorState {
                 EditorTool::Texture => self.handle_texture_tool(gl, input, dt, now_ms),
                 EditorTool::Road => self.handle_road_tool(gl, camera, input, now_ms),
                 EditorTool::Decoration => self.handle_decoration_tool(camera, input, now_ms),
+                EditorTool::Walkability => self.handle_walkability_tool(gl, input, now_ms),
             }
         } else if self.tool == EditorTool::Road {
             self.update_road_hover_preview(gl);
@@ -461,7 +574,7 @@ impl EditorState {
         if self.active_area.kind == AreaKind::Outside {
             for (&(tx, ty), tile) in &mut self.outside_tiles {
                 if tile.dirty {
-                    tile.vis.recompute_slope_walkability();
+                    tile.vis.enforce_slope_walkability();
                     if let Ok(bytes) = postcard::to_allocvec(&tile.vis) {
                         self.pending_saves.push(PendingSave::Outside {
                             area_id: area_id.clone(),
@@ -476,7 +589,7 @@ impl EditorState {
             }
         } else if let Some(inside) = &mut self.inside_area {
             if inside.dirty {
-                inside.vis.recompute_slope_walkability();
+                inside.vis.enforce_slope_walkability();
                 if let Ok(bytes) = postcard::to_allocvec(&inside.vis) {
                     self.pending_saves.push(PendingSave::Inside { area_id, bytes });
                     inside.dirty = false;
@@ -546,6 +659,7 @@ impl EditorState {
                 EditorTool::Texture => "texture",
                 EditorTool::Road => "road",
                 EditorTool::Decoration => "decoration",
+                EditorTool::Walkability => "walkability",
             },
             height_mode: match self.height_mode {
                 HeightMode::Raise => "raise",
@@ -579,6 +693,10 @@ impl EditorState {
                 .map(|r| r.to_degrees().rem_euclid(360.0)),
             preview_scale: self.preview_scale,
             preview_cast_shadow: self.preview_cast_shadow,
+            walkability_mode: match self.walkability_mode {
+                WalkabilityMode::Block => "block",
+                WalkabilityMode::Walkable => "walkable",
+            },
         }
     }
 }

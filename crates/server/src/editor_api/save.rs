@@ -32,7 +32,7 @@ pub async fn save_outside_tile(
         ));
     }
 
-    vis.recompute_slope_walkability();
+    vis.enforce_slope_walkability();
 
     let tile_dir = state
         .world_dir
@@ -91,7 +91,7 @@ pub async fn save_inside_area(
         ));
     }
 
-    vis.recompute_slope_walkability();
+    vis.enforce_slope_walkability();
 
     let area_dir = state.world_dir.join("areas").join(&area_id);
     if !area_dir.exists() {

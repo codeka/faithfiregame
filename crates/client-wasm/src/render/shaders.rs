@@ -91,11 +91,13 @@ in vec2 v_uv;
 
 uniform usampler2D u_splat_ids;
 uniform sampler2D u_splat_weights;
+uniform sampler2D u_walk_tex;
 uniform sampler2DArray u_tex_array;
 uniform vec3 u_camera_pos;
 uniform vec3 u_tile_origin;
 uniform vec2 u_tile_size;
 uniform int u_show_grid;
+uniform int u_show_walkability;
 uniform vec3 u_brush_center;
 uniform float u_brush_radius;
 uniform vec3 u_brush_color;
@@ -219,6 +221,20 @@ void main() {
         lit = mix(lit, vec3(0.95, 0.78, 0.28), border * 0.65);
     }
 
+    if (u_show_walkability != 0) {
+        float walk_v = texelFetch(u_walk_tex, c00, 0).r;
+        vec2 local_xz = v_world_pos.xz - u_tile_origin.xz;
+        if (walk_v < 0.5) {
+            float stripe = step(0.5, fract((local_xz.x + local_xz.y) * 2.0));
+            vec3 blocked_col = mix(vec3(0.84, 0.16, 0.16), vec3(1.0, 0.36, 0.24), stripe * 0.55);
+            lit = mix(lit, blocked_col, 0.54);
+        } else {
+            vec2 cell_f = abs(fract(local_xz - 0.5) - 0.5);
+            float edge = 1.0 - smoothstep(0.0, 0.05, min(cell_f.x, cell_f.y));
+            lit = mix(lit, vec3(0.24, 0.88, 0.48), 0.10 + edge * 0.22);
+        }
+    }
+
     if (u_brush_radius > 0.05) {
         float d = length(v_world_pos.xz - u_brush_center.xz);
         float ring = 1.0 - smoothstep(0.0, 0.16, abs(d - u_brush_radius));
@@ -241,6 +257,7 @@ precision highp float;
 layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec4 a_color;
+layout(location = 3) in vec2 a_uv;
 
 uniform mat4 u_view_proj;
 uniform mat4 u_model;
@@ -248,6 +265,7 @@ uniform mat4 u_model;
 out vec3 v_world_pos;
 out vec3 v_normal;
 out vec4 v_color;
+out vec2 v_uv;
 
 void main() {
     vec4 wp = u_model * vec4(a_pos, 1.0);
@@ -255,6 +273,7 @@ void main() {
     mat3 normal_mat = transpose(inverse(mat3(u_model)));
     v_normal = normalize(normal_mat * a_normal);
     v_color = a_color;
+    v_uv = a_uv;
     gl_Position = u_view_proj * wp;
 }
 "#;
@@ -267,9 +286,13 @@ precision highp sampler2DShadow;
 in vec3 v_world_pos;
 in vec3 v_normal;
 in vec4 v_color;
+in vec2 v_uv;
 
+uniform sampler2D u_base_tex;
 uniform vec3 u_camera_pos;
 uniform vec4 u_tint;
+uniform vec3 u_emissive;
+uniform float u_alpha_cutoff;
 uniform float u_fog_start;
 uniform float u_fog_end;
 uniform vec3 u_fog_color;
@@ -279,21 +302,29 @@ out vec4 frag_color;
     shadow_sampler_glsl!(),
     r#"
 void main() {
+    vec4 tex = texture(u_base_tex, v_uv);
+    vec4 base_rgba = v_color * tex * u_tint;
+    if (u_alpha_cutoff > 0.0 && base_rgba.a < u_alpha_cutoff) {
+        discard;
+    }
+
     vec3 n = normalize(v_normal);
+    if (!gl_FrontFacing) {
+        n = -n;
+    }
     vec3 sun_dir = normalize(u_sun_dir);
     float diff = max(dot(n, sun_dir), 0.0);
     float shadow = (diff > 0.0) ? sample_shadow(v_world_pos, n) : 1.0;
     float hemi = 0.5 + 0.5 * n.y;
     vec3 ambient = mix(vec3(0.22, 0.25, 0.30), vec3(0.34, 0.38, 0.45), hemi);
-    vec3 base = v_color.rgb * u_tint.rgb;
     vec3 sun_light = diff * vec3(1.06, 1.00, 0.88) * 1.00;
-    vec3 lit = base * (ambient + sun_light * shadow);
+    vec3 lit = base_rgba.rgb * (ambient + sun_light * shadow) + (u_emissive * tex.rgb * u_tint.rgb);
 
     float cam_dist = length(v_world_pos - u_camera_pos);
     float fog_t = smoothstep(u_fog_start, u_fog_end, cam_dist);
     vec3 final_rgb = mix(lit, u_fog_color, fog_t);
 
-    frag_color = vec4(final_rgb, v_color.a * u_tint.a);
+    frag_color = vec4(final_rgb, base_rgba.a);
 }
 "#
 );

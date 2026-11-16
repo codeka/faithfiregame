@@ -1,3 +1,4 @@
+mod cryo_prison;
 mod decorations;
 mod mesh_builder;
 mod road_textures;

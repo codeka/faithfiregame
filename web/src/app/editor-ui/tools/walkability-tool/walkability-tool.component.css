@@ -1,0 +1,21 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.walk-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.btn-bake {
+  background: #2b4c7e;
+  border-color: rgba(99, 179, 237, 0.45);
+  color: #edf2f7;
+}
+
+.btn-bake:hover {
+  background: #365f9c;
+}

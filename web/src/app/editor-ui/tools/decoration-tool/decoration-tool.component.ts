@@ -1,4 +1,4 @@
-import { Component, computed, inject } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { EditorEngineService } from '../../editor-engine.service';
 import { EditorStateService } from '../../editor-state.service';
 
@@ -21,6 +21,7 @@ export class DecorationToolComponent {
   readonly state = inject(EditorStateService);
 
   readonly submodes = DECORATION_SUBMODES;
+  readonly dragOver = signal(false);
   readonly activeSubmode = computed(() => this.engine.status()?.decorationSubmode ?? 'place');
   readonly selectedProp = computed(() => this.engine.status()?.selectedProp ?? null);
   readonly previewYawDeg = computed(() => {
@@ -87,6 +88,32 @@ export class DecorationToolComponent {
       this.state.setAssetSearch('');
     } else {
       (ev.target as HTMLInputElement).blur();
+    }
+  }
+
+  async onGlbFileSelected(ev: Event): Promise<void> {
+    const input = ev.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      await this.state.importUniqueGlbFiles(input.files);
+      input.value = '';
+    }
+  }
+
+  onDragOver(ev: DragEvent): void {
+    ev.preventDefault();
+    this.dragOver.set(true);
+  }
+
+  onDragLeave(ev: DragEvent): void {
+    ev.preventDefault();
+    this.dragOver.set(false);
+  }
+
+  async onDrop(ev: DragEvent): Promise<void> {
+    ev.preventDefault();
+    this.dragOver.set(false);
+    if (ev.dataTransfer?.files && ev.dataTransfer.files.length > 0) {
+      await this.state.importUniqueGlbFiles(ev.dataTransfer.files);
     }
   }
 }

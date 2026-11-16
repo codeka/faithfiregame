@@ -45,11 +45,11 @@ faith-and-fire/
 │   ├── server/                 # Authoritative Rust game server
 │   │   └── src/
 │   │       ├── main.rs
-│   │       ├── seed/           # mesh_builder.rs, decorations.rs, terrain_textures.rs, road_textures.rs, world_seed.rs
+│   │       ├── seed/           # mesh_builder.rs, decorations.rs, cryo_prison.rs, terrain_textures.rs, road_textures.rs, world_seed.rs
 │   │       ├── sim/            # world.rs (10Hz loop, 3x3 hibernation), player.rs
 │   │       ├── net/            # state.rs, auth.rs, world_files.rs, ws.rs
 │   │       ├── db/             # repository.rs (Storage trait), sqlite.rs (SQLite WAL)
-│   │       └── editor_api/     # #[cfg(feature = "editor")] areas.rs, save.rs
+│   │       └── editor_api/     # #[cfg(feature = "editor")] areas.rs, assets.rs, save.rs
 │   └── client-wasm/            # Rust WASM 3D engine & game client core
 │       └── src/
 │           ├── lib.rs          # #[wasm_bindgen] exports & Angular state bridge
@@ -58,26 +58,28 @@ faith-and-fire/
 │           ├── input/          # state.rs, dom.rs (keyboard/mouse listeners)
 │           ├── camera/         # projection.rs, controller.rs, gameplay_camera.rs, editor_camera.rs
 │           ├── render/         # renderer.rs, shaders.rs, shadow_map.rs, gizmo_mesh.rs, terrain_mesh.rs, prop_mesh.rs, road_mesh.rs, terrain_textures.rs, road_textures.rs
-│           ├── glb_loader.rs   # Binary .glb scene-graph mesh parser
+│           ├── glb_loader.rs   # Binary .glb parser (u32 indices, UVs, embedded PNG/JPEG textures, emissive & alpha mask)
 │           ├── net/            # ws_client.rs, http.rs
 │           └── editor/         # #[cfg(feature = "editor")] state.rs, types.rs, wasm_api.rs, gizmo.rs, terrain_ops.rs,
-│                               # heightmap_tool.rs, texture_tool.rs, road_tool.rs, decoration_tool.rs, scene_render.rs, io.rs
-├── scripts/                    # Tooling scripts (build_wasm.py, backup_world.py)
+│                               # heightmap_tool.rs, texture_tool.rs, road_tool.rs, decoration_tool.rs, walkability_tool.rs, scene_render.rs, io.rs
+├── scripts/                    # Tooling scripts (dev.py, build_wasm.py, backup_world.py)
 ├── web/                        # Angular (TypeScript) frontend shell
 │   └── src/
 │       └── app/
 │           ├── game-canvas/    # Hosts <canvas> and initializes WASM module
 │           ├── hud/            # Action bars, target frame, inventory, chat, trade modals
-│           └── editor-ui/      # Dev-only Angular editor shell: editor-engine.service.ts, toolbar/, create-area-modal/, and tools/{heightmap-tool,texture-tool,road-tool,decoration-tool}/ (stripped in prod builds)
+│           └── editor-ui/      # Dev-only Angular editor shell: editor-engine.service.ts, toolbar/, create-area-modal/, and tools/{heightmap-tool,texture-tool,road-tool,decoration-tool,walkability-tool}/ (stripped in prod builds)
 └── world/                      # Gitignored runtime/authored world data (seeded on boot; backed up via scripts/backup_world.py)
-    ├── assets/                 # Shared .glb models and terrain textures
+    ├── assets/                 # Shared reusable .glb models (catalog.json) and terrain/road textures
     └── areas/
         ├── <outside_area>/
+        │   ├── assets/         # Optional area-scoped one-off .glb props (referenced as `local:<slug>`)
         │   ├── area.bin        # AreaMetadata (Outside)
         │   └── <x>,<y>/
         │       ├── sim.bin     # TileSimData (Server authoritative)
         │       └── vis.bin     # TileVisData (Client visual)
         └── <inside_area>/
+            ├── assets/         # Optional area-scoped one-off .glb props (referenced as `local:<slug>`)
             ├── area.bin        # AreaMetadata (Inside: Generated | Ephemeral | Permanent)
             ├── sim.bin
             └── vis.bin
@@ -103,6 +105,10 @@ The world is partitioned into distinct **Areas** defined by simulation architect
   1. **Generated Instances (e.g., Dungeons / Mazes):** Assembled dynamically on-demand from modular `.glb` pieces when a player/party enters, yielding a unique layout each run; layout/props are sent to clients via `ServerMessage` (referencing HTTP(S)-served `.glb` assets) and destroyed after exit.
   2. **Ephemeral / Resetting Instances (e.g., Shops):** Fixed-layout single-unit areas that reset to their default state once all players leave.
   3. **Permanent Instances (e.g., Player Homes):** Fixed-layout persistent spaces whose modified state is saved to SQLite and restored on subsequent visits.
+- **Instancing Scope:** Orthogonal to layout lifecycle, Inside areas support three runtime grouping scopes:
+  - **Shared:** Public interiors (e.g., town shops) where concurrent visitors enter the same instance.
+  - **Solo:** Strictly single-player instances (e.g., the `cryo_prison` starting/tutorial vault) keyed per player so nobody else can enter.
+  - **Party:** Group instances (e.g., dungeons) shared by members of the same party while isolating unrelated players/parties into separate instances.
 
 ---
 
@@ -145,7 +151,7 @@ World files are serialized with `postcard` and split so the server never loads v
   - `walkable: [u64; 64]` — Shared 64×64 walkability bitmask (512 bytes) for impassable cursor feedback, optional client-side ghost path previews, and editor walkability overlays.
   - `heights: Vec<f32>` — **65 × 65** heightmap vertices (4,225 floats) so adjacent 64m tiles share border vertices without terrain seams.
   - `splat_ids: Vec<[u8; 4]>`, `splat_weights: Vec<[u8; 4]>` — **65 × 65** vertex-aligned top-4 terrain material IDs and normalized blend weights (sum = `255`).
-  - `props: Vec<PropPlacement>` — Static `.glb` prop references (`asset_id`, `position`, `rotation`, `scale`).
+  - `props: Vec<PropPlacement>` — Static `.glb` prop references (`asset_id`, `position`, `rotation`, `scale`, `cast_shadow`). Global reusable props reference `catalog.json` IDs; one-off area-specific set-pieces use `local:<slug>` and are served from `/world/areas/<area_id>/assets/<slug>.glb` without polluting the global editor palette.
   - `roads: Vec<RoadSpline>` — Per-tile spline/polyline road & path geometry (`RoadStyle::Curve` / `RoadStyle::Straight`, material, width, shoulder, and smoothed elevation profile).
 - **Inside Area Schemas:** Fixed Inside areas (`Ephemeral` / `Permanent`) store arbitrary `(width, length)` walkability/elevation grids and prop placements (with terrain heightmaps/splatmaps optional when interiors are built purely from `.glb` meshes). **Generated** Inside areas transmit their assembled layout, `.glb` piece placements, and walkability grid to the client via `ServerMessage` upon entry.
 

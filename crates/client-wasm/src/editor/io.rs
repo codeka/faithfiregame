@@ -72,7 +72,9 @@ pub(crate) fn spawn_frame_io(inner: &Rc<RefCell<EngineInner>>, batch: FrameIoBat
                 let EngineInner {
                     renderer, editor, ..
                 } = &mut *st;
-                editor.on_glb_loaded(&renderer.gl, entry.id, &bytes);
+                if let Err(e) = editor.on_glb_loaded(&renderer.gl, entry.id, &bytes) {
+                    console::error_1(&e.into());
+                }
             }
         });
     }

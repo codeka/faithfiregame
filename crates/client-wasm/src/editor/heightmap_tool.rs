@@ -98,6 +98,20 @@ impl EditorState {
             }
 
             if !touched_tiles.is_empty() {
+                for &(tx, ty) in &touched_tiles {
+                    if let Some(tile) = self.outside_tiles.get_mut(&(tx, ty)) {
+                        let ox = tx * TILE_SIZE as i32;
+                        let oz = ty * TILE_SIZE as i32;
+                        let cmin_x = (min_wx - 1 - ox).max(0) as usize;
+                        let cmax_x = (max_wx - ox).clamp(0, TILE_SIZE as i32 - 1) as usize;
+                        let cmin_z = (min_wz - 1 - oz).max(0) as usize;
+                        let cmax_z = (max_wz - oz).clamp(0, TILE_SIZE as i32 - 1) as usize;
+                        tile.vis
+                            .recompute_slope_walkability_in_rect(cmin_x, cmin_z, cmax_x, cmax_z);
+                        tile.gpu
+                            .upload_walkability(gl, |x, z| tile.vis.walkable.get(x, z));
+                    }
+                }
                 let mut refresh = HashSet::new();
                 for &(tx, ty) in &touched_tiles {
                     for dy in -1..=1 {
@@ -125,6 +139,16 @@ impl EditorState {
                 }
             }
             if changed {
+                let cmin_x = (min_wx - 1).max(0) as usize;
+                let cmax_x = max_wx.clamp(0, (w - 1).max(0)) as usize;
+                let cmin_z = (min_wz - 1).max(0) as usize;
+                let cmax_z = max_wz.clamp(0, (l - 1).max(0)) as usize;
+                inside
+                    .vis
+                    .recompute_slope_walkability_in_rect(cmin_x, cmin_z, cmax_x, cmax_z);
+                inside
+                    .gpu
+                    .upload_walkability(gl, |x, z| inside.vis.get_walkable(x, z));
                 inside.dirty = true;
                 self.refresh_inside_mesh(gl);
                 self.mark_unsaved(now_ms);

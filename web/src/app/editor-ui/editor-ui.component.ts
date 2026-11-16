@@ -13,6 +13,10 @@ import {
 } from './tools/heightmap-tool/heightmap-tool.component';
 import { ROAD_SUBMODES, RoadToolComponent } from './tools/road-tool/road-tool.component';
 import { TextureToolComponent } from './tools/texture-tool/texture-tool.component';
+import {
+  WALKABILITY_MODES,
+  WalkabilityToolComponent,
+} from './tools/walkability-tool/walkability-tool.component';
 
 const NON_TEXT_INPUT_TYPES = new Set(['range', 'checkbox', 'radio', 'button']);
 
@@ -43,6 +47,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
     TextureToolComponent,
     RoadToolComponent,
     DecorationToolComponent,
+    WalkabilityToolComponent,
     CreateAreaModalComponent,
   ],
   providers: [EditorStateService],
@@ -91,6 +96,11 @@ export class EditorUiComponent implements OnInit {
       case 'decoration': {
         const submode = DECORATION_SUBMODES[idx];
         if (submode) this.engine.setDecorationSubmode(submode.id);
+        break;
+      }
+      case 'walkability': {
+        const mode = WALKABILITY_MODES[idx];
+        if (mode) this.engine.setWalkabilityMode(mode.id);
         break;
       }
     }

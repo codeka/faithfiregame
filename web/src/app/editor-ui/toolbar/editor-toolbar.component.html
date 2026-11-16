@@ -69,6 +69,14 @@
     >
       Decoration
     </button>
+    <button
+      type="button"
+      class="btn"
+      [class.active]="state.activeTool() === 'walkability'"
+      (click)="engine.setTool('walkability')"
+    >
+      Walkability
+    </button>
   </div>
 
   <!-- Status & Save -->

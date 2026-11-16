@@ -1,0 +1,61 @@
+<div class="toolbox-title">Walkability Grid</div>
+
+<div class="tool-section">
+  <span class="section-label">Paint Mode</span>
+  <div class="option-grid">
+    @for (mode of modes; track mode.id) {
+      <button
+        type="button"
+        class="btn btn-sm"
+        [class.active]="activeMode() === mode.id"
+        (click)="engine.setWalkabilityMode(mode.id)"
+      >
+        <span class="key-hint">{{ mode.shortcut }}</span>
+        <span>{{ mode.label }}</span>
+      </button>
+    }
+  </div>
+</div>
+
+<div class="tool-section">
+  <span class="section-label">Brush</span>
+  <label class="slider-field">
+    <span class="slider-head">
+      <span>Radius</span>
+      <span>{{ state.brushRadius().toFixed(1) }} m</span>
+    </span>
+    <input
+      type="range"
+      name="walkBrushRadius"
+      min="0.5"
+      max="12"
+      step="0.5"
+      [ngModel]="state.brushRadius()"
+      (ngModelChange)="state.setBrushRadius($event)"
+    />
+  </label>
+</div>
+
+<div class="tool-section">
+  <span class="section-label">Room Blockout</span>
+  <div class="walk-actions">
+    <button
+      type="button"
+      class="btn btn-sm btn-bake"
+      (click)="engine.bakePropsToWalkability()"
+    >
+      Bake Props to Grid
+    </button>
+    <button
+      type="button"
+      class="btn btn-sm"
+      (click)="engine.resetWalkabilityToSlope()"
+    >
+      Reset to Terrain Slope
+    </button>
+  </div>
+</div>
+
+<div class="toolbox-hint">
+  1–2: Mode · Red hatch = blocked 1m cell · Overhead props (&gt;2m) stay walkable underneath.
+</div>

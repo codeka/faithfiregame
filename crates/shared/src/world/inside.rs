@@ -132,6 +132,25 @@ impl InsideVisData {
         }
     }
 
+    pub fn is_cell_slope_walkable(&self, x: usize, z: usize) -> bool {
+        let w = self.width as usize;
+        let l = self.length as usize;
+        let vw = w + 1;
+        if x >= w || z >= l {
+            return false;
+        }
+        if self.heights.len() != vw * (l + 1) {
+            return true;
+        }
+        let h00 = self.heights[z * vw + x];
+        let h10 = self.heights[z * vw + x + 1];
+        let h01 = self.heights[(z + 1) * vw + x];
+        let h11 = self.heights[(z + 1) * vw + x + 1];
+        let min_h = h00.min(h10).min(h01).min(h11);
+        let max_h = h00.max(h10).max(h01).max(h11);
+        (max_h - min_h) <= MAX_WALKABLE_SLOPE_DELTA
+    }
+
     pub fn recompute_slope_walkability(&mut self) {
         let w = self.width as usize;
         let l = self.length as usize;
@@ -141,13 +160,51 @@ impl InsideVisData {
         }
         for z in 0..l {
             for x in 0..w {
-                let h00 = self.heights[z * vw + x];
-                let h10 = self.heights[z * vw + x + 1];
-                let h01 = self.heights[(z + 1) * vw + x];
-                let h11 = self.heights[(z + 1) * vw + x + 1];
-                let min_h = h00.min(h10).min(h01).min(h11);
-                let max_h = h00.max(h10).max(h01).max(h11);
-                self.set_walkable(x, z, (max_h - min_h) <= MAX_WALKABLE_SLOPE_DELTA);
+                let ok = self.is_cell_slope_walkable(x, z);
+                self.set_walkable(x, z, ok);
+            }
+        }
+    }
+
+    pub fn recompute_slope_walkability_in_rect(
+        &mut self,
+        min_x: usize,
+        min_z: usize,
+        max_x: usize,
+        max_z: usize,
+    ) {
+        let w = self.width as usize;
+        let l = self.length as usize;
+        let vw = w + 1;
+        if w == 0 || l == 0 || self.heights.len() != vw * (l + 1) {
+            return;
+        }
+        let x1 = max_x.min(w - 1);
+        let z1 = max_z.min(l - 1);
+        if min_x > x1 || min_z > z1 {
+            return;
+        }
+        for z in min_z..=z1 {
+            for x in min_x..=x1 {
+                let ok = self.is_cell_slope_walkable(x, z);
+                self.set_walkable(x, z, ok);
+            }
+        }
+    }
+
+    /// Marks cells steeper than `MAX_WALKABLE_SLOPE_DELTA` impassable while preserving manual blockers on flat ground.
+    pub fn enforce_slope_walkability(&mut self) {
+        let w = self.width as usize;
+        let l = self.length as usize;
+        let vw = w + 1;
+        if self.heights.len() != vw * (l + 1) {
+            return;
+        }
+        for z in 0..l {
+            for x in 0..w {
+                if !self.is_cell_slope_walkable(x, z) {
+                    self.set_walkable(x, z, false);
+                }
             }
         }
     }
@@ -242,7 +299,7 @@ pub fn compute_inside_sim_from_vis(
     let l = vis.length as usize;
     let vw = w + 1;
     let mut elevation = vec![0.0; w * l];
-    let walkable = vis.walkable.clone();
+    let mut walkable = vis.walkable.clone();
 
     if vis.heights.len() == vw * (l + 1) {
         for z in 0..l {
@@ -252,6 +309,15 @@ pub fn compute_inside_sim_from_vis(
                 let h01 = vis.heights[(z + 1) * vw + x];
                 let h11 = vis.heights[(z + 1) * vw + x + 1];
                 elevation[z * w + x] = 0.25 * (h00 + h10 + h01 + h11);
+
+                let min_h = h00.min(h10).min(h01).min(h11);
+                let max_h = h00.max(h10).max(h01).max(h11);
+                if (max_h - min_h) > MAX_WALKABLE_SLOPE_DELTA {
+                    let idx = z * w + x;
+                    if let Some(word) = walkable.get_mut(idx / 64) {
+                        *word &= !(1u64 << (idx % 64));
+                    }
+                }
             }
         }
     }
@@ -328,5 +394,23 @@ mod tests {
         let v4_bytes = postcard::to_allocvec(&v4).unwrap();
         let migrated_v4 = InsideVisData::from_postcard_bytes(&v4_bytes).unwrap();
         assert!(migrated_v4.roads.is_empty());
+    }
+
+    #[test]
+    fn enforce_slope_preserves_manual_blockers_and_blocks_steep_cells() {
+        let mut vis = InsideVisData::flat_default(6, 6);
+        vis.set_walkable(2, 2, false); // Manual wall/prop blocker on flat ground
+        vis.heights[4 * 7 + 4] = 4.0; // Steep spike affecting cells (3..=4, 3..=4)
+        vis.enforce_slope_walkability();
+
+        assert!(!vis.get_walkable(2, 2), "manual blocker on flat cell must remain blocked");
+        assert!(!vis.get_walkable(4, 4), "steep slope cell must be blocked");
+        assert!(vis.get_walkable(0, 0), "untouched flat cell remains walkable");
+
+        let sim = compute_inside_sim_from_vis(&vis, None);
+        let idx_manual = 2 * 6 + 2;
+        let idx_steep = 4 * 6 + 4;
+        assert_eq!((sim.walkable[idx_manual / 64] >> (idx_manual % 64)) & 1, 0);
+        assert_eq!((sim.walkable[idx_steep / 64] >> (idx_steep % 64)) & 1, 0);
     }
 }
