@@ -5,7 +5,6 @@ use shared::world::PropPlacement;
 use crate::camera::Camera;
 
 use super::gizmo_mesh::GizmoMeshGpu;
-use super::procedural_textures::create_terrain_texture_array;
 use super::prop_mesh::{PropMeshGpu, create_selection_ring_mesh, prop_model_matrix};
 use super::road_mesh::RoadMeshGpu;
 use super::road_textures::create_road_texture_array;
@@ -15,6 +14,10 @@ use super::shaders::{
 };
 use super::shadow_map::{ShadowMapGpu, compute_light_space_matrix, sun_direction};
 use super::terrain_mesh::{BrushOverlay, TerrainMeshGpu};
+use super::terrain_textures::{
+    TerrainLayerImage, create_placeholder_terrain_texture_array,
+    create_terrain_texture_array_from_images,
+};
 
 pub struct Renderer {
     pub gl: glow::Context,
@@ -51,7 +54,7 @@ impl Renderer {
         let line_prog = compile_program(&gl, LINE_VERT, LINE_FRAG)?;
         let road_prog = compile_program(&gl, ROAD_VERT, ROAD_FRAG)?;
         let gizmo_prog = compile_program(&gl, GIZMO_VERT, GIZMO_FRAG)?;
-        let tex_array = create_terrain_texture_array(&gl)?;
+        let tex_array = create_placeholder_terrain_texture_array(&gl)?;
         let road_tex_array = create_road_texture_array(&gl)?;
         let (ring_vao, ring_vert_count) = create_selection_ring_mesh(&gl)?;
         let (dyn_line_vao, dyn_line_vbo) = unsafe {
@@ -96,6 +99,15 @@ impl Renderer {
             fog_end: 240.0,
             fog_color: [0.56, 0.72, 0.86],
         })
+    }
+
+    pub fn set_terrain_textures(&mut self, images: &[TerrainLayerImage]) -> Result<(), String> {
+        let next_tex = create_terrain_texture_array_from_images(&self.gl, images)?;
+        unsafe {
+            self.gl.delete_texture(self.tex_array);
+        }
+        self.tex_array = next_tex;
+        Ok(())
     }
 
     /// Binds and clears the directional shadow depth map FBO for shadow-caster draws.

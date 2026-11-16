@@ -20,6 +20,41 @@ export interface AssetEntry {
   category: string;
 }
 
+export interface TerrainTextureEntry {
+  layer: number;
+  id: string;
+  name: string;
+  category: string;
+  albedo_path: string;
+  height_path?: string | null;
+}
+
+export interface AssetCatalog {
+  decorations?: AssetEntry[];
+  terrain_textures?: TerrainTextureEntry[];
+}
+
+export interface TextureLayerOption {
+  index: number;
+  label: string;
+  category: string;
+  swatch: string;
+  albedoPath: string | null;
+  shortcut: string;
+}
+
+export const DEFAULT_TEXTURE_LAYERS: readonly TextureLayerOption[] = [
+  { index: 0, label: 'Grass', category: 'Grass', swatch: '#4a8f3d', albedoPath: null, shortcut: '1' },
+  { index: 4, label: 'Light Grass', category: 'Grass', swatch: '#76b546', albedoPath: null, shortcut: '2' },
+  { index: 5, label: 'Dark Grass', category: 'Grass', swatch: '#2a5f32', albedoPath: null, shortcut: '3' },
+  { index: 6, label: 'Patchy Grass', category: 'Grass', swatch: '#6d7b3a', albedoPath: null, shortcut: '4' },
+  { index: 1, label: 'Dirt', category: 'Earth', swatch: '#8b623f', albedoPath: null, shortcut: '5' },
+  { index: 3, label: 'Sand', category: 'Earth', swatch: '#d7be7a', albedoPath: null, shortcut: '6' },
+  { index: 2, label: 'Rock', category: 'Stone', swatch: '#787e88', albedoPath: null, shortcut: '7' },
+  { index: 7, label: 'Cobblestone', category: 'Stone', swatch: '#72757b', albedoPath: null, shortcut: '8' },
+  { index: 8, label: 'Brick', category: 'Stone', swatch: '#9c4c3a', albedoPath: null, shortcut: '9' },
+];
+
 export interface SelectedPropInfo {
   id: number;
   assetId: string;

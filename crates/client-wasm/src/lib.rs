@@ -1,3 +1,4 @@
+mod asset_loader;
 mod camera;
 #[cfg(feature = "editor")]
 mod editor;
@@ -23,7 +24,7 @@ use crate::camera::EditorCameraController;
 use crate::camera::GameplayCameraController;
 use crate::camera::Camera;
 #[cfg(feature = "editor")]
-use crate::editor::{EditorState, io::fetch_asset_catalog};
+use crate::editor::EditorState;
 #[cfg(feature = "editor")]
 pub use crate::editor::EditorEngineHandle;
 use crate::engine::{EngineInner, step_frame};
@@ -89,8 +90,7 @@ impl EngineHandle {
 
         let listeners = attach_input_listeners(&window, &canvas, &inner)?;
 
-        #[cfg(feature = "editor")]
-        fetch_asset_catalog(&inner);
+        asset_loader::spawn_asset_catalog_load(&inner);
 
         let raf_inner = Rc::clone(&inner);
         let raf_window = window.clone();

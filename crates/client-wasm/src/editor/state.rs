@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use glam::Vec3;
 use shared::world::{
-    AreaKind, AreaMetadata, AssetEntry, InsideVisData, ROAD_MAT_COBBLESTONE, RoadStyle, TILE_SIZE,
-    TileVisData,
+    AreaKind, AreaMetadata, AssetCatalog, AssetEntry, InsideVisData, MAX_TERRAIN_MATERIALS,
+    ROAD_MAT_COBBLESTONE, RoadStyle, TERRAIN_MATERIAL_COUNT, TILE_SIZE, TileVisData,
 };
 
 use crate::camera::{Camera, EditorCameraController};
@@ -35,6 +35,7 @@ pub struct EditorState {
     pub brush_radius: f32,
     pub brush_strength: f32,
     pub texture_layer: usize,
+    pub max_texture_layer: usize,
 
     pub road_submode: RoadSubMode,
     pub road_style: RoadStyle,
@@ -98,6 +99,7 @@ impl EditorState {
             brush_radius: 4.5,
             brush_strength: 3.5,
             texture_layer: 1, // Default brush paints Dirt so clicking immediately shows contrast on Grass
+            max_texture_layer: TERRAIN_MATERIAL_COUNT - 1,
             road_submode: RoadSubMode::Place,
             road_style: RoadStyle::Curve,
             road_material: ROAD_MAT_COBBLESTONE,
@@ -193,19 +195,29 @@ impl EditorState {
         self.active_area = meta;
     }
 
-    pub fn set_catalog(&mut self, entries: Vec<AssetEntry>) {
+    pub fn set_catalog(&mut self, catalog: &AssetCatalog) {
+        let entries = &catalog.decorations;
         if let Some(first) = entries.first() {
             if !entries.iter().any(|e| e.id == self.active_asset_id) {
                 self.active_asset_id = first.id.clone();
             }
         }
-        for entry in &entries {
+        for entry in entries {
             if !self.prop_meshes.contains_key(&entry.id) && self.requested_assets.insert(entry.id.clone())
             {
                 self.pending_asset_fetches.push(entry.clone());
             }
         }
-        self.catalog = entries;
+        self.catalog = entries.clone();
+
+        self.max_texture_layer = catalog
+            .terrain_textures
+            .iter()
+            .map(|t| t.layer as usize)
+            .filter(|&l| l < MAX_TERRAIN_MATERIALS)
+            .max()
+            .unwrap_or(TERRAIN_MATERIAL_COUNT - 1);
+        self.texture_layer = self.texture_layer.min(self.max_texture_layer);
     }
 
     pub fn on_glb_loaded(&mut self, gl: &glow::Context, asset_id: String, bytes: &[u8]) {

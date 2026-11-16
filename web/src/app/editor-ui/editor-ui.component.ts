@@ -12,10 +12,7 @@ import {
   HeightmapToolComponent,
 } from './tools/heightmap-tool/heightmap-tool.component';
 import { ROAD_SUBMODES, RoadToolComponent } from './tools/road-tool/road-tool.component';
-import {
-  TEXTURE_LAYERS,
-  TextureToolComponent,
-} from './tools/texture-tool/texture-tool.component';
+import { TextureToolComponent } from './tools/texture-tool/texture-tool.component';
 
 const NON_TEXT_INPUT_TYPES = new Set(['range', 'checkbox', 'radio', 'button']);
 
@@ -82,7 +79,7 @@ export class EditorUiComponent implements OnInit {
         break;
       }
       case 'texture': {
-        const layer = TEXTURE_LAYERS[idx];
+        const layer = this.state.terrainTextureLayers()[idx];
         if (layer) this.engine.setTextureLayer(layer.index);
         break;
       }

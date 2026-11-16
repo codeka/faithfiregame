@@ -107,7 +107,7 @@ out vec4 frag_color;
 "#,
     shadow_sampler_glsl!(),
     r#"
-const int MAT_COUNT = 9;
+const int MAT_COUNT = 16;
 const float HEIGHT_STRENGTH = 0.85;
 const float BLEND_DEPTH = 0.15;
 
@@ -481,7 +481,7 @@ mod tests {
     fn terrain_shader_material_count_matches_shared_constant() {
         let expected = format!(
             "const int MAT_COUNT = {};",
-            shared::world::TERRAIN_MATERIAL_COUNT
+            shared::world::MAX_TERRAIN_MATERIALS
         );
         assert!(
             TERRAIN_FRAG.contains(&expected),

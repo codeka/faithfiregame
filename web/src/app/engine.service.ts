@@ -19,7 +19,7 @@ export class EngineService implements OnDestroy {
     }
     this.initializing = true;
     try {
-      await init({ module_or_path: '/wasm/client_wasm_bg.wasm' });
+      await init({ module_or_path: fetch('/wasm/client_wasm_bg.wasm', { cache: 'no-cache' }) });
       this.handle = new EngineHandle(canvas);
       this.ready.set(true);
     } catch (err) {

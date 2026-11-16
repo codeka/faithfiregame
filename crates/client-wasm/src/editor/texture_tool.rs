@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use shared::world::{AreaKind, TERRAIN_MATERIAL_COUNT, TILE_SIZE, TILE_VERTICES, blend_splat_sample};
+use shared::world::{AreaKind, MAX_TERRAIN_MATERIALS, TILE_SIZE, TILE_VERTICES, blend_splat_sample};
 
 use crate::input::InputState;
 
@@ -27,7 +27,10 @@ impl EditorState {
         let min_wz = (hit.z - r).floor() as i32;
         let max_wz = (hit.z + r).ceil() as i32;
         let strength = (self.brush_strength * 0.45 * dt).clamp(0.02, 0.85);
-        let target_mat = self.texture_layer.min(TERRAIN_MATERIAL_COUNT - 1) as u8;
+        let target_mat = self
+            .texture_layer
+            .min(self.max_texture_layer)
+            .min(MAX_TERRAIN_MATERIALS - 1) as u8;
 
         // Precompute new vertex splats in world grid coordinates so shared tile borders stay 100% locked.
         let mut updates: Vec<(i32, i32, [u8; 4], [u8; 4])> = Vec::new();

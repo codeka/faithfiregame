@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 
 pub const TERRAIN_MATERIAL_COUNT: usize = 9;
+pub const MAX_TERRAIN_MATERIALS: usize = 16;
 
 pub const MAT_GRASS: u8 = 0;
 pub const MAT_DIRT: u8 = 1;

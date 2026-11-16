@@ -1,12 +1,13 @@
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{Request, RequestInit, RequestMode, Response};
+use web_sys::{Request, RequestCache, RequestInit, RequestMode, Response};
 
 pub async fn http_get_bytes(url: &str) -> Result<(u16, Vec<u8>), String> {
     let window = web_sys::window().ok_or_else(|| "no window".to_owned())?;
     let opts = RequestInit::new();
     opts.set_method("GET");
     opts.set_mode(RequestMode::SameOrigin);
+    opts.set_cache(RequestCache::NoCache);
     let req = Request::new_with_str_and_init(url, &opts).map_err(|e| format!("{e:?}"))?;
     let resp_val = JsFuture::from(window.fetch_with_request(&req))
         .await
@@ -23,6 +24,7 @@ pub async fn http_get_bytes(url: &str) -> Result<(u16, Vec<u8>), String> {
     Ok((status, arr.to_vec()))
 }
 
+#[cfg(feature = "editor")]
 pub async fn http_put_bytes(url: &str, bytes: &[u8]) -> Result<u16, String> {
     let window = web_sys::window().ok_or_else(|| "no window".to_owned())?;
     let opts = RequestInit::new();

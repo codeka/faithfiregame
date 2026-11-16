@@ -109,3 +109,53 @@ pub struct AssetEntry {
     pub path: String,
     pub category: String,
 }
+
+/// Catalog entry for a terrain splat material texture pair served over HTTP(S).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerrainTextureEntry {
+    pub layer: u8,
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub albedo_path: String,
+    #[serde(default)]
+    pub height_path: Option<String>,
+}
+
+/// Unified asset catalog served from `/world/assets/catalog.json`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "AssetCatalogWire")]
+pub struct AssetCatalog {
+    pub decorations: Vec<AssetEntry>,
+    pub terrain_textures: Vec<TerrainTextureEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AssetCatalogWire {
+    Structured {
+        #[serde(default)]
+        decorations: Vec<AssetEntry>,
+        #[serde(default)]
+        terrain_textures: Vec<TerrainTextureEntry>,
+    },
+    LegacyDecorations(Vec<AssetEntry>),
+}
+
+impl From<AssetCatalogWire> for AssetCatalog {
+    fn from(wire: AssetCatalogWire) -> Self {
+        match wire {
+            AssetCatalogWire::Structured {
+                decorations,
+                terrain_textures,
+            } => Self {
+                decorations,
+                terrain_textures,
+            },
+            AssetCatalogWire::LegacyDecorations(decorations) => Self {
+                decorations,
+                terrain_textures: Vec::new(),
+            },
+        }
+    }
+}

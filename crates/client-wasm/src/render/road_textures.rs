@@ -1,7 +1,82 @@
 use glow::HasContext;
 use shared::world::ROAD_MATERIAL_COUNT;
 
-use super::procedural_textures::{fbm_tileable, hash2, lerp_rgb, smoothstep, tileable_noise, wrap_voronoi};
+fn hash2(x: i32, y: i32) -> f32 {
+    let n = (x.wrapping_mul(374761393) ^ y.wrapping_mul(668265263)).wrapping_mul(1274126177);
+    ((n ^ (n >> 13)) as u32 & 0xFFFF) as f32 / 65535.0
+}
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn lerp_rgb(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
+}
+
+fn tileable_noise(u: f32, v: f32, period: i32) -> f32 {
+    let x = u * period as f32;
+    let y = v * period as f32;
+    let x0 = x.floor() as i32;
+    let y0 = y.floor() as i32;
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let sx = fx * fx * (3.0 - 2.0 * fx);
+    let sy = fy * fy * (3.0 - 2.0 * fy);
+
+    let wrap = |val: i32| val.rem_euclid(period);
+    let n00 = hash2(wrap(x0), wrap(y0));
+    let n10 = hash2(wrap(x0 + 1), wrap(y0));
+    let n01 = hash2(wrap(x0), wrap(y0 + 1));
+    let n11 = hash2(wrap(x0 + 1), wrap(y0 + 1));
+
+    let nx0 = n00 + (n10 - n00) * sx;
+    let nx1 = n01 + (n11 - n01) * sx;
+    nx0 + (nx1 - nx0) * sy
+}
+
+fn fbm_tileable(u: f32, v: f32) -> f32 {
+    0.55 * tileable_noise(u, v, 8)
+        + 0.30 * tileable_noise(u, v, 16)
+        + 0.15 * tileable_noise(u, v, 32)
+}
+
+fn wrap_voronoi(u: f32, v: f32, cells: i32) -> (f32, f32, i32, i32) {
+    let px = u * cells as f32;
+    let py = v * cells as f32;
+    let gx = px.floor() as i32;
+    let gy = py.floor() as i32;
+
+    let mut d1 = f32::MAX;
+    let mut d2 = f32::MAX;
+    let mut id1 = (0, 0);
+
+    for oy in -1..=1 {
+        for ox in -1..=1 {
+            let cx = gx + ox;
+            let cy = gy + oy;
+            let wx = cx.rem_euclid(cells);
+            let wy = cy.rem_euclid(cells);
+            let jx = cx as f32 + 0.18 + 0.64 * hash2(wx, wy);
+            let jy = cy as f32 + 0.18 + 0.64 * hash2(wx + 71, wy + 137);
+            let dist = ((px - jx).powi(2) + (py - jy).powi(2)).sqrt();
+            if dist < d1 {
+                d2 = d1;
+                d1 = dist;
+                id1 = (wx, wy);
+            } else if dist < d2 {
+                d2 = dist;
+            }
+        }
+    }
+
+    (d1, d2, id1.0, id1.1)
+}
 
 fn stone_curb_rgb(u: f32, v: f32, curb_w: f32, blocks_per_v: f32, fine: f32, warm: [f32; 3]) -> [f32; 3] {
     let side = if u < 0.5 { 0 } else { 1 };

@@ -2,27 +2,30 @@ use std::fs;
 use std::path::Path;
 
 use shared::world::{
-    AreaKind, AreaMetadata, AssetEntry, InsideKind, InsideVisData, MAT_COBBLESTONE, MAT_DIRT,
-    PropPlacement, TILE_VERTICES, TileVisData, blend_splat_sample, compute_inside_sim_from_vis,
-    compute_sim_from_vis,
+    AreaKind, AreaMetadata, AssetCatalog, AssetEntry, InsideKind, InsideVisData, MAT_COBBLESTONE,
+    MAT_DIRT, PropPlacement, TILE_VERTICES, TerrainTextureEntry, TileVisData, blend_splat_sample,
+    compute_inside_sim_from_vis, compute_sim_from_vis,
 };
 
 use super::decorations::starter_decoration_assets;
+use super::terrain_textures::starter_terrain_textures;
 
-/// Ensures starter `.glb` decoration assets, `catalog.json`, and default `main` / `village_shop` areas exist.
+/// Ensures starter `.glb` decorations, terrain `.png` textures, `catalog.json`, and default `main` / `village_shop` areas exist.
 pub fn ensure_world_seeded(world_dir: &Path) -> anyhow::Result<()> {
     let dec_dir = world_dir.join("assets").join("decorations");
     fs::create_dir_all(&dec_dir)?;
+    let tex_dir = world_dir.join("assets").join("terrain");
+    fs::create_dir_all(&tex_dir)?;
 
     let assets = starter_decoration_assets();
-    let mut catalog = Vec::with_capacity(assets.len());
+    let mut starter_decorations = Vec::with_capacity(assets.len());
     for (id, name, category, glb_bytes) in assets {
         let filename = format!("{id}.glb");
         let glb_path = dec_dir.join(&filename);
         if !glb_path.exists() {
             fs::write(&glb_path, glb_bytes)?;
         }
-        catalog.push(AssetEntry {
+        starter_decorations.push(AssetEntry {
             id: id.to_owned(),
             name: name.to_owned(),
             path: format!("/world/assets/decorations/{filename}"),
@@ -30,21 +33,64 @@ pub fn ensure_world_seeded(world_dir: &Path) -> anyhow::Result<()> {
         });
     }
 
+    let terrains = starter_terrain_textures()?;
+    let mut starter_terrain = Vec::with_capacity(terrains.len());
+    for tex in terrains {
+        let albedo_name = format!("{}.png", tex.id);
+        let height_name = format!("{}_height.png", tex.id);
+        let albedo_file = tex_dir.join(&albedo_name);
+        let height_file = tex_dir.join(&height_name);
+        if !albedo_file.exists() {
+            fs::write(&albedo_file, tex.albedo_png)?;
+        }
+        if !height_file.exists() {
+            fs::write(&height_file, tex.height_png)?;
+        }
+        starter_terrain.push(TerrainTextureEntry {
+            layer: tex.layer,
+            id: tex.id.to_owned(),
+            name: tex.name.to_owned(),
+            category: tex.category.to_owned(),
+            albedo_path: format!("/world/assets/terrain/{albedo_name}"),
+            height_path: Some(format!("/world/assets/terrain/{height_name}")),
+        });
+    }
+
     let catalog_path = world_dir.join("assets").join("catalog.json");
     if catalog_path.exists() {
         let raw = fs::read(&catalog_path)?;
-        let mut existing: Vec<AssetEntry> = serde_json::from_slice(&raw)?;
-        let mut added = false;
-        for entry in catalog {
-            if !existing.iter().any(|e| e.id == entry.id) {
-                existing.push(entry);
-                added = true;
+        let is_legacy_array = raw
+            .iter()
+            .copied()
+            .find(|b| !b.is_ascii_whitespace())
+            == Some(b'[');
+        let mut existing: AssetCatalog = serde_json::from_slice(&raw)?;
+        let mut modified = is_legacy_array;
+
+        for entry in starter_decorations {
+            if !existing.decorations.iter().any(|e| e.id == entry.id) {
+                existing.decorations.push(entry);
+                modified = true;
             }
         }
-        if added {
+        for entry in starter_terrain {
+            if !existing
+                .terrain_textures
+                .iter()
+                .any(|e| e.layer == entry.layer || e.id == entry.id)
+            {
+                existing.terrain_textures.push(entry);
+                modified = true;
+            }
+        }
+        if modified {
             fs::write(&catalog_path, serde_json::to_vec_pretty(&existing)?)?;
         }
     } else {
+        let catalog = AssetCatalog {
+            decorations: starter_decorations,
+            terrain_textures: starter_terrain,
+        };
         fs::write(&catalog_path, serde_json::to_vec_pretty(&catalog)?)?;
     }
 
@@ -212,6 +258,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn asset_catalog_deserializes_legacy_array_and_structured_object() {
+        let legacy_json = r#"[
+            { "id": "pine_tree", "name": "Pine Tree", "path": "/world/assets/decorations/pine_tree.glb", "category": "Nature" }
+        ]"#;
+        let legacy: AssetCatalog = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(legacy.decorations.len(), 1);
+        assert_eq!(legacy.decorations[0].id, "pine_tree");
+        assert!(legacy.terrain_textures.is_empty());
+
+        let structured = AssetCatalog {
+            decorations: legacy.decorations,
+            terrain_textures: vec![TerrainTextureEntry {
+                layer: 0,
+                id: "grass".to_owned(),
+                name: "Grass".to_owned(),
+                category: "Grass".to_owned(),
+                albedo_path: "/world/assets/terrain/grass.png".to_owned(),
+                height_path: Some("/world/assets/terrain/grass_height.png".to_owned()),
+            }],
+        };
+        let encoded = serde_json::to_string(&structured).unwrap();
+        let decoded: AssetCatalog = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, structured);
+    }
+
+    #[test]
     fn ensure_world_seeded_merges_missing_starters_preserving_custom_entries() {
         let unique = format!(
             "ff_seed_merge_test_{}_{}",
@@ -250,12 +322,42 @@ mod tests {
 
         ensure_world_seeded(&root).unwrap();
 
-        let merged: Vec<AssetEntry> =
-            serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
-        assert_eq!(merged.len(), 15);
-        assert!(merged.iter().any(|e| e.id == "custom_altar"));
-        assert!(merged.iter().any(|e| e.id == "cliff_wall"));
-        assert!(merged.iter().any(|e| e.id == "rock_scree"));
+        let raw = fs::read(&catalog_path).unwrap();
+        let first_non_ws = raw.iter().copied().find(|b| !b.is_ascii_whitespace());
+        assert_eq!(first_non_ws, Some(b'{'));
+        let mut merged: AssetCatalog = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(merged.decorations.len(), 15);
+        assert!(merged.decorations.iter().any(|e| e.id == "custom_altar"));
+        assert!(merged.decorations.iter().any(|e| e.id == "cliff_wall"));
+        assert!(merged.decorations.iter().any(|e| e.id == "rock_scree"));
+
+        assert_eq!(merged.terrain_textures.len(), 9);
+        let terrain_dir = assets_dir.join("terrain");
+        for entry in &merged.terrain_textures {
+            assert!(terrain_dir.join(format!("{}.png", entry.id)).exists());
+            assert!(terrain_dir.join(format!("{}_height.png", entry.id)).exists());
+        }
+
+        // Simulate artist replacing grass.png and adding a custom terrain layer in catalog.json
+        let custom_png = b"ARTIST_CUSTOM_GRASS_PNG".to_vec();
+        let grass_path = terrain_dir.join("grass.png");
+        fs::write(&grass_path, &custom_png).unwrap();
+        merged.terrain_textures.push(TerrainTextureEntry {
+            layer: 9,
+            id: "snow".to_owned(),
+            name: "Snow".to_owned(),
+            category: "Earth".to_owned(),
+            albedo_path: "/world/assets/terrain/snow.png".to_owned(),
+            height_path: None,
+        });
+        fs::write(&catalog_path, serde_json::to_vec_pretty(&merged).unwrap()).unwrap();
+
+        ensure_world_seeded(&root).unwrap();
+
+        assert_eq!(fs::read(&grass_path).unwrap(), custom_png);
+        let after: AssetCatalog = serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
+        assert_eq!(after.terrain_textures.len(), 10);
+        assert!(after.terrain_textures.iter().any(|t| t.layer == 9 && t.id == "snow"));
 
         let _ = fs::remove_dir_all(&root);
     }

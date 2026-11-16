@@ -524,4 +524,81 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     expect(deleteRoadNodeCalls).toBe(1);
     expect(deleteRoadCalls).toBe(1);
   });
+
+  it('loads structured catalog.json into Texture Brush layers, categories, and PNG swatches', async () => {
+    const structuredCatalog = {
+      decorations: [
+        {
+          id: 'oak_tree',
+          name: 'Oak Tree',
+          path: '/world/assets/decorations/oak_tree.glb',
+          category: 'Nature',
+        },
+      ],
+      terrain_textures: [
+        {
+          layer: 0,
+          id: 'grass',
+          name: 'Meadow Grass',
+          category: 'Grass',
+          albedo_path: '/world/assets/terrain/grass.png',
+          height_path: '/world/assets/terrain/grass_height.png',
+        },
+        {
+          layer: 7,
+          id: 'cobblestone',
+          name: 'Town Cobble',
+          category: 'Urban',
+          albedo_path: '/world/assets/terrain/cobblestone.png',
+          height_path: '/world/assets/terrain/cobblestone_height.png',
+        },
+        {
+          layer: 9,
+          id: 'snow',
+          name: 'Fresh Snow',
+          category: 'Winter',
+          albedo_path: '/world/assets/terrain/snow.png',
+          height_path: null,
+        },
+      ],
+    };
+
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(structuredCatalog), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch;
+
+    await component.state.loadCatalog();
+    statusSig.set(baseStatus('texture'));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    expect(component.state.catalog().map((d) => d.id)).toEqual(['oak_tree']);
+
+    const pills = Array.from(root.querySelectorAll('.pill-btn')).map((p) => p.textContent?.trim());
+    expect(pills).toEqual(['All', 'Grass', 'Urban', 'Winter']);
+
+    const matNames = Array.from(root.querySelectorAll('.material-btn .material-main span:last-child')).map(
+      (s) => s.textContent?.trim(),
+    );
+    expect(matNames).toEqual(['Meadow Grass', 'Town Cobble', 'Fresh Snow']);
+
+    const swatches = Array.from(root.querySelectorAll('.material-btn .swatch')) as HTMLElement[];
+    expect(swatches[0].style.backgroundImage).toContain('/world/assets/terrain/grass.png');
+    expect(swatches[1].style.backgroundImage).toContain('/world/assets/terrain/cobblestone.png');
+    expect(swatches[2].style.backgroundImage).toContain('/world/assets/terrain/snow.png');
+
+    // Shortcut '3' selects the 3rd catalog entry (layer 9: Fresh Snow)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '3' }));
+    expect(textureCalls.at(-1)).toBe(9);
+
+    // Filtering by Urban keeps only Town Cobble (layer 7)
+    (root.querySelectorAll('.pill-btn')[2] as HTMLButtonElement).click();
+    fixture.detectChanges();
+    const filteredBtns = root.querySelectorAll('.material-btn');
+    expect(filteredBtns.length).toBe(1);
+    (filteredBtns[0] as HTMLButtonElement).click();
+    expect(textureCalls.at(-1)).toBe(7);
+  });
 });

@@ -4,16 +4,16 @@
   <div class="section-head">
     <span class="section-label">Material</span>
     <span class="material-count">
-      @if (filteredTextureLayers().length === textureLayers.length) {
-        {{ textureLayers.length }}
+      @if (filteredTextureLayers().length === textureLayers().length) {
+        {{ textureLayers().length }}
       } @else {
-        {{ filteredTextureLayers().length }} / {{ textureLayers.length }}
+        {{ filteredTextureLayers().length }} / {{ textureLayers().length }}
       }
     </span>
   </div>
 
   <div class="category-pills">
-    @for (cat of categories; track cat) {
+    @for (cat of categories(); track cat) {
       <button
         type="button"
         class="pill-btn"
@@ -34,8 +34,14 @@
         (click)="engine.setTextureLayer(layer.index)"
       >
         <span class="material-main">
-          <span class="key-hint">{{ layer.shortcut }}</span>
-          <span class="swatch" [style.background]="layer.swatch"></span>
+          @if (layer.shortcut) {
+            <span class="key-hint">{{ layer.shortcut }}</span>
+          }
+          <span
+            class="swatch"
+            [style.background-color]="layer.swatch"
+            [style.background-image]="layer.albedoPath ? 'url(' + layer.albedoPath + ')' : null"
+          ></span>
           <span>{{ layer.label }}</span>
         </span>
         <span class="mat-cat">{{ layer.category }}</span>

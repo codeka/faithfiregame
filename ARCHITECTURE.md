@@ -45,7 +45,7 @@ faith-and-fire/
 │   ├── server/                 # Authoritative Rust game server
 │   │   └── src/
 │   │       ├── main.rs
-│   │       ├── seed/           # mesh_builder.rs, decorations.rs, world_seed.rs
+│   │       ├── seed/           # mesh_builder.rs, decorations.rs, terrain_textures.rs, world_seed.rs
 │   │       ├── sim/            # world.rs (10Hz loop, 3x3 hibernation), player.rs
 │   │       ├── net/            # state.rs, auth.rs, world_files.rs, ws.rs
 │   │       ├── db/             # repository.rs (Storage trait), sqlite.rs (SQLite WAL)
@@ -53,10 +53,11 @@ faith-and-fire/
 │   └── client-wasm/            # Rust WASM 3D engine & game client core
 │       └── src/
 │           ├── lib.rs          # #[wasm_bindgen] exports & Angular state bridge
+│           ├── asset_loader.rs # Fetches catalog.json and uploads terrain PNG texture layers
 │           ├── engine.rs       # EngineInner state & frame loop
 │           ├── input/          # state.rs, dom.rs (keyboard/mouse listeners)
 │           ├── camera/         # projection.rs, controller.rs, gameplay_camera.rs, editor_camera.rs
-│           ├── render/         # renderer.rs, shaders.rs, shadow_map.rs, gizmo_mesh.rs, terrain_mesh.rs, prop_mesh.rs, road_mesh.rs, procedural_textures.rs, road_textures.rs
+│           ├── render/         # renderer.rs, shaders.rs, shadow_map.rs, gizmo_mesh.rs, terrain_mesh.rs, prop_mesh.rs, road_mesh.rs, terrain_textures.rs, road_textures.rs
 │           ├── glb_loader.rs   # Binary .glb scene-graph mesh parser
 │           ├── net/            # ws_client.rs, http.rs
 │           └── editor/         # #[cfg(feature = "editor")] state.rs, types.rs, wasm_api.rs, gizmo.rs, terrain_ops.rs,

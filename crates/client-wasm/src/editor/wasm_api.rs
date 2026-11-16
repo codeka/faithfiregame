@@ -74,8 +74,12 @@ impl EditorEngineHandle {
     }
 
     pub fn set_texture_layer(&self, layer: u32) {
-        self.inner.borrow_mut().editor.texture_layer =
-            (layer as usize).min(shared::world::TERRAIN_MATERIAL_COUNT - 1);
+        let mut st = self.inner.borrow_mut();
+        let max_layer = st
+            .editor
+            .max_texture_layer
+            .min(shared::world::MAX_TERRAIN_MATERIALS - 1);
+        st.editor.texture_layer = (layer as usize).min(max_layer);
     }
 
     pub fn set_road_submode(&self, submode: &str) {

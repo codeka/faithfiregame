@@ -10,10 +10,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
+use axum::http::{HeaderValue, header};
 use axum::routing::{get, post};
 use tokio::sync::{RwLock, broadcast};
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -31,6 +33,10 @@ async fn main() -> anyhow::Result<()> {
 
     let world_dir = PathBuf::from("world");
     seed::ensure_world_seeded(&world_dir)?;
+    if std::env::args().any(|a| a == "--seed-only") {
+        info!("World seeded (--seed-only); exiting.");
+        return Ok(());
+    }
 
     let db_path = PathBuf::from("faithfire.db");
     let storage = Arc::new(SqliteStorage::open(&db_path).await?);
@@ -63,7 +69,15 @@ async fn main() -> anyhow::Result<()> {
             get(net::get_outside_vis_bin),
         )
         .route("/world/areas/{area_id}/vis.bin", get(net::get_inside_vis_bin))
-        .nest_service("/world/assets", ServeDir::new(world_dir.join("assets")));
+        .nest_service(
+            "/world/assets",
+            Router::new()
+                .fallback_service(ServeDir::new(world_dir.join("assets")))
+                .layer(SetResponseHeaderLayer::if_not_present(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("no-cache"),
+                )),
+        );
 
     #[cfg(feature = "editor")]
     let app = {

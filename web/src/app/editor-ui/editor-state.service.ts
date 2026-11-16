@@ -1,5 +1,17 @@
 import { computed, effect, inject, Injectable, signal } from '@angular/core';
-import { AreaMetadata, AssetEntry, EditorEngineService } from './editor-engine.service';
+import {
+  AreaMetadata,
+  AssetCatalog,
+  AssetEntry,
+  DEFAULT_TEXTURE_LAYERS,
+  EditorEngineService,
+  TerrainTextureEntry,
+  TextureLayerOption,
+} from './editor-engine.service';
+
+const DEFAULT_SWATCH_BY_LAYER = new Map<number, string>(
+  DEFAULT_TEXTURE_LAYERS.map((layer) => [layer.index, layer.swatch]),
+);
 
 @Injectable()
 export class EditorStateService {
@@ -7,6 +19,7 @@ export class EditorStateService {
 
   readonly areas = signal<AreaMetadata[]>([]);
   readonly catalog = signal<AssetEntry[]>([]);
+  readonly terrainCatalog = signal<TerrainTextureEntry[]>([]);
   readonly selectedAreaId = signal<string>('main');
 
   readonly brushRadius = signal<number>(4.5);
@@ -19,6 +32,33 @@ export class EditorStateService {
 
   readonly status = this.engine.status;
   readonly activeTool = computed(() => this.status()?.tool ?? 'heightmap');
+
+  readonly terrainTextureLayers = computed<readonly TextureLayerOption[]>(() => {
+    const entries = this.terrainCatalog();
+    if (entries.length === 0) {
+      return DEFAULT_TEXTURE_LAYERS;
+    }
+    return entries.map((entry, idx) => ({
+      index: entry.layer,
+      label: entry.name,
+      category: entry.category,
+      swatch: DEFAULT_SWATCH_BY_LAYER.get(entry.layer) ?? '#6b7280',
+      albedoPath: entry.albedo_path || null,
+      shortcut: idx < 9 ? String(idx + 1) : '',
+    }));
+  });
+
+  readonly textureCategories = computed<readonly string[]>(() => {
+    const seen = new Set<string>();
+    const cats: string[] = ['All'];
+    for (const layer of this.terrainTextureLayers()) {
+      if (layer.category && !seen.has(layer.category)) {
+        seen.add(layer.category);
+        cats.push(layer.category);
+      }
+    }
+    return cats;
+  });
 
   readonly assetCategories = computed<readonly string[]>(() => {
     const seen = new Set<string>();
@@ -69,7 +109,7 @@ export class EditorStateService {
 
   async loadAreas(): Promise<void> {
     try {
-      const resp = await fetch('/api/editor/areas');
+      const resp = await fetch('/api/editor/areas', { cache: 'no-cache' });
       if (resp.ok) {
         const list = (await resp.json()) as AreaMetadata[];
         this.areas.set(list);
@@ -81,16 +121,28 @@ export class EditorStateService {
 
   async loadCatalog(): Promise<void> {
     try {
-      const resp = await fetch('/world/assets/catalog.json');
+      const resp = await fetch('/world/assets/catalog.json', { cache: 'no-cache' });
       if (resp.ok) {
-        const list = (await resp.json()) as AssetEntry[];
-        this.catalog.set(list);
-        if (this.assetCategory() !== 'All' && !list.some((a) => a.category === this.assetCategory())) {
+        const raw = (await resp.json()) as AssetEntry[] | AssetCatalog;
+        const decorations = Array.isArray(raw) ? raw : (raw.decorations ?? []);
+        const terrainTextures = Array.isArray(raw) ? [] : (raw.terrain_textures ?? []);
+        this.catalog.set(decorations);
+        this.terrainCatalog.set(terrainTextures);
+        if (
+          this.assetCategory() !== 'All' &&
+          !decorations.some((a) => a.category === this.assetCategory())
+        ) {
           this.assetCategory.set('All');
         }
-        if (list.length > 0 && !list.some((a) => a.id === this.selectedAssetId())) {
-          this.selectedAssetId.set(list[0].id);
-          this.engine.setDecorationAsset(list[0].id);
+        if (decorations.length > 0 && !decorations.some((a) => a.id === this.selectedAssetId())) {
+          this.selectedAssetId.set(decorations[0].id);
+          this.engine.setDecorationAsset(decorations[0].id);
+        }
+        if (
+          this.textureCategory() !== 'All' &&
+          !this.textureCategories().includes(this.textureCategory())
+        ) {
+          this.textureCategory.set('All');
         }
       }
     } catch (e) {

@@ -1,19 +1,30 @@
 use std::f32::consts::TAU;
 
-use glow::HasContext;
-use shared::world::TERRAIN_MATERIAL_COUNT;
+use shared::world::{
+    MAT_BRICK, MAT_COBBLESTONE, MAT_DARK_GRASS, MAT_DIRT, MAT_GRASS, MAT_LIGHT_GRASS,
+    MAT_PATCHY_GRASS, MAT_ROCK, MAT_SAND, TERRAIN_MATERIAL_COUNT,
+};
 
-pub(super) fn hash2(x: i32, y: i32) -> f32 {
+pub(super) struct StarterTerrainTexture {
+    pub layer: u8,
+    pub id: &'static str,
+    pub name: &'static str,
+    pub category: &'static str,
+    pub albedo_png: Vec<u8>,
+    pub height_png: Vec<u8>,
+}
+
+fn hash2(x: i32, y: i32) -> f32 {
     let n = (x.wrapping_mul(374761393) ^ y.wrapping_mul(668265263)).wrapping_mul(1274126177);
     ((n ^ (n >> 13)) as u32 & 0xFFFF) as f32 / 65535.0
 }
 
-pub(super) fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
-pub(super) fn lerp_rgb(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+fn lerp_rgb(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     [
         a[0] + (b[0] - a[0]) * t,
         a[1] + (b[1] - a[1]) * t,
@@ -21,7 +32,7 @@ pub(super) fn lerp_rgb(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     ]
 }
 
-pub(super) fn tileable_noise_aniso(u: f32, v: f32, period_u: i32, period_v: i32) -> f32 {
+fn tileable_noise_aniso(u: f32, v: f32, period_u: i32, period_v: i32) -> f32 {
     let x = u * period_u as f32;
     let y = v * period_v as f32;
     let x0 = x.floor() as i32;
@@ -43,17 +54,17 @@ pub(super) fn tileable_noise_aniso(u: f32, v: f32, period_u: i32, period_v: i32)
     nx0 + (nx1 - nx0) * sy
 }
 
-pub(super) fn tileable_noise(u: f32, v: f32, period: i32) -> f32 {
+fn tileable_noise(u: f32, v: f32, period: i32) -> f32 {
     tileable_noise_aniso(u, v, period, period)
 }
 
-pub(super) fn fbm_tileable(u: f32, v: f32) -> f32 {
+fn fbm_tileable(u: f32, v: f32) -> f32 {
     0.55 * tileable_noise(u, v, 8)
         + 0.30 * tileable_noise(u, v, 16)
         + 0.15 * tileable_noise(u, v, 32)
 }
 
-pub(super) fn wrap_voronoi(u: f32, v: f32, cells: i32) -> (f32, f32, i32, i32) {
+fn wrap_voronoi(u: f32, v: f32, cells: i32) -> (f32, f32, i32, i32) {
     let px = u * cells as f32;
     let py = v * cells as f32;
     let gx = px.floor() as i32;
@@ -90,7 +101,8 @@ fn sample_grass_blades(u: f32, v: f32, phase_u: f32, phase_v: f32) -> f32 {
     let uu = (u + phase_u).rem_euclid(1.0);
     let vv = (v + phase_v).rem_euclid(1.0);
     let wx = (tileable_noise(uu, vv, 8) - 0.5) * 0.08;
-    let wy = (tileable_noise((uu + 0.37).rem_euclid(1.0), (vv + 0.61).rem_euclid(1.0), 8) - 0.5) * 0.08;
+    let wy =
+        (tileable_noise((uu + 0.37).rem_euclid(1.0), (vv + 0.61).rem_euclid(1.0), 8) - 0.5) * 0.08;
 
     let a1 = (2.0 * uu + vv + wx).rem_euclid(1.0);
     let b1 = (-uu + 2.0 * vv + wy).rem_euclid(1.0);
@@ -105,20 +117,18 @@ fn sample_grass_blades(u: f32, v: f32, phase_u: f32, phase_v: f32) -> f32 {
     (0.26 * tufts + 0.74 * blade).clamp(0.0, 1.0)
 }
 
-fn sample_material_rgba(layer: usize, u: f32, v: f32) -> [f32; 4] {
+fn sample_material_rgba(layer: u8, u: f32, v: f32) -> [f32; 4] {
     let n = fbm_tileable(u, v);
     let fine = tileable_noise(u, v, 64);
 
     match layer {
-        // 0: Meadow Grass
-        0 => {
+        MAT_GRASS => {
             let blades = sample_grass_blades(u, v, 0.0, 0.0);
             let lift = (n - 0.5) * 0.11 + (blades - 0.5) * 0.08 + (fine - 0.5) * 0.04;
             let h = (0.18 + 0.74 * blades + (n - 0.5) * 0.08).clamp(0.0, 1.0);
             [0.24 + lift * 0.55, 0.52 + lift, 0.18 + lift * 0.45, h]
         }
-        // 1: Earthy Dirt
-        1 => {
+        MAT_DIRT => {
             let clods = tileable_noise(u, v, 24);
             let pebbles = smoothstep(
                 0.72,
@@ -130,8 +140,7 @@ fn sample_material_rgba(layer: usize, u: f32, v: f32) -> [f32; 4] {
                 .clamp(0.0, 1.0);
             [base * 1.15, base * 0.85, base * 0.58, h]
         }
-        // 2: Slate Rock
-        2 => {
+        MAT_ROCK => {
             let strata = tileable_noise(u, (v * 4.0).rem_euclid(1.0), 8);
             let (d1, d2, id_x, id_y) = wrap_voronoi(u, v, 7);
             let fissure = smoothstep(0.02, 0.11, d2 - d1);
@@ -151,22 +160,19 @@ fn sample_material_rgba(layer: usize, u: f32, v: f32) -> [f32; 4] {
             let h = (crack_h + (shelf_h - crack_h) * fissure).clamp(0.0, 1.0);
             [s * 0.96, s * 0.98, s * 1.04, h]
         }
-        // 3: Warm Sand
-        3 => {
+        MAT_SAND => {
             let ripple_wave = (u * TAU * 4.0 + n * 2.5).sin() * 0.5 + 0.5;
             let s = 0.74 + (n - 0.5) * 0.10 + ripple_wave * 0.05 + (fine - 0.5) * 0.04;
             let h = (0.28 + 0.20 * ripple_wave + 0.10 * n + (fine - 0.5) * 0.05).clamp(0.0, 1.0);
             [s * 1.04, s * 0.95, s * 0.72, h]
         }
-        // 4: Light Grass (sunlit spring meadow)
-        4 => {
+        MAT_LIGHT_GRASS => {
             let blades = sample_grass_blades(u, v, 0.37, 0.61);
             let lift = (n - 0.5) * 0.10 + (blades - 0.5) * 0.09 + (fine - 0.5) * 0.04;
             let h = (0.20 + 0.74 * blades + (n - 0.5) * 0.08).clamp(0.0, 1.0);
             [0.39 + lift * 0.8, 0.68 + lift, 0.24 + lift * 0.55, h]
         }
-        // 5: Dark Grass (cool deep woodland turf)
-        5 => {
+        MAT_DARK_GRASS => {
             let mottle = tileable_noise(u, v, 12);
             let blades = sample_grass_blades(u, v, 0.71, 0.23);
             let shift = (n - 0.5) * 0.08
@@ -176,8 +182,7 @@ fn sample_material_rgba(layer: usize, u: f32, v: f32) -> [f32; 4] {
             let h = (0.18 + 0.68 * blades + 0.10 * mottle + (n - 0.5) * 0.06).clamp(0.0, 1.0);
             [0.14 + shift * 0.55, 0.36 + shift, 0.16 + shift * 0.65, h]
         }
-        // 6: Patchy Grass (tufted turf + exposed soil hybrid)
-        6 => {
+        MAT_PATCHY_GRASS => {
             let patch = 0.62 * tileable_noise(u, v, 6)
                 + 0.38
                     * tileable_noise(
@@ -208,8 +213,7 @@ fn sample_material_rgba(layer: usize, u: f32, v: f32) -> [f32; 4] {
                 h,
             ]
         }
-        // 7: Cobblestone (seamless Voronoi rounded stones + mortar)
-        7 => {
+        MAT_COBBLESTONE => {
             let (d1, d2, id_x, id_y) = wrap_voronoi(u, v, 10);
             let stone_mask = smoothstep(0.05, 0.13, d2 - d1);
             let crown = (1.0 - (d1 / 0.66).clamp(0.0, 1.0)).sqrt();
@@ -228,7 +232,6 @@ fn sample_material_rgba(layer: usize, u: f32, v: f32) -> [f32; 4] {
             let h = (mortar_h + (stone_h - mortar_h) * stone_mask).clamp(0.0, 1.0);
             [rgb[0], rgb[1], rgb[2], h]
         }
-        // 8: Brick (running-bond clay/terracotta pavers)
         _ => {
             const COLS: i32 = 8;
             const ROWS: i32 = 16;
@@ -269,76 +272,82 @@ fn sample_material_rgba(layer: usize, u: f32, v: f32) -> [f32; 4] {
     }
 }
 
-pub(super) fn create_terrain_texture_array(gl: &glow::Context) -> Result<glow::Texture, String> {
-    const SIZE: usize = 256;
-    const LAYERS: usize = TERRAIN_MATERIAL_COUNT;
-    let mut pixels = vec![0u8; SIZE * SIZE * LAYERS * 4];
+fn encode_png(
+    width: u32,
+    height: u32,
+    color: png::ColorType,
+    data: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(color);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(data)?;
+    }
+    Ok(out)
+}
 
-    for layer in 0..LAYERS {
+const STARTER_SPECS: [(u8, &str, &str, &str); TERRAIN_MATERIAL_COUNT] = [
+    (MAT_GRASS, "grass", "Grass", "Grass"),
+    (MAT_LIGHT_GRASS, "light_grass", "Light Grass", "Grass"),
+    (MAT_DARK_GRASS, "dark_grass", "Dark Grass", "Grass"),
+    (MAT_PATCHY_GRASS, "patchy_grass", "Patchy Grass", "Grass"),
+    (MAT_DIRT, "dirt", "Dirt", "Earth"),
+    (MAT_SAND, "sand", "Sand", "Earth"),
+    (MAT_ROCK, "rock", "Rock", "Stone"),
+    (MAT_COBBLESTONE, "cobblestone", "Cobblestone", "Stone"),
+    (MAT_BRICK, "brick", "Brick", "Stone"),
+];
+
+pub(super) fn starter_terrain_textures() -> anyhow::Result<Vec<StarterTerrainTexture>> {
+    const SIZE: usize = 256;
+    let mut out = Vec::with_capacity(STARTER_SPECS.len());
+
+    for &(layer, id, name, category) in &STARTER_SPECS {
+        let mut rgb = vec![0u8; SIZE * SIZE * 3];
+        let mut height = vec![0u8; SIZE * SIZE];
+
         for y in 0..SIZE {
             for x in 0..SIZE {
                 let u = x as f32 / SIZE as f32;
                 let v = y as f32 / SIZE as f32;
                 let rgba = sample_material_rgba(layer, u, v);
-
-                let idx = ((layer * SIZE * SIZE) + y * SIZE + x) * 4;
-                pixels[idx] = (rgba[0].clamp(0.0, 1.0) * 255.0).round() as u8;
-                pixels[idx + 1] = (rgba[1].clamp(0.0, 1.0) * 255.0).round() as u8;
-                pixels[idx + 2] = (rgba[2].clamp(0.0, 1.0) * 255.0).round() as u8;
-                pixels[idx + 3] = (rgba[3].clamp(0.0, 1.0) * 255.0).round() as u8;
+                let pixel = y * SIZE + x;
+                rgb[pixel * 3] = (rgba[0].clamp(0.0, 1.0) * 255.0).round() as u8;
+                rgb[pixel * 3 + 1] = (rgba[1].clamp(0.0, 1.0) * 255.0).round() as u8;
+                rgb[pixel * 3 + 2] = (rgba[2].clamp(0.0, 1.0) * 255.0).round() as u8;
+                height[pixel] = (rgba[3].clamp(0.0, 1.0) * 255.0).round() as u8;
             }
         }
+
+        let albedo_png = encode_png(SIZE as u32, SIZE as u32, png::ColorType::Rgb, &rgb)?;
+        let height_png =
+            encode_png(SIZE as u32, SIZE as u32, png::ColorType::Grayscale, &height)?;
+        out.push(StarterTerrainTexture {
+            layer,
+            id,
+            name,
+            category,
+            albedo_png,
+            height_png,
+        });
     }
 
-    unsafe {
-        let tex = gl.create_texture()?;
-        gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(tex));
-        // NOTE: glow 0.16.0's web_sys `tex_image_3d` swaps `border` and `depth`.
-        // Use immutable `tex_storage_3d` + `tex_sub_image_3d`, whose parameters are ordered properly.
-        let mip_levels = (SIZE.ilog2() + 1) as i32;
-        gl.tex_storage_3d(
-            glow::TEXTURE_2D_ARRAY,
-            mip_levels,
-            glow::RGBA8,
-            SIZE as i32,
-            SIZE as i32,
-            LAYERS as i32,
-        );
-        gl.tex_sub_image_3d(
-            glow::TEXTURE_2D_ARRAY,
-            0,
-            0,
-            0,
-            0,
-            SIZE as i32,
-            SIZE as i32,
-            LAYERS as i32,
-            glow::RGBA,
-            glow::UNSIGNED_BYTE,
-            glow::PixelUnpackData::Slice(Some(&pixels)),
-        );
-        gl.generate_mipmap(glow::TEXTURE_2D_ARRAY);
-        gl.tex_parameter_i32(
-            glow::TEXTURE_2D_ARRAY,
-            glow::TEXTURE_MIN_FILTER,
-            glow::LINEAR_MIPMAP_LINEAR as i32,
-        );
-        gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_WRAP_S, glow::REPEAT as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_WRAP_T, glow::REPEAT as i32);
-        gl.bind_texture(glow::TEXTURE_2D_ARRAY, None);
-        Ok(tex)
-    }
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::io::Cursor;
+
     use super::*;
-    use shared::world::{MAT_BRICK, MAT_COBBLESTONE, MAT_DARK_GRASS, MAT_DIRT, MAT_GRASS, MAT_LIGHT_GRASS, MAT_SAND};
 
     #[test]
     fn all_terrain_materials_are_valid_and_tile_seamlessly() {
-        for layer in 0..TERRAIN_MATERIAL_COUNT {
+        for layer in 0..TERRAIN_MATERIAL_COUNT as u8 {
             for i in 0..32 {
                 let t = i as f32 / 32.0;
                 let a = sample_material_rgba(layer, 0.0, t);
@@ -384,7 +393,7 @@ mod tests {
                 for x in 0..64 {
                     let u = x as f32 / 64.0;
                     let v = y as f32 / 64.0;
-                    let h = sample_material_rgba(layer, u, v)[3];
+                    let h = sample_material_rgba(layer as u8, u, v)[3];
                     if h < min_h[layer] {
                         min_h[layer] = h;
                         min_pt[layer] = (u, v);
@@ -398,44 +407,108 @@ mod tests {
         }
 
         for layer in [MAT_COBBLESTONE as usize, MAT_BRICK as usize] {
-            assert!(min_h[layer] < 0.16, "layer {layer} mortar too shallow: {}", min_h[layer]);
-            assert!(max_h[layer] > 0.82, "layer {layer} crown/face too low: {}", max_h[layer]);
+            assert!(
+                min_h[layer] < 0.16,
+                "layer {layer} mortar too shallow: {}",
+                min_h[layer]
+            );
+            assert!(
+                max_h[layer] > 0.82,
+                "layer {layer} crown/face too low: {}",
+                max_h[layer]
+            );
         }
-        for layer in [MAT_GRASS as usize, MAT_LIGHT_GRASS as usize, MAT_DARK_GRASS as usize] {
-            assert!(min_h[layer] < 0.30, "layer {layer} gaps too high: {}", min_h[layer]);
-            assert!(max_h[layer] > 0.84, "layer {layer} blades too low: {}", max_h[layer]);
+        for layer in [
+            MAT_GRASS as usize,
+            MAT_LIGHT_GRASS as usize,
+            MAT_DARK_GRASS as usize,
+        ] {
+            assert!(
+                min_h[layer] < 0.30,
+                "layer {layer} gaps too high: {}",
+                min_h[layer]
+            );
+            assert!(
+                max_h[layer] > 0.84,
+                "layer {layer} blades too low: {}",
+                max_h[layer]
+            );
         }
         for layer in [MAT_DIRT as usize, MAT_SAND as usize] {
-            assert!(min_h[layer] > 0.22, "layer {layer} floor too low: {}", min_h[layer]);
-            assert!(max_h[layer] < 0.72, "layer {layer} peaks too high: {}", max_h[layer]);
+            assert!(
+                min_h[layer] > 0.22,
+                "layer {layer} floor too low: {}",
+                min_h[layer]
+            );
+            assert!(
+                max_h[layer] < 0.72,
+                "layer {layer} peaks too high: {}",
+                max_h[layer]
+            );
         }
 
-        // Cobblestone + Dirt (w_cobble = 0.65, w_dirt = 0.35):
-        // mortar cracks receive Dirt (> 50%), while stone crowns stay 100% Cobblestone.
         let cob_crack = min_pt[MAT_COBBLESTONE as usize];
         let cob_crown = max_pt[MAT_COBBLESTONE as usize];
-        let h_cob_crack = sample_material_rgba(MAT_COBBLESTONE as usize, cob_crack.0, cob_crack.1)[3];
-        let h_dirt_crack = sample_material_rgba(MAT_DIRT as usize, cob_crack.0, cob_crack.1)[3];
+        let h_cob_crack = sample_material_rgba(MAT_COBBLESTONE, cob_crack.0, cob_crack.1)[3];
+        let h_dirt_crack = sample_material_rgba(MAT_DIRT, cob_crack.0, cob_crack.1)[3];
         let (_, dirt_in_crack) = height_blend_shares(0.65, h_cob_crack, 0.35, h_dirt_crack);
         assert!(dirt_in_crack > 0.50, "dirt share in cobble crack = {dirt_in_crack}");
 
-        let h_cob_crown = sample_material_rgba(MAT_COBBLESTONE as usize, cob_crown.0, cob_crown.1)[3];
-        let h_dirt_crown = sample_material_rgba(MAT_DIRT as usize, cob_crown.0, cob_crown.1)[3];
+        let h_cob_crown = sample_material_rgba(MAT_COBBLESTONE, cob_crown.0, cob_crown.1)[3];
+        let h_dirt_crown = sample_material_rgba(MAT_DIRT, cob_crown.0, cob_crown.1)[3];
         let (cob_on_crown, _) = height_blend_shares(0.65, h_cob_crown, 0.35, h_dirt_crown);
-        assert!((cob_on_crown - 1.0).abs() < 1e-5, "cobble share on crown = {cob_on_crown}");
+        assert!(
+            (cob_on_crown - 1.0).abs() < 1e-5,
+            "cobble share on crown = {cob_on_crown}"
+        );
 
-        // Grass + Sand (w_grass = 0.35, w_sand = 0.65):
-        // tall grass blades poke through (> 50%), while inter-blade gaps resolve to 100% Sand.
         let grass_blade = max_pt[MAT_GRASS as usize];
         let grass_gap = min_pt[MAT_GRASS as usize];
-        let h_grass_blade = sample_material_rgba(MAT_GRASS as usize, grass_blade.0, grass_blade.1)[3];
-        let h_sand_blade = sample_material_rgba(MAT_SAND as usize, grass_blade.0, grass_blade.1)[3];
+        let h_grass_blade = sample_material_rgba(MAT_GRASS, grass_blade.0, grass_blade.1)[3];
+        let h_sand_blade = sample_material_rgba(MAT_SAND, grass_blade.0, grass_blade.1)[3];
         let (grass_at_blade, _) = height_blend_shares(0.35, h_grass_blade, 0.65, h_sand_blade);
-        assert!(grass_at_blade > 0.50, "grass share at blade peak = {grass_at_blade}");
+        assert!(
+            grass_at_blade > 0.50,
+            "grass share at blade peak = {grass_at_blade}"
+        );
 
-        let h_grass_gap = sample_material_rgba(MAT_GRASS as usize, grass_gap.0, grass_gap.1)[3];
-        let h_sand_gap = sample_material_rgba(MAT_SAND as usize, grass_gap.0, grass_gap.1)[3];
+        let h_grass_gap = sample_material_rgba(MAT_GRASS, grass_gap.0, grass_gap.1)[3];
+        let h_sand_gap = sample_material_rgba(MAT_SAND, grass_gap.0, grass_gap.1)[3];
         let (_, sand_at_gap) = height_blend_shares(0.35, h_grass_gap, 0.65, h_sand_gap);
-        assert!((sand_at_gap - 1.0).abs() < 1e-5, "sand share at grass gap = {sand_at_gap}");
+        assert!(
+            (sand_at_gap - 1.0).abs() < 1e-5,
+            "sand share at grass gap = {sand_at_gap}"
+        );
+    }
+
+    #[test]
+    fn starter_terrain_textures_encode_valid_256x256_pngs() {
+        let textures = starter_terrain_textures().unwrap();
+        assert_eq!(textures.len(), TERRAIN_MATERIAL_COUNT);
+
+        let mut layers = HashSet::new();
+        let mut ids = HashSet::new();
+        for tex in textures {
+            assert!(layers.insert(tex.layer), "duplicate layer {}", tex.layer);
+            assert!(ids.insert(tex.id), "duplicate id {}", tex.id);
+
+            let dec_rgb = png::Decoder::new(Cursor::new(&tex.albedo_png));
+            let mut reader_rgb = dec_rgb.read_info().unwrap();
+            let info_rgb = reader_rgb.info();
+            assert_eq!((info_rgb.width, info_rgb.height), (256, 256));
+            assert_eq!(info_rgb.color_type, png::ColorType::Rgb);
+            let buf_len = reader_rgb.output_buffer_size().unwrap();
+            let mut buf = vec![0u8; buf_len];
+            reader_rgb.next_frame(&mut buf).unwrap();
+
+            let dec_h = png::Decoder::new(Cursor::new(&tex.height_png));
+            let mut reader_h = dec_h.read_info().unwrap();
+            let info_h = reader_h.info();
+            assert_eq!((info_h.width, info_h.height), (256, 256));
+            assert_eq!(info_h.color_type, png::ColorType::Grayscale);
+            let h_len = reader_h.output_buffer_size().unwrap();
+            let mut h_buf = vec![0u8; h_len];
+            reader_h.next_frame(&mut h_buf).unwrap();
+        }
     }
 }

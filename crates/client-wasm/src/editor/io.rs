@@ -17,17 +17,6 @@ pub(crate) struct FrameIoBatch {
     pub saves: Vec<PendingSave>,
 }
 
-pub(crate) fn fetch_asset_catalog(inner: &Rc<RefCell<EngineInner>>) {
-    let weak = Rc::clone(inner);
-    spawn_local(async move {
-        if let Ok((200, bytes)) = http_get_bytes("/world/assets/catalog.json").await {
-            if let Ok(catalog) = serde_json::from_slice::<Vec<AssetEntry>>(&bytes) {
-                weak.borrow_mut().editor.set_catalog(catalog);
-            }
-        }
-    });
-}
-
 pub(crate) fn spawn_frame_io(inner: &Rc<RefCell<EngineInner>>, batch: FrameIoBatch) {
     for (area_id, tx, ty) in batch.tile_fetches {
         let weak = Rc::clone(inner);
