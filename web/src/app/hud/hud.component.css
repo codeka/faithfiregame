@@ -128,192 +128,24 @@ h1 {
   background: rgba(255, 255, 255, 0.11);
 }
 
-/* Cryo Awakening Eye-Opening Fade */
-.wake-overlay {
+/* In-Game HUD */
+.hud-viewport {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 20;
   pointer-events: none;
-  overflow: hidden;
-  background: #05070a;
 }
 
-.wake-overlay.wake-closed {
-  opacity: 1;
-}
-
-.wake-overlay.wake-fading {
-  opacity: 0;
-  transition: opacity 350ms ease-out;
-}
-
-.wake-overlay.wake-animating {
-  background: rgba(4, 6, 10, 0.96);
-  animation: cryo-wake-scrim 3.6s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
-}
-
-.eyelid {
+.hud-slot-top-left {
   position: absolute;
-  left: -10%;
-  width: 120%;
-  height: 55%;
-  background: linear-gradient(to bottom, #030406 62%, rgba(3, 4, 6, 0));
-  opacity: 0;
-}
-
-.eyelid-bottom {
-  bottom: 0;
-  background: linear-gradient(to top, #030406 62%, rgba(3, 4, 6, 0));
-}
-
-.eyelid-top {
-  top: 0;
-}
-
-.wake-overlay.wake-animating .eyelid-top {
-  opacity: 1;
-  animation: cryo-eyelid-top 3.6s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
-}
-
-.wake-overlay.wake-animating .eyelid-bottom {
-  opacity: 1;
-  animation: cryo-eyelid-bottom 3.6s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
-}
-
-@keyframes cryo-wake-scrim {
-  0% {
-    opacity: 1;
-    backdrop-filter: blur(10px);
-  }
-  16% {
-    opacity: 0.42;
-    backdrop-filter: blur(7px);
-  }
-  28% {
-    opacity: 0.94;
-    backdrop-filter: blur(8px);
-  }
-  46% {
-    opacity: 0.24;
-    backdrop-filter: blur(4px);
-  }
-  58% {
-    opacity: 0.72;
-    backdrop-filter: blur(5px);
-  }
-  78% {
-    opacity: 0.1;
-    backdrop-filter: blur(1px);
-  }
-  100% {
-    opacity: 0;
-    backdrop-filter: blur(0px);
-  }
-}
-
-@keyframes cryo-eyelid-top {
-  0% {
-    transform: translateY(0%);
-  }
-  16% {
-    transform: translateY(-48%);
-  }
-  28% {
-    transform: translateY(-10%);
-  }
-  46% {
-    transform: translateY(-68%);
-  }
-  58% {
-    transform: translateY(-28%);
-  }
-  82% {
-    transform: translateY(-92%);
-  }
-  100% {
-    transform: translateY(-110%);
-  }
-}
-
-@keyframes cryo-eyelid-bottom {
-  0% {
-    transform: translateY(0%);
-  }
-  16% {
-    transform: translateY(48%);
-  }
-  28% {
-    transform: translateY(10%);
-  }
-  46% {
-    transform: translateY(68%);
-  }
-  58% {
-    transform: translateY(28%);
-  }
-  82% {
-    transform: translateY(92%);
-  }
-  100% {
-    transform: translateY(110%);
-  }
-}
-
-/* In-Game HUD */
-.hud-top-left {
-  position: fixed;
   top: 14px;
   left: 14px;
-  z-index: 20;
-  pointer-events: none;
 }
 
-.area-pill {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 14px;
-  border-radius: 9px;
-  background: rgba(12, 16, 23, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-}
-
-.area-name {
-  font-size: 13px;
-  font-weight: 700;
-  color: #edf2f7;
-}
-
-.controls-hint {
-  font-size: 11px;
-  color: #93a1b4;
-}
-
-.hud-top-right {
-  position: fixed;
+.hud-slot-top-right {
+  position: absolute;
   top: 14px;
   right: 14px;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  pointer-events: auto;
-}
-
-.hud-btn {
-  padding: 7px 12px;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(14, 18, 26, 0.84);
-  color: #e2e8f0;
-  font-size: 12px;
-  font-weight: 600;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.hud-btn:hover {
-  background: rgba(30, 38, 52, 0.95);
 }
 
 .error-modal {

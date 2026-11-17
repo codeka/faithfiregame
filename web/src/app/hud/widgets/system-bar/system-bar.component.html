@@ -1,0 +1,6 @@
+<nav class="system-bar" aria-label="System Controls">
+  @if (showEditor()) {
+    <a routerLink="/editor" appHudButton tone="cyan">Editor</a>
+  }
+  <button type="button" appHudButton tone="cyan" (click)="leave.emit()">Leave</button>
+</nav>

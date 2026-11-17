@@ -2,13 +2,17 @@ import { Component, effect, inject, OnDestroy, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../auth/auth.service';
 import { EngineService } from '../engine.service';
+import { WakeOverlayState } from './hud.types';
+import { AreaTelemetryComponent } from './widgets/area-telemetry/area-telemetry.component';
+import { SystemBarComponent } from './widgets/system-bar/system-bar.component';
+import { WakeOverlayComponent } from './widgets/wake-overlay/wake-overlay.component';
 
-export type WakeOverlayState = 'closed' | 'animating' | 'fading' | 'done';
+export type { WakeOverlayState } from './hud.types';
 
 @Component({
   selector: 'app-hud',
   standalone: true,
-  imports: [RouterLink],
+  imports: [RouterLink, AreaTelemetryComponent, SystemBarComponent, WakeOverlayComponent],
   templateUrl: './hud.component.html',
   styleUrl: './hud.component.css',
 })
@@ -85,20 +89,14 @@ export class HudComponent implements OnDestroy {
     await this.auth.logout();
   }
 
-  onWakeOverlayEnd(event: Event): void {
-    if (event.target === event.currentTarget) {
-      this.finishWakeOverlay();
-    }
+  finishWakeOverlay(): void {
+    this.clearWakeTimer();
+    this.wakeOverlayState.set('done');
   }
 
   private scheduleWakeComplete(delayMs: number): void {
     this.clearWakeTimer();
     this.wakeFallbackTimer = setTimeout(() => this.finishWakeOverlay(), delayMs);
-  }
-
-  private finishWakeOverlay(): void {
-    this.clearWakeTimer();
-    this.wakeOverlayState.set('done');
   }
 
   private clearWakeTimer(): void {

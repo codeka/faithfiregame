@@ -1,0 +1,141 @@
+:host {
+  display: inline-flex;
+  align-items: stretch;
+  position: relative;
+  padding: 1px;
+  border: 0;
+  background: transparent;
+  text-decoration: none;
+  cursor: pointer;
+  font-family: var(--hud-font-sans);
+  color: var(--hud-text-primary);
+  --cut-tl: 7px;
+  --cut-tr: 2px;
+  --cut-br: 7px;
+  --cut-bl: 2px;
+  transition: transform 110ms ease, opacity 140ms ease;
+}
+
+:host(:focus-visible) {
+  outline: 1px solid var(--hud-accent-bright);
+  outline-offset: 2px;
+}
+
+:host(:active:not(:disabled)) {
+  transform: translateY(1px);
+}
+
+:host(:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn-glow {
+  position: absolute;
+  inset: 2px;
+  box-shadow: var(--hud-shadow-drop), 0 0 10px var(--hud-accent-glow);
+  opacity: 0.65;
+  pointer-events: none;
+  transition: opacity 150ms ease, box-shadow 150ms ease;
+}
+
+.btn-border {
+  position: absolute;
+  inset: 0;
+  background: var(--hud-accent-border);
+  clip-path: polygon(
+    var(--cut-tl) 0%,
+    calc(100% - var(--cut-tr)) 0%,
+    100% var(--cut-tr),
+    100% calc(100% - var(--cut-br)),
+    calc(100% - var(--cut-br)) 100%,
+    var(--cut-bl) 100%,
+    0% calc(100% - var(--cut-bl)),
+    0% var(--cut-tl)
+  );
+  pointer-events: none;
+  transition: background 150ms ease;
+}
+
+.btn-flare {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 68%;
+  height: 3px;
+  background: radial-gradient(
+    ellipse at center,
+    #ffffff 0%,
+    var(--hud-accent-bright) 38%,
+    transparent 76%
+  );
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+  transition: opacity 150ms ease;
+}
+
+.btn-surface {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 13px;
+  background: var(--hud-glass-bg);
+  backdrop-filter: blur(var(--hud-glass-blur));
+  box-shadow: inset 0 0 12px var(--hud-accent-soft);
+  clip-path: polygon(
+    max(0px, calc(var(--cut-tl) - 0.5px)) 0%,
+    calc(100% - max(0px, calc(var(--cut-tr) - 0.5px))) 0%,
+    100% max(0px, calc(var(--cut-tr) - 0.5px)),
+    100% calc(100% - max(0px, calc(var(--cut-br) - 0.5px))),
+    calc(100% - max(0px, calc(var(--cut-br) - 0.5px))) 100%,
+    max(0px, calc(var(--cut-bl) - 0.5px)) 100%,
+    0% calc(100% - max(0px, calc(var(--cut-bl) - 0.5px))),
+    0% max(0px, calc(var(--cut-tl) - 0.5px))
+  );
+  transition: background 150ms ease;
+}
+
+:host([data-hud-size='sm']) .btn-surface {
+  padding: 4px 10px;
+}
+
+.btn-corner-tick {
+  width: 4px;
+  height: 4px;
+  background: var(--hud-accent);
+  box-shadow: 0 0 6px var(--hud-accent);
+  flex-shrink: 0;
+}
+
+.btn-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+:host(:hover:not(:disabled)) .btn-border,
+:host(.is-active) .btn-border {
+  background: var(--hud-accent-bright);
+}
+
+:host(:hover:not(:disabled)) .btn-surface,
+:host(.is-active) .btn-surface {
+  background: var(--hud-glass-bg-hover);
+}
+
+:host(:hover:not(:disabled)) .btn-glow,
+:host(.is-active) .btn-glow {
+  opacity: 1;
+}
+
+:host(:hover:not(:disabled)) .btn-flare,
+:host(.is-active) .btn-flare {
+  opacity: 0.9;
+}

@@ -1,0 +1,15 @@
+<app-hud-frame variant="minimal" tone="cyan" [topDots]="true" [bottomDots]="true">
+  <div class="telemetry-body">
+    <div class="telemetry-head">
+      <span class="signal-dot" aria-hidden="true"></span>
+      <span class="area-name">{{ displayAreaName() }}</span>
+      @if (coordsLabel(); as coords) {
+        <app-hud-badge tone="cyan">{{ coords }}</app-hud-badge>
+      }
+    </div>
+
+    <app-hud-divider tone="cyan" />
+
+    <span class="controls-hint">Click floor to walk · Middle-drag orbit · Scroll zoom</span>
+  </div>
+</app-hud-frame>

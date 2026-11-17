@@ -1,0 +1,57 @@
+:host {
+  display: block;
+  pointer-events: none;
+}
+
+.telemetry-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.telemetry-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.signal-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hud-accent);
+  box-shadow: 0 0 8px var(--hud-accent);
+  flex-shrink: 0;
+  animation: telemetry-pulse 2.6s ease-in-out infinite;
+}
+
+.area-name {
+  font-family: var(--hud-font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hud-text-primary);
+  text-shadow: 0 0 10px var(--hud-accent-glow);
+  line-height: 1.2;
+}
+
+.controls-hint {
+  font-family: var(--hud-font-sans);
+  font-size: 11px;
+  color: var(--hud-text-secondary);
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+@keyframes telemetry-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}

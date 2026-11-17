@@ -232,4 +232,106 @@ describe('HudComponent & LoginComponent entry flow', () => {
     expect(document.cookie).toContain(`${SESSION_COOKIE}=login-tok-7`);
     expect(navigatedTo).toBe('/');
   });
+
+  it('renders top-left area telemetry with formatted coordinates and controls hint while playing', async () => {
+    document.cookie = `${SESSION_COOKIE}=play-tok-1; Path=/`;
+    configureTestBed();
+
+    const fixture = TestBed.createComponent(HudComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    gameStatusSig.set({
+      phase: 'playing',
+      playerId: 1,
+      areaId: 'cryo_prison',
+      areaName: 'Cryo Prison',
+      playerPos: [7.4, 0, 7.4],
+      freshCryoWake: false,
+      wakeReady: true,
+      error: null,
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const host = fixture.nativeElement as HTMLElement;
+    const telemetry = host.querySelector('app-hud-area-telemetry');
+    expect(telemetry).not.toBeNull();
+    expect(telemetry?.getAttribute('data-area-id')).toBe('cryo_prison');
+    expect(telemetry?.querySelector('.area-name')?.textContent?.trim()).toBe('Cryo Prison');
+    expect(telemetry?.querySelector('app-hud-badge')?.textContent?.trim()).toBe('07 · 07');
+    expect(telemetry?.querySelector('.controls-hint')?.textContent?.trim()).toContain(
+      'Click floor to walk',
+    );
+
+    gameStatusSig.set({
+      phase: 'playing',
+      playerId: 1,
+      areaId: 'cryo_prison',
+      areaName: '',
+      playerPos: null,
+      freshCryoWake: false,
+      wakeReady: true,
+      error: null,
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(telemetry?.querySelector('.area-name')?.textContent?.trim()).toBe('Cryo Prison');
+    expect(telemetry?.querySelector('app-hud-badge')).toBeNull();
+  });
+
+  it('toggles Editor link via editorBuild signal and disconnects session on Leave click', async () => {
+    document.cookie = `${SESSION_COOKIE}=play-tok-2; Path=/`;
+    const fetchCalls: { url: string; method: string }[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: String(input), method: init?.method ?? 'GET' });
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+
+    configureTestBed();
+    const fixture = TestBed.createComponent(HudComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    gameStatusSig.set({
+      phase: 'playing',
+      playerId: 2,
+      areaId: 'cryo_prison',
+      areaName: 'Cryo Prison',
+      playerPos: [0, 0, 0],
+      freshCryoWake: false,
+      wakeReady: true,
+      error: null,
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const host = fixture.nativeElement as HTMLElement;
+    const systemBar = host.querySelector('app-hud-system-bar');
+    expect(systemBar).not.toBeNull();
+    expect(systemBar?.querySelector('a[routerLink="/editor"]')).toBeNull();
+
+    editorBuildSig.set(true);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const editorLink = systemBar?.querySelector('a[href="/editor"]');
+    expect(editorLink?.textContent?.trim()).toBe('Editor');
+
+    const leaveBtn = Array.from(systemBar?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent?.trim() === 'Leave',
+    );
+    expect(leaveBtn).toBeTruthy();
+    const landingBefore = landingCalls;
+    leaveBtn!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(landingCalls).toBeGreaterThan(landingBefore);
+    expect(fetchCalls).toEqual([{ url: '/api/auth/logout', method: 'POST' }]);
+    expect(document.cookie).not.toContain('play-tok-2');
+    expect(host.querySelector('.landing-card')).not.toBeNull();
+  });
 });

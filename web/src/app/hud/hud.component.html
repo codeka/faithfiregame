@@ -38,20 +38,7 @@
     </section>
   </main>
 } @else {
-  @if (wakeOverlayState() !== 'done') {
-    <div
-      class="wake-overlay"
-      [class.wake-closed]="wakeOverlayState() === 'closed'"
-      [class.wake-animating]="wakeOverlayState() === 'animating'"
-      [class.wake-fading]="wakeOverlayState() === 'fading'"
-      aria-hidden="true"
-      (animationend)="onWakeOverlayEnd($event)"
-      (transitionend)="onWakeOverlayEnd($event)"
-    >
-      <div class="eyelid eyelid-top"></div>
-      <div class="eyelid eyelid-bottom"></div>
-    </div>
-  }
+  <app-hud-wake-overlay [state]="wakeOverlayState()" (finished)="finishWakeOverlay()" />
 
   @if (engine.gameStatus(); as status) {
     @if (status.phase === 'error') {
@@ -63,18 +50,19 @@
         </button>
       </div>
     } @else if (status.phase === 'playing') {
-      <div class="hud-top-left">
-        <div class="area-pill">
-          <span class="area-name">{{ status.areaName || 'Cryo Prison' }}</span>
-          <span class="controls-hint">Click floor to walk · Middle-drag orbit · Scroll zoom</span>
-        </div>
-      </div>
+      <div class="hud-viewport">
+        <app-hud-area-telemetry
+          class="hud-slot-top-left"
+          [areaName]="status.areaName"
+          [areaId]="status.areaId"
+          [playerPos]="status.playerPos"
+        />
 
-      <div class="hud-top-right">
-        @if (engine.editorBuild()) {
-          <a routerLink="/editor" class="hud-btn">Editor</a>
-        }
-        <button type="button" class="hud-btn" (click)="onLeave()">Leave</button>
+        <app-hud-system-bar
+          class="hud-slot-top-right"
+          [showEditor]="engine.editorBuild()"
+          (leave)="onLeave()"
+        />
       </div>
     }
   }

@@ -1,0 +1,40 @@
+:host {
+  display: block;
+  width: 100%;
+  pointer-events: none;
+}
+
+.divider-track {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  height: 10px;
+}
+
+.divider-cap {
+  flex-shrink: 0;
+  display: block;
+}
+
+.divider-node {
+  fill: var(--hud-accent-bright);
+}
+
+.divider-line {
+  fill: none;
+  stroke: var(--hud-accent-border);
+  stroke-width: 1.2;
+}
+
+.divider-bus {
+  fill: none;
+  stroke: var(--hud-accent-bright);
+  stroke-width: 2;
+}
+
+.divider-span {
+  flex: 1;
+  height: 1px;
+  margin-top: 1.5px;
+  background: var(--hud-accent-border);
+}

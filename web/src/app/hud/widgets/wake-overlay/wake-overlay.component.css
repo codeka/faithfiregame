@@ -1,0 +1,130 @@
+/* Cryo Awakening Eye-Opening Fade */
+.wake-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  overflow: hidden;
+  background: #05070a;
+}
+
+.wake-overlay.wake-closed {
+  opacity: 1;
+}
+
+.wake-overlay.wake-fading {
+  opacity: 0;
+  transition: opacity 350ms ease-out;
+}
+
+.wake-overlay.wake-animating {
+  background: rgba(4, 6, 10, 0.96);
+  animation: cryo-wake-scrim 3.6s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+
+.eyelid {
+  position: absolute;
+  left: -10%;
+  width: 120%;
+  height: 55%;
+  background: linear-gradient(to bottom, #030406 62%, rgba(3, 4, 6, 0));
+  opacity: 0;
+}
+
+.eyelid-bottom {
+  bottom: 0;
+  background: linear-gradient(to top, #030406 62%, rgba(3, 4, 6, 0));
+}
+
+.eyelid-top {
+  top: 0;
+}
+
+.wake-overlay.wake-animating .eyelid-top {
+  opacity: 1;
+  animation: cryo-eyelid-top 3.6s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+
+.wake-overlay.wake-animating .eyelid-bottom {
+  opacity: 1;
+  animation: cryo-eyelid-bottom 3.6s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+
+@keyframes cryo-wake-scrim {
+  0% {
+    opacity: 1;
+    backdrop-filter: blur(10px);
+  }
+  16% {
+    opacity: 0.42;
+    backdrop-filter: blur(7px);
+  }
+  28% {
+    opacity: 0.94;
+    backdrop-filter: blur(8px);
+  }
+  46% {
+    opacity: 0.24;
+    backdrop-filter: blur(4px);
+  }
+  58% {
+    opacity: 0.72;
+    backdrop-filter: blur(5px);
+  }
+  78% {
+    opacity: 0.1;
+    backdrop-filter: blur(1px);
+  }
+  100% {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+}
+
+@keyframes cryo-eyelid-top {
+  0% {
+    transform: translateY(0%);
+  }
+  16% {
+    transform: translateY(-48%);
+  }
+  28% {
+    transform: translateY(-10%);
+  }
+  46% {
+    transform: translateY(-68%);
+  }
+  58% {
+    transform: translateY(-28%);
+  }
+  82% {
+    transform: translateY(-92%);
+  }
+  100% {
+    transform: translateY(-110%);
+  }
+}
+
+@keyframes cryo-eyelid-bottom {
+  0% {
+    transform: translateY(0%);
+  }
+  16% {
+    transform: translateY(48%);
+  }
+  28% {
+    transform: translateY(10%);
+  }
+  46% {
+    transform: translateY(68%);
+  }
+  58% {
+    transform: translateY(28%);
+  }
+  82% {
+    transform: translateY(92%);
+  }
+  100% {
+    transform: translateY(110%);
+  }
+}

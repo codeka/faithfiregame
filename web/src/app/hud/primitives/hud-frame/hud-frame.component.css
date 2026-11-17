@@ -1,0 +1,151 @@
+:host {
+  display: block;
+  position: relative;
+  padding: 1px;
+  --cut-tl: 8px;
+  --cut-tr: 8px;
+  --cut-br: 11px;
+  --cut-bl: 8px;
+  --hud-frame-padding: 9px 13px;
+}
+
+:host([data-hud-variant='slab']) {
+  --cut-tl: 12px;
+  --cut-tr: 18px;
+  --cut-br: 12px;
+  --cut-bl: 16px;
+}
+
+:host([data-hud-variant='console']) {
+  --cut-tl: 14px;
+  --cut-tr: 14px;
+  --cut-br: 14px;
+  --cut-bl: 14px;
+}
+
+:host([data-hud-variant='hero']) {
+  --cut-tl: 12px;
+  --cut-tr: 12px;
+  --cut-br: 12px;
+  --cut-bl: 12px;
+}
+
+:host(.has-top-dots) {
+  --hud-frame-padding: 12px 13px 9px;
+}
+
+:host(.has-bottom-dots) {
+  --hud-frame-padding: 9px 13px 12px;
+}
+
+:host(.has-top-dots.has-bottom-dots) {
+  --hud-frame-padding: 12px 13px;
+}
+
+.frame-glow {
+  position: absolute;
+  inset: 3px;
+  box-shadow: var(--hud-shadow-drop), 0 0 14px var(--hud-accent-glow);
+  pointer-events: none;
+}
+
+.frame-border {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    150deg,
+    var(--hud-accent-border-strong) 0%,
+    var(--hud-accent-border) 50%,
+    var(--hud-accent-border-strong) 100%
+  );
+  clip-path: polygon(
+    var(--cut-tl) 0%,
+    calc(100% - var(--cut-tr)) 0%,
+    100% var(--cut-tr),
+    100% calc(100% - var(--cut-br)),
+    calc(100% - var(--cut-br)) 100%,
+    var(--cut-bl) 100%,
+    0% calc(100% - var(--cut-bl)),
+    0% var(--cut-tl)
+  );
+  pointer-events: none;
+}
+
+.frame-surface {
+  position: relative;
+  padding: var(--hud-frame-padding);
+  background: var(--hud-glass-bg);
+  backdrop-filter: blur(var(--hud-glass-blur));
+  box-shadow: inset 0 0 20px var(--hud-accent-soft);
+  clip-path: polygon(
+    max(0px, calc(var(--cut-tl) - 0.5px)) 0%,
+    calc(100% - max(0px, calc(var(--cut-tr) - 0.5px))) 0%,
+    100% max(0px, calc(var(--cut-tr) - 0.5px)),
+    100% calc(100% - max(0px, calc(var(--cut-br) - 0.5px))),
+    calc(100% - max(0px, calc(var(--cut-br) - 0.5px))) 100%,
+    max(0px, calc(var(--cut-bl) - 0.5px)) 100%,
+    0% calc(100% - max(0px, calc(var(--cut-bl) - 0.5px))),
+    0% max(0px, calc(var(--cut-tl) - 0.5px))
+  );
+}
+
+.frame-flare-top {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 112px;
+  max-width: 58%;
+  height: 4px;
+  background: radial-gradient(
+    ellipse at center,
+    #ffffff 0%,
+    var(--hud-accent-bright) 34%,
+    transparent 74%
+  );
+  pointer-events: none;
+  z-index: 2;
+}
+
+.frame-edge-tr,
+.frame-edge-bl {
+  position: absolute;
+  width: 26px;
+  height: 2px;
+  background: var(--hud-accent-bright);
+  box-shadow: 0 0 8px var(--hud-accent);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.frame-edge-tr {
+  top: 0;
+  right: calc(var(--cut-tr) + 6px);
+}
+
+.frame-edge-bl {
+  bottom: 0;
+  left: calc(var(--cut-bl) + 6px);
+}
+
+.frame-dots-top,
+.frame-dots-bottom {
+  position: absolute;
+  height: 2px;
+  background-image: linear-gradient(to right, var(--hud-accent) 2px, transparent 2px);
+  background-size: 4px 2px;
+  opacity: 0.78;
+  pointer-events: none;
+}
+
+.frame-dots-top {
+  top: 4px;
+  left: 13px;
+  width: 30px;
+}
+
+.frame-dots-bottom {
+  bottom: 4px;
+  right: 15px;
+  width: 14px;
+}

@@ -1,0 +1,14 @@
+@if (state() !== 'done') {
+  <div
+    class="wake-overlay"
+    [class.wake-closed]="state() === 'closed'"
+    [class.wake-animating]="state() === 'animating'"
+    [class.wake-fading]="state() === 'fading'"
+    aria-hidden="true"
+    (animationend)="onOverlayEnd($event)"
+    (transitionend)="onOverlayEnd($event)"
+  >
+    <div class="eyelid eyelid-top"></div>
+    <div class="eyelid eyelid-bottom"></div>
+  </div>
+}

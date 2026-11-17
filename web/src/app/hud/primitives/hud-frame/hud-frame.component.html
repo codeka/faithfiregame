@@ -1,0 +1,20 @@
+<span class="frame-glow" aria-hidden="true"></span>
+<span class="frame-border" aria-hidden="true"></span>
+
+@if (topFlare()) {
+  <span class="frame-flare-top" aria-hidden="true"></span>
+}
+@if (edgeAccents()) {
+  <span class="frame-edge-tr" aria-hidden="true"></span>
+  <span class="frame-edge-bl" aria-hidden="true"></span>
+}
+
+<div class="frame-surface">
+  @if (topDots()) {
+    <span class="frame-dots-top" aria-hidden="true"></span>
+  }
+  <ng-content />
+  @if (bottomDots()) {
+    <span class="frame-dots-bottom" aria-hidden="true"></span>
+  }
+</div>
