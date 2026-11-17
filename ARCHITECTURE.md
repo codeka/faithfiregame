@@ -45,32 +45,33 @@ faith-and-fire/
 │   ├── server/                 # Authoritative Rust game server
 │   │   └── src/
 │   │       ├── main.rs
-│   │       ├── seed/           # mesh_builder.rs, decorations.rs, cryo_prison.rs, terrain_textures.rs, road_textures.rs, world_seed.rs
 │   │       ├── sim/            # world.rs (10Hz loop, 3x3 hibernation), player.rs
 │   │       ├── net/            # state.rs, auth.rs, world_files.rs, ws.rs
 │   │       ├── db/             # repository.rs (Storage trait), sqlite.rs (SQLite WAL)
-│   │       └── editor_api/     # #[cfg(feature = "editor")] areas.rs, assets.rs, save.rs
+│   │       └── editor_api/     # #[cfg(feature = "editor")] areas.rs, assets.rs, characters.rs, save.rs
 │   └── client-wasm/            # Rust WASM 3D engine & game client core
 │       └── src/
 │           ├── lib.rs          # #[wasm_bindgen] exports & Angular state bridge
 │           ├── asset_loader.rs # Fetches catalog.json and uploads terrain PNG texture layers
+│           ├── character/      # mod.rs, rig.rs, animation.rs, mesh.rs (skeletal & socket character assembly)
 │           ├── engine.rs       # EngineInner state & frame loop
 │           ├── input/          # state.rs, dom.rs (keyboard/mouse listeners)
 │           ├── camera/         # projection.rs, controller.rs, gameplay_camera.rs, editor_camera.rs
-│           ├── render/         # renderer.rs, shaders.rs, shadow_map.rs, gizmo_mesh.rs, terrain_mesh.rs, prop_mesh.rs, road_mesh.rs, terrain_textures.rs, road_textures.rs
+│           ├── render/         # renderer.rs, shaders.rs, shadow_map.rs, gizmo_mesh.rs, terrain_mesh.rs, prop_mesh.rs, road_mesh.rs, character_mesh.rs, studio_stage.rs, terrain_textures.rs, road_textures.rs
 │           ├── glb_loader.rs   # Binary .glb parser (u32 indices, UVs, embedded PNG/JPEG textures, emissive & alpha mask)
 │           ├── net/            # ws_client.rs, http.rs
 │           └── editor/         # #[cfg(feature = "editor")] state.rs, types.rs, wasm_api.rs, gizmo.rs, terrain_ops.rs,
-│                               # heightmap_tool.rs, texture_tool.rs, road_tool.rs, decoration_tool.rs, walkability_tool.rs, scene_render.rs, io.rs
+│                               # character_studio.rs, heightmap_tool.rs, texture_tool.rs, road_tool.rs, decoration_tool.rs, walkability_tool.rs, scene_render.rs, io.rs
 ├── scripts/                    # Tooling scripts (dev.py, build_wasm.py, backup_world.py)
 ├── web/                        # Angular (TypeScript) frontend shell
 │   └── src/
 │       └── app/
 │           ├── game-canvas/    # Hosts <canvas> and initializes WASM module
 │           ├── hud/            # Action bars, target frame, inventory, chat, trade modals
-│           └── editor-ui/      # Dev-only Angular editor shell: editor-engine.service.ts, toolbar/, create-area-modal/, and tools/{heightmap-tool,texture-tool,road-tool,decoration-tool,walkability-tool}/ (stripped in prod builds)
-└── world/                      # Gitignored runtime/authored world data (seeded on boot; backed up via scripts/backup_world.py)
-    ├── assets/                 # Shared reusable .glb models (catalog.json) and terrain/road textures
+│           └── editor-ui/      # Dev-only Angular editor shell: World / Characters / Entities modes (stripped in prod builds)
+└── world/                      # Gitignored runtime/authored world data (starts empty or restored from a backup via scripts/backup_world.py)
+    ├── assets/                 # Shared reusable .glb models (catalog.json), terrain/road textures, and characters/*.glb
+    ├── characters/             # Modular character catalog.json & presets/*.json
     └── areas/
         ├── <outside_area>/
         │   ├── assets/         # Optional area-scoped one-off .glb props (referenced as `local:<slug>`)

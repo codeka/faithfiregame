@@ -191,19 +191,205 @@ mod tests {
     use super::*;
     use crate::character::{evaluate_pose, parse_character_glb, parse_skeleton_glb};
 
-    fn starter_asset(name: &str) -> Vec<u8> {
+    fn world_character_asset(name: &str) -> Option<Vec<u8>> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join("server")
+            .join("..")
+            .join("world")
             .join("assets")
             .join("characters")
             .join(name);
-        std::fs::read(&path).unwrap_or_else(|e| panic!("failed reading {}: {e}", path.display()))
+        std::fs::read(&path).ok()
+    }
+
+    fn pack_test_glb(gltf_json: serde_json::Value, mut bin: Vec<u8>) -> Vec<u8> {
+        while bin.len() % 4 != 0 {
+            bin.push(0);
+        }
+        let mut json_bytes = serde_json::to_vec(&gltf_json).unwrap();
+        while json_bytes.len() % 4 != 0 {
+            json_bytes.push(b' ');
+        }
+        let total = 12 + 8 + json_bytes.len() + 8 + bin.len();
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(b"glTF");
+        out.extend_from_slice(&2u32.to_le_bytes());
+        out.extend_from_slice(&(total as u32).to_le_bytes());
+        out.extend_from_slice(&(json_bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&0x4E4F_534Au32.to_le_bytes());
+        out.extend_from_slice(&json_bytes);
+        out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+        out.extend_from_slice(&0x004E_4942u32.to_le_bytes());
+        out.extend_from_slice(&bin);
+        out
+    }
+
+    #[test]
+    fn synthetic_skeleton_glb_evaluates_bind_pose_sockets_and_animation() {
+        let mut bin = Vec::<u8>::new();
+        let push_f32s = |buf: &mut Vec<u8>, vals: &[f32]| {
+            let offset = buf.len();
+            for v in vals {
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+            (offset, buf.len() - offset)
+        };
+
+        // 0: Triangle vertex positions (3 * VEC3)
+        let (pos_off, pos_len) = push_f32s(
+            &mut bin,
+            &[0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.1, 0.9, 0.0],
+        );
+        // 1: JOINTS_0 (3 * VEC4 u8, 12 bytes)
+        let joints_off = bin.len();
+        bin.extend_from_slice(&[0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0]);
+        let joints_len = 12usize;
+        // 2: WEIGHTS_0 (3 * VEC4 f32)
+        let (weights_off, weights_len) = push_f32s(
+            &mut bin,
+            &[
+                1.0, 0.0, 0.0, 0.0, //
+                1.0, 0.0, 0.0, 0.0, //
+                1.0, 0.0, 0.0, 0.0,
+            ],
+        );
+        // 3: INDICES (3 * u16 = 6 bytes + 2 pad)
+        let idx_off = bin.len();
+        for idx in [0u16, 1, 2] {
+            bin.extend_from_slice(&idx.to_le_bytes());
+        }
+        let idx_len = 6usize;
+        while bin.len() % 4 != 0 {
+            bin.push(0);
+        }
+        // 4: Inverse bind matrices for root (0,0,0), thigh_l (0.1,0.9,0), foot_l (0.1,0.1,0)
+        let ibm_root = Mat4::IDENTITY;
+        let ibm_thigh = Mat4::from_translation(Vec3::new(-0.1, -0.9, 0.0));
+        let ibm_foot = Mat4::from_translation(Vec3::new(-0.1, -0.1, 0.0));
+        let mut ibm_floats = Vec::with_capacity(48);
+        ibm_floats.extend_from_slice(&ibm_root.to_cols_array());
+        ibm_floats.extend_from_slice(&ibm_thigh.to_cols_array());
+        ibm_floats.extend_from_slice(&ibm_foot.to_cols_array());
+        let (ibm_off, ibm_len) = push_f32s(&mut bin, &ibm_floats);
+
+        // 5 & 6: Walk keyframe times (0.0, 0.5, 1.0) and thigh_l X rotations (-45deg forward swing at 0.5)
+        let (t_off, t_len) = push_f32s(&mut bin, &[0.0, 0.5, 1.0]);
+        let q0 = Quat::IDENTITY;
+        let q_fwd = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4);
+        let (r_off, r_len) = push_f32s(
+            &mut bin,
+            &[
+                q0.x, q0.y, q0.z, q0.w, //
+                q_fwd.x, q_fwd.y, q_fwd.z, q_fwd.w, //
+                q0.x, q0.y, q0.z, q0.w,
+            ],
+        );
+
+        let doc = serde_json::json!({
+            "asset": { "version": "2.0" },
+            "scene": 0,
+            "scenes": [{ "nodes": [0, 4] }],
+            "nodes": [
+                { "name": "root", "children": [1], "translation": [0.0, 0.0, 0.0] },
+                { "name": "thigh_l", "children": [2], "translation": [0.1, 0.9, 0.0] },
+                { "name": "foot_l", "children": [3], "translation": [0.0, -0.8, 0.0] },
+                { "name": "socket_foot_l", "translation": [0.0, 0.0, 0.1] },
+                { "name": "BaseBody", "mesh": 0, "skin": 0 }
+            ],
+            "skins": [{
+                "joints": [0, 1, 2],
+                "inverseBindMatrices": 4
+            }],
+            "materials": [{
+                "name": "mat_primary",
+                "pbrMetallicRoughness": { "baseColorFactor": [0.8, 0.2, 0.2, 1.0] }
+            }],
+            "meshes": [{
+                "primitives": [{
+                    "attributes": { "POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2 },
+                    "indices": 3,
+                    "material": 0
+                }]
+            }],
+            "animations": [{
+                "name": "Walk",
+                "samplers": [{ "input": 5, "output": 6, "interpolation": "LINEAR" }],
+                "channels": [{ "sampler": 0, "target": { "node": 1, "path": "rotation" } }]
+            }],
+            "buffers": [{ "byteLength": bin.len() }],
+            "bufferViews": [
+                { "buffer": 0, "byteOffset": pos_off, "byteLength": pos_len },
+                { "buffer": 0, "byteOffset": joints_off, "byteLength": joints_len },
+                { "buffer": 0, "byteOffset": weights_off, "byteLength": weights_len },
+                { "buffer": 0, "byteOffset": idx_off, "byteLength": idx_len },
+                { "buffer": 0, "byteOffset": ibm_off, "byteLength": ibm_len },
+                { "buffer": 0, "byteOffset": t_off, "byteLength": t_len },
+                { "buffer": 0, "byteOffset": r_off, "byteLength": r_len }
+            ],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0.0, 0.0, 0.0], "max": [0.2, 0.9, 0.0] },
+                { "bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4" },
+                { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4" },
+                { "bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR" },
+                { "bufferView": 4, "componentType": 5126, "count": 3, "type": "MAT4" },
+                { "bufferView": 5, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0.0], "max": [1.0] },
+                { "bufferView": 6, "componentType": 5126, "count": 3, "type": "VEC4" }
+            ]
+        });
+
+        let glb = pack_test_glb(doc, bin);
+        let rig = parse_skeleton_glb(&glb).unwrap();
+        assert_eq!(rig.bones.len(), 3);
+        assert_eq!(rig.embedded_sockets.len(), 1);
+        assert_eq!(rig.embedded_sockets[0].name, "socket_foot_l");
+        assert_eq!(rig.embedded_sockets[0].parent_bone, "foot_l");
+        assert!(rig.base_mesh.is_some());
+        assert_eq!(rig.animations.len(), 1);
+        assert_eq!(rig.animations[0].name, "Walk");
+
+        let parsed_mesh = parse_character_glb(&glb).unwrap();
+        assert!(parsed_mesh.is_skinned);
+        assert_eq!(parsed_mesh.joint_names, vec!["root", "thigh_l", "foot_l"]);
+        assert_eq!(parsed_mesh.submeshes[0].material_name, "mat_primary");
+
+        let mut pose = SkeletonPose::from_rig(&rig);
+        evaluate_pose(&rig, None, 0.0, true, &mut pose);
+        for (i, mat_arr) in pose.skin_matrices[..3].iter().enumerate() {
+            let max_diff = mat_arr
+                .iter()
+                .zip(Mat4::IDENTITY.to_cols_array().iter())
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            assert!(max_diff < 1e-4, "bind skin matrix {i} deviated by {max_diff}");
+        }
+
+        let sock = SocketDef {
+            id: "socket_foot_l".to_owned(),
+            name: "Left Foot".to_owned(),
+            parent_bone: "foot_l".to_owned(),
+            offset: [0.0, 0.0, 0.1],
+            rotation_deg: [0.0, 0.0, 0.0],
+            scale: 1.0,
+        };
+        let bind_foot_z = pose.world_matrices[2].w_axis.z;
+        let bind_sock_pos = pose.socket_world_matrix(&rig, &sock).w_axis.truncate();
+
+        evaluate_pose(&rig, Some(&rig.animations[0]), 0.5, true, &mut pose);
+        let swing_foot_z = pose.world_matrices[2].w_axis.z;
+        let swing_sock_pos = pose.socket_world_matrix(&rig, &sock).w_axis.truncate();
+        assert!(
+            swing_foot_z > bind_foot_z + 0.4,
+            "expected forward leg swing (+Z): bind={bind_foot_z}, swing={swing_foot_z}"
+        );
+        assert!((swing_sock_pos - bind_sock_pos).length() > 0.4);
     }
 
     #[test]
     fn parses_human_base_body_skeleton_sockets_and_retargeted_animations() {
-        let rig = parse_skeleton_glb(&starter_asset("human_base_body.glb")).unwrap();
+        let Some(bytes) = world_character_asset("human_base_body.glb") else {
+            return;
+        };
+        let rig = parse_skeleton_glb(&bytes).unwrap();
         assert_eq!(rig.bones.len(), 20);
         assert_eq!(rig.embedded_sockets.len(), 5);
         assert!(rig.base_mesh.is_some());
@@ -260,7 +446,14 @@ mod tests {
 
     #[test]
     fn parses_skinned_and_rigid_starter_parts_with_material_names() {
-        let head = parse_character_glb(&starter_asset("head_aug_visor.glb")).unwrap();
+        let (Some(head_bytes), Some(tunic_bytes), Some(rifle_bytes)) = (
+            world_character_asset("head_aug_visor.glb"),
+            world_character_asset("torso_faith_tunic.glb"),
+            world_character_asset("weapon_guard_rifle.glb"),
+        ) else {
+            return;
+        };
+        let head = parse_character_glb(&head_bytes).unwrap();
         assert!(head.is_skinned);
         assert_eq!(head.joint_names.len(), 20);
         assert!(head.submeshes.iter().any(|s| s.material_name == "mat_skin"));
@@ -270,13 +463,13 @@ mod tests {
                 .any(|s| s.material_name == "mat_emissive_fire")
         );
 
-        let tunic = parse_character_glb(&starter_asset("torso_faith_tunic.glb")).unwrap();
+        let tunic = parse_character_glb(&tunic_bytes).unwrap();
         assert!(tunic.is_skinned);
         assert!(tunic.submeshes.iter().any(|s| s.material_name == "mat_primary"));
         assert!(tunic.submeshes.iter().any(|s| s.material_name == "mat_accent"));
         assert!(tunic.submeshes.iter().any(|s| s.material_name == "mat_trim"));
 
-        let rifle = parse_character_glb(&starter_asset("weapon_guard_rifle.glb")).unwrap();
+        let rifle = parse_character_glb(&rifle_bytes).unwrap();
         assert!(!rifle.is_skinned);
         assert!(rifle.joint_names.is_empty());
         assert!(!rifle.vertices.is_empty());
@@ -284,7 +477,10 @@ mod tests {
 
     #[test]
     fn walk_and_run_cycles_move_forward_along_plus_z() {
-        let rig = parse_skeleton_glb(&starter_asset("human_base_body.glb")).unwrap();
+        let Some(bytes) = world_character_asset("human_base_body.glb") else {
+            return;
+        };
+        let rig = parse_skeleton_glb(&bytes).unwrap();
         let foot_l_idx = rig.bone_index_by_name["foot_l"];
         let mut pose = SkeletonPose::from_rig(&rig);
 

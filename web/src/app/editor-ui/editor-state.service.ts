@@ -40,7 +40,7 @@ export class EditorStateService {
   readonly areaAssets = signal<AssetEntry[]>([]);
   readonly terrainCatalog = signal<TerrainTextureEntry[]>([]);
   readonly roadCatalog = signal<RoadTextureEntry[]>([]);
-  readonly selectedAreaId = signal<string>('main');
+  readonly selectedAreaId = signal<string>('');
   readonly importingGlb = signal<boolean>(false);
   readonly importMessage = signal<string | null>(null);
   readonly importError = signal<string | null>(null);
@@ -172,6 +172,11 @@ export class EditorStateService {
       if (resp.ok) {
         const list = (await resp.json()) as AreaMetadata[];
         this.areas.set(list);
+        if (list.length > 0 && !list.some((a) => a.id === this.selectedAreaId())) {
+          this.selectedAreaId.set((list.find((a) => a.id === 'main') ?? list[0]).id);
+        } else if (list.length === 0) {
+          this.selectedAreaId.set('');
+        }
       }
     } catch (e) {
       console.error('Failed to load areas:', e);
@@ -237,6 +242,11 @@ export class EditorStateService {
     }
 
     const areaId = this.selectedAreaId();
+    if (!areaId) {
+      this.importError.set('Create or select an area first (+ Area).');
+      this.importMessage.set(null);
+      return;
+    }
     this.importingGlb.set(true);
     this.importError.set(null);
     this.importMessage.set(null);

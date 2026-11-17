@@ -34,11 +34,11 @@ pub async fn save_outside_tile(
 
     vis.enforce_slope_walkability();
 
-    let tile_dir = state
-        .world_dir
-        .join("areas")
-        .join(&area_id)
-        .join(format!("{tx},{ty}"));
+    let area_dir = state.world_dir.join("areas").join(&area_id);
+    if !area_dir.join("area.bin").exists() {
+        return Err((StatusCode::NOT_FOUND, "area does not exist".to_owned()));
+    }
+    let tile_dir = area_dir.join(format!("{tx},{ty}"));
     fs::create_dir_all(&tile_dir).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let existing_sim = fs::read(tile_dir.join("sim.bin"))

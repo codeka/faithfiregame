@@ -1517,8 +1517,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "glam",
- "png",
  "postcard",
  "serde",
  "serde_json",

@@ -13,6 +13,9 @@ use crate::net::{AppState, is_valid_area_id};
 
 pub async fn list_areas(State(state): State<AppState>) -> Result<Json<Vec<AreaMetadata>>, StatusCode> {
     let areas_dir = state.world_dir.join("areas");
+    if !areas_dir.exists() {
+        return Ok(Json(Vec::new()));
+    }
     let entries = fs::read_dir(&areas_dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut areas = Vec::new();
     for entry in entries.flatten() {
@@ -140,4 +143,68 @@ pub async fn create_area(
 
     info!("editor created new area '{}' ({:?})", meta.id, meta.kind);
     Ok((StatusCode::CREATED, Json(meta)))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use tokio::sync::{RwLock, broadcast};
+
+    use super::*;
+    use crate::db::SqliteStorage;
+    use crate::sim::SimWorld;
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let unique = format!(
+            "ff_{label}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        std::env::temp_dir().join(unique)
+    }
+
+    #[tokio::test]
+    async fn empty_world_lists_no_areas_and_create_area_initializes_outside_tile() {
+        let root = unique_temp_dir("empty_areas");
+        let world_dir = root.join("world");
+        fs::create_dir_all(&root).unwrap();
+
+        let storage = Arc::new(SqliteStorage::open(&root.join("test.db")).await.unwrap());
+        let sim = Arc::new(RwLock::new(SimWorld::new(world_dir.clone())));
+        let (tx_broadcast, _) = broadcast::channel(8);
+        let state = AppState {
+            world_dir: world_dir.clone(),
+            storage,
+            sim,
+            tx_broadcast,
+        };
+
+        let Json(initial) = list_areas(State(state.clone())).await.unwrap();
+        assert!(initial.is_empty());
+
+        let req = CreateAreaRequest {
+            id: "frontier".to_owned(),
+            name: "Frontier".to_owned(),
+            kind: "outside".to_owned(),
+            width: None,
+            length: None,
+        };
+        let (status, Json(created)) = create_area(State(state.clone()), Json(req)).await.unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(created.id, "frontier");
+        assert!(world_dir.join("areas/frontier/area.bin").exists());
+        assert!(world_dir.join("areas/frontier/0,0/vis.bin").exists());
+        assert!(world_dir.join("areas/frontier/0,0/sim.bin").exists());
+
+        let Json(after) = list_areas(State(state)).await.unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].id, "frontier");
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }

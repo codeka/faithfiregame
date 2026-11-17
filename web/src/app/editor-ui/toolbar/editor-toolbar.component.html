@@ -39,9 +39,13 @@
         class="select"
         name="activeArea"
         aria-label="Active Area"
+        [disabled]="state.areas().length === 0"
         [ngModel]="state.selectedAreaId()"
         (ngModelChange)="state.selectArea($event)"
       >
+        @if (state.areas().length === 0) {
+          <option value="">No areas yet</option>
+        }
         @for (area of state.areas(); track area.id) {
           <option [value]="area.id">{{ describeArea(area) }}</option>
         }

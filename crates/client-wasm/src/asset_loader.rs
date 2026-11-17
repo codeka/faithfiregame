@@ -78,6 +78,21 @@ pub(crate) fn spawn_asset_catalog_load(inner: &Rc<RefCell<EngineInner>>) {
                     AssetCatalog::default()
                 }
             },
+            Ok((404, _)) => {
+                console::info_1(
+                    &"No /world/assets/catalog.json found (empty world); using built-in placeholder textures"
+                        .into(),
+                );
+                #[cfg(feature = "editor")]
+                {
+                    let mut st = weak.borrow_mut();
+                    let EngineInner {
+                        renderer, editor, ..
+                    } = &mut *st;
+                    editor.set_catalog(&renderer.gl, &AssetCatalog::default());
+                }
+                return;
+            }
             Ok((status, _)) => {
                 console::warn_1(
                     &format!(
@@ -265,4 +280,40 @@ pub(crate) fn spawn_asset_catalog_load(inner: &Rc<RefCell<EngineInner>>) {
             console::error_1(&format!("Failed uploading road textures: {e}").into());
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use shared::world::{AssetCatalog, AssetEntry, RoadTextureEntry, TerrainTextureEntry};
+
+    #[test]
+    fn asset_catalog_roundtrips_structured_object() {
+        let structured = AssetCatalog {
+            decorations: vec![AssetEntry {
+                id: "pine_tree".to_owned(),
+                name: "Pine Tree".to_owned(),
+                path: "/world/assets/decorations/pine_tree.glb".to_owned(),
+                category: "Nature".to_owned(),
+            }],
+            terrain_textures: vec![TerrainTextureEntry {
+                layer: 0,
+                id: "grass".to_owned(),
+                name: "Grass".to_owned(),
+                category: "Grass".to_owned(),
+                albedo_path: "/world/assets/terrain/grass.png".to_owned(),
+                height_path: Some("/world/assets/terrain/grass_height.png".to_owned()),
+            }],
+            road_textures: vec![RoadTextureEntry {
+                layer: 0,
+                id: "dirt_path".to_owned(),
+                name: "Dirt Path".to_owned(),
+                edge: "Soft".to_owned(),
+                path: "/world/assets/roads/dirt_path.png".to_owned(),
+            }],
+        };
+        let encoded = serde_json::to_string(&structured).unwrap();
+        let decoded: AssetCatalog = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, structured);
+        assert!(decoded.road_textures[0].is_soft_edge());
+    }
 }

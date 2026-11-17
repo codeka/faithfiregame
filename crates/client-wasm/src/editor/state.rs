@@ -96,8 +96,8 @@ impl EditorState {
             studio_cam: StudioCameraController::default(),
             character_studio: CharacterStudioState::new(),
             active_area: AreaMetadata {
-                id: "main".to_owned(),
-                name: "Main World".to_owned(),
+                id: String::new(),
+                name: "No Area".to_owned(),
                 kind: AreaKind::Outside,
                 dimensions: None,
             },
@@ -501,7 +501,7 @@ impl EditorState {
         }
 
         // 1. Stream visible tiles around editor camera target
-        if self.active_area.kind == AreaKind::Outside {
+        if !self.active_area.id.is_empty() && self.active_area.kind == AreaKind::Outside {
             let cx = (cam_ctrl.target.x / TILE_SIZE as f32).floor() as i32;
             let cz = (cam_ctrl.target.z / TILE_SIZE as f32).floor() as i32;
             let radius = if cam_ctrl.distance > 90.0 { 2 } else { 1 };
@@ -586,6 +586,9 @@ impl EditorState {
     }
 
     pub fn queue_save_all(&mut self) {
+        if self.active_area.id.is_empty() {
+            return;
+        }
         let area_id = self.active_area.id.clone();
         if self.active_area.kind == AreaKind::Outside {
             for (&(tx, ty), tile) in &mut self.outside_tiles {

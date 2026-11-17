@@ -2,7 +2,6 @@ mod db;
 #[cfg(feature = "editor")]
 mod editor_api;
 mod net;
-mod seed;
 mod sim;
 
 use std::path::PathBuf;
@@ -32,11 +31,6 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let world_dir = PathBuf::from("world");
-    seed::ensure_world_seeded(&world_dir)?;
-    if std::env::args().any(|a| a == "--seed-only") {
-        info!("World seeded (--seed-only); exiting.");
-        return Ok(());
-    }
 
     let db_path = PathBuf::from("faithfire.db");
     let storage = Arc::new(SqliteStorage::open(&db_path).await?);
