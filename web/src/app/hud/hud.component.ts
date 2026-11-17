@@ -89,10 +89,10 @@ export class HudComponent implements OnDestroy {
     await this.auth.logout();
   }
 
-  finishWakeOverlay(): void {
-    this.clearWakeTimer();
-    this.wakeOverlayState.set('done');
-  }
+    finishWakeOverlay(): void {
+      this.clearWakeTimer();
+      this.wakeOverlayState.set('done');
+    }
 
   private scheduleWakeComplete(delayMs: number): void {
     this.clearWakeTimer();

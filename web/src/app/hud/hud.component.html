@@ -1,69 +1,50 @@
 @if (!auth.hasSession()) {
-  <main class="landing-backdrop">
-    @if (engine.editorBuild()) {
-      <a routerLink="/editor" class="dev-editor-link">World Editor</a>
-    }
-
-    <section class="landing-card" aria-label="Welcome to Faith & Fire">
-      <img
-        src="/logo-landing.png"
-        alt="Faith & Fire emblem"
-        class="landing-logo"
-        width="112"
-        height="112"
-      />
-      <p class="eyebrow">Online Role-Playing World</p>
-      <h1>Faith &amp; Fire</h1>
-      <p class="tagline">
-        Awaken from centuries of cryo sleep. Step out into what remains.
-      </p>
-
-      @if (playError(); as err) {
-        <div class="error-banner" role="alert">{{ err }}</div>
-      }
-
-      <div class="landing-actions">
-        <button
-          type="button"
-          class="btn-play"
-          [disabled]="startingPlay()"
-          (click)="onPlay()"
-        >
-          {{ startingPlay() ? 'Awakening...' : 'Play' }}
-        </button>
-        <button type="button" class="btn-login" (click)="onGoLogin()">
-          Login
-        </button>
-      </div>
-    </section>
-  </main>
-} @else {
-  <app-hud-wake-overlay [state]="wakeOverlayState()" (finished)="finishWakeOverlay()" />
-
-  @if (engine.gameStatus(); as status) {
-    @if (status.phase === 'error') {
-      <div class="error-modal" role="alert">
-        <h2>Connection Interrupted</h2>
-        <p>{{ status.error || 'Could not reach the game server.' }}</p>
-        <button type="button" class="btn-play" (click)="onLeave()">
-          Return to Menu
-        </button>
-      </div>
-    } @else if (status.phase === 'playing') {
-      <div class="hud-viewport">
-        <app-hud-area-telemetry
-          class="hud-slot-top-left"
-          [areaName]="status.areaName"
-          [areaId]="status.areaId"
-          [playerPos]="status.playerPos"
-        />
-
-        <app-hud-system-bar
-          class="hud-slot-top-right"
-          [showEditor]="engine.editorBuild()"
-          (leave)="onLeave()"
-        />
-      </div>
-    }
+<main class="landing-backdrop">
+  @if (engine.editorBuild()) {
+  <a routerLink="/editor" class="dev-editor-link">World Editor</a>
   }
-}
+
+  <section class="landing-card" aria-label="Welcome to Faith & Fire">
+    <img src="/logo-landing.png" alt="Faith & Fire emblem" class="landing-logo" width="112" height="112" />
+    <p class="eyebrow">Online Role-Playing World</p>
+    <h1>Faith &amp; Fire</h1>
+    <p class="tagline">
+      Awaken from centuries of cryo sleep. Step out into what remains.
+    </p>
+
+    @if (playError(); as err) {
+    <div class="error-banner" role="alert">{{ err }}</div>
+    }
+
+    <div class="landing-actions">
+      <button type="button" class="btn-play" [disabled]="startingPlay()" (click)="onPlay()">
+        {{ startingPlay() ? 'Awakening...' : 'Play' }}
+      </button>
+      <button type="button" class="btn-login" (click)="onGoLogin()">
+        Login
+      </button>
+    </div>
+  </section>
+</main>
+} @else {
+<app-hud-wake-overlay [state]="wakeOverlayState()" (finished)="finishWakeOverlay()" />
+
+@if (engine.gameStatus(); as status) {
+@if (status.phase === 'error') {
+<div class="error-modal" role="alert">
+  <h2>Connection Interrupted</h2>
+  <p>{{ status.error || 'Could not reach the game server.' }}</p>
+  <button type="button" class="btn-play" (click)="onLeave()">
+    Return to Menu
+  </button>
+</div>
+} @else if (status.phase === 'playing') {
+<div class="hud-viewport">
+  <app-hud-area-telemetry class="hud-slot-top-left" [areaName]="status.areaName" [areaId]="status.areaId"
+    [playerPos]="status.playerPos" />
+
+    <app-hud-system-bar class="hud-slot-top-right" [showEditor]="engine.editorBuild()" (leave)="onLeave()" />
+  </div>
+  }
+  }
+  }
