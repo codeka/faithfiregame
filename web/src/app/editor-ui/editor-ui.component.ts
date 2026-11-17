@@ -1,7 +1,10 @@
 import { Component, inject, OnInit } from '@angular/core';
-import { EditorEngineService } from './editor-engine.service';
+import { CharacterEditorStateService } from './character-editor-state.service';
+import { CharactersEditorComponent } from './characters-editor/characters-editor.component';
 import { CreateAreaModalComponent } from './create-area-modal/create-area-modal.component';
+import { EditorEngineService } from './editor-engine.service';
 import { EditorStateService } from './editor-state.service';
+import { EntitiesPlaceholderComponent } from './entities-placeholder/entities-placeholder.component';
 import { EditorToolbarComponent } from './toolbar/editor-toolbar.component';
 import {
   DECORATION_SUBMODES,
@@ -18,7 +21,7 @@ import {
   WalkabilityToolComponent,
 } from './tools/walkability-tool/walkability-tool.component';
 
-const NON_TEXT_INPUT_TYPES = new Set(['range', 'checkbox', 'radio', 'button']);
+const NON_TEXT_INPUT_TYPES = new Set(['range', 'checkbox', 'radio', 'button', 'color']);
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) {
@@ -49,8 +52,10 @@ function isEditableTarget(target: EventTarget | null): boolean {
     DecorationToolComponent,
     WalkabilityToolComponent,
     CreateAreaModalComponent,
+    CharactersEditorComponent,
+    EntitiesPlaceholderComponent,
   ],
-  providers: [EditorStateService],
+  providers: [EditorStateService, CharacterEditorStateService],
   templateUrl: './editor-ui.component.html',
   styleUrl: './editor-ui.component.css',
   host: {
@@ -60,13 +65,17 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export class EditorUiComponent implements OnInit {
   readonly engine = inject(EditorEngineService);
   readonly state = inject(EditorStateService);
+  readonly charState = inject(CharacterEditorStateService);
 
   async ngOnInit(): Promise<void> {
-    await this.state.initData();
+    await Promise.all([this.state.initData(), this.charState.initData()]);
   }
 
   onWindowKeyDown(ev: KeyboardEvent): void {
     if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey || ev.repeat) {
+      return;
+    }
+    if ((this.engine.status()?.editorMode ?? 'world') !== 'world') {
       return;
     }
     if (this.state.showNewAreaModal() || isEditableTarget(ev.target)) {

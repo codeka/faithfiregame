@@ -1,10 +1,157 @@
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { EditorEngineService, EditorStatus } from './editor-engine.service';
+import {
+  CharacterCatalog,
+  CharacterDefinition,
+  EditorEngineService,
+  EditorMode,
+  EditorStatus,
+} from './editor-engine.service';
 import { EditorUiComponent } from './editor-ui.component';
+
+const MOCK_CHARACTER_CATALOG: CharacterCatalog = {
+  skeletons: [
+    {
+      id: 'humanoid',
+      name: 'Humanoid',
+      rig_path: '/world/assets/characters/human_base_body.glb',
+      render_base_mesh: true,
+      skinned_slots: [
+        { id: 'head', name: 'Head' },
+        { id: 'torso', name: 'Torso' },
+        { id: 'legs', name: 'Legs' },
+      ],
+      sockets: [
+        {
+          id: 'socket_head',
+          name: 'Head Socket',
+          parent_bone: 'head',
+          offset: [0, 0, 0],
+          rotation_deg: [0, 0, 0],
+          scale: 1,
+        },
+        {
+          id: 'socket_hand_r',
+          name: 'Right Hand',
+          parent_bone: 'hand_r',
+          offset: [0, -0.06, 0.04],
+          rotation_deg: [0, 0, 0],
+          scale: 1,
+        },
+      ],
+      animation_paths: [],
+    },
+  ],
+  parts: [
+    {
+      id: 'head_standard',
+      name: 'Standard Head',
+      skeleton_id: 'humanoid',
+      attachment: { kind: 'skinned', slot: 'head' },
+      path: '/world/assets/characters/head_standard.glb',
+      category: 'Head',
+    },
+    {
+      id: 'head_aug_visor',
+      name: 'Augmented Visor Head',
+      skeleton_id: 'humanoid',
+      attachment: { kind: 'skinned', slot: 'head' },
+      path: '/world/assets/characters/head_aug_visor.glb',
+      category: 'Head',
+    },
+    {
+      id: 'torso_cryo_jumpsuit',
+      name: 'Cryo Jumpsuit',
+      skeleton_id: 'humanoid',
+      attachment: { kind: 'skinned', slot: 'torso' },
+      path: '/world/assets/characters/torso_cryo_jumpsuit.glb',
+      category: 'Torso',
+    },
+    {
+      id: 'torso_faith_tunic',
+      name: 'Faith Tunic',
+      skeleton_id: 'humanoid',
+      attachment: { kind: 'skinned', slot: 'torso' },
+      path: '/world/assets/characters/torso_faith_tunic.glb',
+      category: 'Torso',
+    },
+    {
+      id: 'legs_cargo_pants',
+      name: 'Cargo Pants',
+      skeleton_id: 'humanoid',
+      attachment: { kind: 'skinned', slot: 'legs' },
+      path: '/world/assets/characters/legs_cargo_pants.glb',
+      category: 'Legs',
+    },
+    {
+      id: 'hair_short_crop',
+      name: 'Short Crop Hair',
+      skeleton_id: 'humanoid',
+      attachment: {
+        kind: 'socket',
+        socket_id: 'socket_head',
+        offset: [0, 0, 0],
+        rotation_deg: [0, 0, 0],
+        scale: 1,
+      },
+      path: '/world/assets/characters/hair_short_crop.glb',
+      category: 'Hair',
+    },
+    {
+      id: 'weapon_guard_rifle',
+      name: 'Guard Carbine',
+      skeleton_id: 'humanoid',
+      attachment: {
+        kind: 'socket',
+        socket_id: 'socket_hand_r',
+        offset: [0, 0, 0],
+        rotation_deg: [0, 0, 0],
+        scale: 1,
+      },
+      path: '/world/assets/characters/weapon_guard_rifle.glb',
+      category: 'Weapons',
+    },
+  ],
+};
+
+const MOCK_CHARACTER_PRESETS: CharacterDefinition[] = [
+  {
+    id: 'cryo_prisoner',
+    name: 'Cryo Prisoner',
+    skeleton_id: 'humanoid',
+    show_base_mesh: true,
+    skinned_parts: {
+      head: 'head_standard',
+      torso: 'torso_cryo_jumpsuit',
+      legs: 'legs_cargo_pants',
+    },
+    socket_parts: {
+      socket_head: 'hair_short_crop',
+    },
+    palette: {},
+  },
+  {
+    id: 'fire_raider',
+    name: 'Fire Raider',
+    skeleton_id: 'humanoid',
+    show_base_mesh: true,
+    skinned_parts: {
+      head: 'head_aug_visor',
+      torso: 'torso_faith_tunic',
+      legs: 'legs_cargo_pants',
+    },
+    socket_parts: {
+      socket_hand_r: 'weapon_guard_rifle',
+    },
+    palette: {
+      primary_color: [180, 40, 30],
+    },
+  },
+];
 
 function baseStatus(tool: EditorStatus['tool'] = 'decoration'): EditorStatus {
   return {
+    editorMode: 'world',
     areaId: 'main',
     areaName: 'Main World',
     isOutside: true,
@@ -29,6 +176,21 @@ function baseStatus(tool: EditorStatus['tool'] = 'decoration'): EditorStatus {
     previewScale: 1,
     previewCastShadow: true,
     walkabilityMode: 'block',
+    characterStudio: {
+      activePresetId: 'cryo_prisoner',
+      activeSkeletonId: 'humanoid',
+      availableClips: ['Idle', 'Walk', 'Run'],
+      activeClip: 'Idle',
+      playing: true,
+      animTime: 0.25,
+      clipDuration: 2,
+      playbackSpeed: 1,
+      showSkeletonDebug: false,
+      turntable: false,
+      selectedSocketId: 'socket_head',
+      boneNames: ['root', 'pelvis', 'spine_01', 'spine_02', 'neck', 'head', 'hand_r'],
+      saveState: 'Saved',
+    },
   };
 }
 
@@ -54,15 +216,28 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
   let resetWalkCalls: number;
   let importedLocalGlbs: { slug: string; byteLen: number; spawn: boolean }[];
   let duplicateCalls: number;
+  let modeCalls: EditorMode[];
+  let activeCharactersPushed: CharacterDefinition[];
+  let catalogsPushed: CharacterCatalog[];
+  let loadedCharGlbs: { path: string; byteLen: number }[];
+  let animClipCalls: string[];
+  let animPlayingCalls: boolean[];
+  let animSpeedCalls: number[];
+  let debugSkeletonCalls: boolean[];
   let origFetch: typeof globalThis.fetch;
 
   beforeEach(async () => {
     origFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
-      const body = url.includes('/world/assets/catalog.json')
-        ? JSON.stringify({ decorations: [], terrain_textures: [], road_textures: [] })
-        : '[]';
+      let body = '[]';
+      if (url.includes('/world/assets/catalog.json')) {
+        body = JSON.stringify({ decorations: [], terrain_textures: [], road_textures: [] });
+      } else if (url.includes('/api/editor/characters/catalog')) {
+        body = JSON.stringify(MOCK_CHARACTER_CATALOG);
+      } else if (url.includes('/api/editor/characters/presets')) {
+        body = JSON.stringify(MOCK_CHARACTER_PRESETS);
+      }
       return new Response(body, {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -88,6 +263,14 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     resetWalkCalls = 0;
     importedLocalGlbs = [];
     duplicateCalls = 0;
+    modeCalls = [];
+    activeCharactersPushed = [];
+    catalogsPushed = [];
+    loadedCharGlbs = [];
+    animClipCalls = [];
+    animPlayingCalls = [];
+    animSpeedCalls = [];
+    debugSkeletonCalls = [];
 
     const mockEngine = {
       ready: signal(false),
@@ -172,6 +355,90 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
         return `local:${slug}`;
       },
       saveNow: () => {},
+      setEditorMode: (mode: EditorMode) => {
+        modeCalls.push(mode);
+        statusSig.update((s) => (s ? { ...s, editorMode: mode } : s));
+      },
+      setCharacterCatalog: (cat: CharacterCatalog) => {
+        catalogsPushed.push(structuredClone(cat));
+      },
+      setActiveCharacter: (def: CharacterDefinition) => {
+        activeCharactersPushed.push(structuredClone(def));
+        statusSig.update((s) =>
+          s
+            ? {
+                ...s,
+                characterStudio: {
+                  ...s.characterStudio,
+                  activePresetId: def.id,
+                  activeSkeletonId: def.skeleton_id,
+                },
+              }
+            : s,
+        );
+      },
+      loadCharacterGlbBytes: (path: string, bytes: Uint8Array) => {
+        loadedCharGlbs.push({ path, byteLen: bytes.byteLength });
+      },
+      setCharacterAnimClip: (clip: string) => {
+        animClipCalls.push(clip);
+        statusSig.update((s) =>
+          s
+            ? {
+                ...s,
+                characterStudio: {
+                  ...s.characterStudio,
+                  activeClip: clip === '__bind__' ? null : clip,
+                  animTime: 0,
+                },
+              }
+            : s,
+        );
+      },
+      setCharacterAnimPlaying: (playing: boolean) => {
+        animPlayingCalls.push(playing);
+        statusSig.update((s) =>
+          s ? { ...s, characterStudio: { ...s.characterStudio, playing } } : s,
+        );
+      },
+      setCharacterAnimTime: (timeSec: number) => {
+        statusSig.update((s) =>
+          s ? { ...s, characterStudio: { ...s.characterStudio, animTime: timeSec } } : s,
+        );
+      },
+      setCharacterAnimSpeed: (speed: number) => {
+        animSpeedCalls.push(speed);
+        statusSig.update((s) =>
+          s ? { ...s, characterStudio: { ...s.characterStudio, playbackSpeed: speed } } : s,
+        );
+      },
+      setCharacterDebugSkeleton: (show: boolean) => {
+        debugSkeletonCalls.push(show);
+        statusSig.update((s) =>
+          s
+            ? {
+                ...s,
+                characterStudio: { ...s.characterStudio, showSkeletonDebug: show },
+              }
+            : s,
+        );
+      },
+      setCharacterTurntable: (enabled: boolean) => {
+        statusSig.update((s) =>
+          s ? { ...s, characterStudio: { ...s.characterStudio, turntable: enabled } } : s,
+        );
+      },
+      setSelectedSocketId: (socketId: string | null) => {
+        statusSig.update((s) =>
+          s
+            ? {
+                ...s,
+                characterStudio: { ...s.characterStudio, selectedSocketId: socketId },
+              }
+            : s,
+        );
+      },
+      resetCharacterStudioCamera: () => {},
     };
 
     await TestBed.configureTestingModule({
@@ -740,5 +1007,187 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
 
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('.area-unique-drawer')).not.toBeNull();
+  });
+
+  it('switches top-level modes between World, Characters, and Entities and gates World hotkeys', () => {
+    const root = fixture.nativeElement as HTMLElement;
+    const modeBtns = Array.from(root.querySelectorAll('.mode-btn')) as HTMLButtonElement[];
+    expect(modeBtns.map((b) => b.textContent?.trim())).toEqual(['World', 'Characters', 'Entities']);
+
+    // Switch to Characters mode
+    modeBtns[1].click();
+    fixture.detectChanges();
+    expect(modeCalls.at(-1)).toBe('characters');
+    expect(root.querySelector('app-characters-editor')).not.toBeNull();
+    expect(root.querySelector('aside.toolbox')).toBeNull();
+
+    // World 1-4 hotkeys must be ignored while in Characters mode
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '2' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '3' }));
+    expect(decorationCalls).toEqual([]);
+
+    // Switch to Entities mode
+    modeBtns[2].click();
+    fixture.detectChanges();
+    expect(modeCalls.at(-1)).toBe('entities');
+    expect(root.querySelector('app-entities-placeholder')).not.toBeNull();
+    expect(root.querySelector('app-characters-editor')).toBeNull();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '4' }));
+    expect(decorationCalls).toEqual([]);
+
+    // Switch back to World mode and verify hotkeys work again
+    modeBtns[0].click();
+    fixture.detectChanges();
+    expect(root.querySelector('aside.toolbox')).not.toBeNull();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '2' }));
+    expect(decorationCalls).toEqual(['move']);
+  });
+
+  it('manages character presets, equips parts, applies/resets palette tints, and saves via PUT', async () => {
+    await component.charState.initData();
+    statusSig.update((s) => (s ? { ...s, editorMode: 'characters' } : s));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    expect(component.charState.activeCharacter().id).toBe('cryo_prisoner');
+
+    // Switch preset to fire_raider
+    component.charState.selectPreset('fire_raider');
+    fixture.detectChanges();
+    expect(component.charState.activeCharacter().id).toBe('fire_raider');
+    expect(component.charState.activeCharacter().skinned_parts['head']).toBe('head_aug_visor');
+
+    // Swap torso and socket part
+    component.charState.setSkinnedPart('torso', 'torso_cryo_jumpsuit');
+    component.charState.setSocketPart('socket_head', 'hair_short_crop');
+    fixture.detectChanges();
+    expect(activeCharactersPushed.at(-1)?.skinned_parts['torso']).toBe('torso_cryo_jumpsuit');
+    expect(activeCharactersPushed.at(-1)?.socket_parts['socket_head']).toBe('hair_short_crop');
+    expect(component.charState.saveState()).toBe('Unsaved');
+
+    // Set and clear palette color
+    component.charState.setPaletteColor('hair_color', '#ff8040');
+    expect(component.charState.activeCharacter().palette.hair_color).toEqual([255, 128, 64]);
+    component.charState.clearPaletteColor('hair_color');
+    expect(component.charState.activeCharacter().palette.hair_color).toBeUndefined();
+
+    // Save preset via PUT /api/editor/characters/presets/fire_raider
+    const putCalls: { url: string; method: string; body: string }[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      const bodyStr = typeof init?.body === 'string' ? init.body : '';
+      putCalls.push({ url, method, body: bodyStr });
+      return new Response(bodyStr, {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const saveBtn = Array.from(root.querySelectorAll('app-editor-toolbar button')).find(
+      (b) => b.textContent?.trim() === 'Save',
+    ) as HTMLButtonElement;
+    saveBtn.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fixture.detectChanges();
+
+    expect(putCalls.length).toBe(1);
+    expect(putCalls[0].method).toBe('PUT');
+    expect(putCalls[0].url).toBe('/api/editor/characters/presets/fire_raider');
+    expect(component.charState.saveState()).toBe('Saved');
+  });
+
+  it('dispatches character animation transport controls and bone debug toggle', async () => {
+    await component.charState.initData();
+    statusSig.update((s) => (s ? { ...s, editorMode: 'characters' } : s));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const transportBtns = Array.from(
+      root.querySelectorAll('.anim-transport button'),
+    ) as HTMLButtonElement[];
+
+    transportBtns.find((b) => b.textContent?.trim() === 'Walk')?.click();
+    transportBtns.find((b) => b.textContent?.trim() === 'Bind Pose')?.click();
+    expect(animClipCalls).toEqual(['Walk', '__bind__']);
+
+    transportBtns.find((b) => b.textContent?.trim() === 'Idle')?.click();
+    fixture.detectChanges();
+    const playBtn = root.querySelector('.play-btn') as HTMLButtonElement;
+    playBtn.click();
+    expect(animPlayingCalls).toEqual([false]);
+
+    transportBtns.find((b) => b.textContent?.trim() === '0.5x')?.click();
+    expect(animSpeedCalls).toEqual([0.5]);
+
+    const debugBtn = Array.from(root.querySelectorAll('app-editor-toolbar button')).find(
+      (b) => b.textContent?.trim() === 'Bones & Sockets',
+    ) as HTMLButtonElement;
+    debugBtn.click();
+    expect(debugSkeletonCalls).toEqual([true]);
+  });
+
+  it('edits socket offsets and imports a character .glb part in Parts & Rig mode', async () => {
+    await component.charState.initData();
+    statusSig.update((s) => (s ? { ...s, editorMode: 'characters' } : s));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const rigTabBtn = Array.from(root.querySelectorAll('app-editor-toolbar button')).find(
+      (b) => b.textContent?.trim() === 'Parts & Rig',
+    ) as HTMLButtonElement;
+    rigTabBtn.click();
+    fixture.detectChanges();
+
+    expect(root.querySelector('select[name="selectedSocket"]')).not.toBeNull();
+    component.charState.selectSocket('socket_hand_r');
+    component.charState.updateSocket('socket_hand_r', { offset: [0.02, -0.05, 0.08] });
+    fixture.detectChanges();
+
+    const updatedHandSock = catalogsPushed
+      .at(-1)
+      ?.skeletons[0]?.sockets.find((s) => s.id === 'socket_hand_r');
+    expect(updatedHandSock?.offset).toEqual([0.02, -0.05, 0.08]);
+
+    // Import a new .glb socket part
+    const uploadRequests: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'PUT') {
+        uploadRequests.push(url);
+        return new Response(
+          JSON.stringify({
+            slug: 'plasma_pistol',
+            name: 'Plasma Pistol',
+            path: '/world/assets/characters/plasma_pistol.glb',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+
+    const fakeGlb = new File(
+      [new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 12, 0, 0, 0])],
+      'Plasma Pistol.glb',
+    );
+    await component.charState.importCharacterGlbFiles([fakeGlb], {
+      kind: 'socket',
+      socketId: 'socket_hand_r',
+      category: 'Weapons',
+    });
+    fixture.detectChanges();
+
+    expect(uploadRequests).toEqual(['/api/editor/characters/assets/plasma_pistol']);
+    expect(loadedCharGlbs).toEqual([
+      { path: '/world/assets/characters/plasma_pistol.glb', byteLen: 12 },
+    ]);
+    expect(component.charState.activeCharacter().socket_parts['socket_hand_r']).toBe(
+      'plasma_pistol',
+    );
+    expect(
+      component.charState.catalog().parts.some((p) => p.id === 'plasma_pistol'),
+    ).toBe(true);
   });
 });

@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use shared::character::{CharacterCatalog, CharacterDefinition};
 use shared::world::{AreaMetadata, RoadStyle};
 use wasm_bindgen::prelude::*;
 
@@ -8,7 +9,7 @@ use crate::EngineHandle;
 use crate::engine::EngineInner;
 
 use super::{
-    DecorationSubMode, EditorTool, HeightMode, RoadSubMode, WalkabilityMode,
+    DecorationSubMode, EditorMode, EditorTool, HeightMode, RoadSubMode, WalkabilityMode,
     io::dispatch_pending_saves,
 };
 
@@ -310,6 +311,110 @@ impl EditorEngineHandle {
             std::mem::take(&mut st.editor.pending_saves)
         };
         dispatch_pending_saves(&self.inner, saves);
+    }
+
+    pub fn set_editor_mode(&self, mode: &str) {
+        let next = match mode {
+            "characters" => EditorMode::Characters,
+            "entities" => EditorMode::Entities,
+            _ => EditorMode::World,
+        };
+        let mut st = self.inner.borrow_mut();
+        st.editor.mode = next;
+    }
+
+    pub fn set_character_catalog_json(&self, catalog_json: &str) -> Result<(), JsValue> {
+        let catalog: CharacterCatalog = serde_json::from_str(catalog_json)
+            .map_err(|e| JsValue::from_str(&format!("invalid CharacterCatalog json: {e}")))?;
+        self.inner
+            .borrow_mut()
+            .editor
+            .character_studio
+            .set_catalog(catalog);
+        Ok(())
+    }
+
+    pub fn set_active_character_json(&self, char_json: &str) -> Result<(), JsValue> {
+        let def: CharacterDefinition = serde_json::from_str(char_json)
+            .map_err(|e| JsValue::from_str(&format!("invalid CharacterDefinition json: {e}")))?;
+        self.inner
+            .borrow_mut()
+            .editor
+            .character_studio
+            .set_active_character(def);
+        Ok(())
+    }
+
+    pub fn load_character_glb_bytes(&self, path: &str, bytes: &[u8]) -> Result<(), JsValue> {
+        let mut st = self.inner.borrow_mut();
+        let EngineInner {
+            renderer, editor, ..
+        } = &mut *st;
+        editor
+            .character_studio
+            .on_glb_loaded(&renderer.gl, path.to_owned(), bytes)
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn set_character_anim_clip(&self, clip: &str) {
+        self.inner
+            .borrow_mut()
+            .editor
+            .character_studio
+            .select_clip(clip);
+    }
+
+    pub fn set_character_anim_playing(&self, playing: bool) {
+        self.inner
+            .borrow_mut()
+            .editor
+            .character_studio
+            .playing = playing;
+    }
+
+    pub fn set_character_anim_time(&self, time_sec: f32) {
+        self.inner
+            .borrow_mut()
+            .editor
+            .character_studio
+            .anim_time = time_sec.max(0.0);
+    }
+
+    pub fn set_character_anim_speed(&self, speed: f32) {
+        self.inner
+            .borrow_mut()
+            .editor
+            .character_studio
+            .playback_speed = speed.clamp(0.1, 3.0);
+    }
+
+    pub fn set_character_debug_skeleton(&self, show: bool) {
+        self.inner
+            .borrow_mut()
+            .editor
+            .character_studio
+            .show_skeleton_debug = show;
+    }
+
+    pub fn set_character_turntable(&self, enabled: bool) {
+        self.inner
+            .borrow_mut()
+            .editor
+            .character_studio
+            .turntable = enabled;
+    }
+
+    pub fn set_selected_socket_id(&self, socket_id: &str) {
+        let mut st = self.inner.borrow_mut();
+        st.editor.character_studio.selected_socket_id = if socket_id.is_empty() {
+            None
+        } else {
+            Some(socket_id.to_owned())
+        };
+    }
+
+    pub fn reset_character_studio_camera(&self) {
+        self.inner.borrow_mut().editor.studio_cam.reset();
     }
 
     pub fn get_editor_status_json(&self) -> String {

@@ -13,6 +13,31 @@ void main() {
 }
 "#;
 
+pub(super) const CHARACTER_SHADOW_VERT: &str = r#"#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 a_pos;
+layout(location = 4) in uvec4 a_joints;
+layout(location = 5) in vec4 a_weights;
+
+uniform mat4 u_light_view_proj;
+uniform mat4 u_model;
+uniform int u_is_skinned;
+uniform mat4 u_joints[48];
+
+void main() {
+    vec4 pos = vec4(a_pos, 1.0);
+    if (u_is_skinned != 0) {
+        mat4 skin = u_joints[min(a_joints.x, 47u)] * a_weights.x
+                  + u_joints[min(a_joints.y, 47u)] * a_weights.y
+                  + u_joints[min(a_joints.z, 47u)] * a_weights.z
+                  + u_joints[min(a_joints.w, 47u)] * a_weights.w;
+        pos = skin * pos;
+    }
+    gl_Position = u_light_view_proj * u_model * pos;
+}
+"#;
+
 pub(super) const SHADOW_FRAG: &str = r#"#version 300 es
 precision highp float;
 
@@ -317,6 +342,99 @@ void main() {
     float shadow = (diff > 0.0) ? sample_shadow(v_world_pos, n) : 1.0;
     float hemi = 0.5 + 0.5 * n.y;
     vec3 ambient = mix(vec3(0.22, 0.25, 0.30), vec3(0.34, 0.38, 0.45), hemi);
+    vec3 sun_light = diff * vec3(1.06, 1.00, 0.88) * 1.00;
+    vec3 lit = base_rgba.rgb * (ambient + sun_light * shadow) + (u_emissive * tex.rgb * u_tint.rgb);
+
+    float cam_dist = length(v_world_pos - u_camera_pos);
+    float fog_t = smoothstep(u_fog_start, u_fog_end, cam_dist);
+    vec3 final_rgb = mix(lit, u_fog_color, fog_t);
+
+    frag_color = vec4(final_rgb, base_rgba.a);
+}
+"#
+);
+
+pub(super) const CHARACTER_VERT: &str = r#"#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec4 a_color;
+layout(location = 3) in vec2 a_uv;
+layout(location = 4) in uvec4 a_joints;
+layout(location = 5) in vec4 a_weights;
+
+uniform mat4 u_view_proj;
+uniform mat4 u_model;
+uniform int u_is_skinned;
+uniform mat4 u_joints[48];
+
+out vec3 v_world_pos;
+out vec3 v_normal;
+out vec4 v_color;
+out vec2 v_uv;
+
+void main() {
+    vec4 pos = vec4(a_pos, 1.0);
+    vec3 nrm = a_normal;
+    if (u_is_skinned != 0) {
+        mat4 skin = u_joints[min(a_joints.x, 47u)] * a_weights.x
+                  + u_joints[min(a_joints.y, 47u)] * a_weights.y
+                  + u_joints[min(a_joints.z, 47u)] * a_weights.z
+                  + u_joints[min(a_joints.w, 47u)] * a_weights.w;
+        pos = skin * pos;
+        nrm = mat3(skin) * nrm;
+    }
+    vec4 wp = u_model * pos;
+    v_world_pos = wp.xyz;
+    mat3 normal_mat = transpose(inverse(mat3(u_model)));
+    v_normal = normalize(normal_mat * nrm);
+    v_color = a_color;
+    v_uv = a_uv;
+    gl_Position = u_view_proj * wp;
+}
+"#;
+
+pub(super) const CHARACTER_FRAG: &str = concat!(
+    r#"#version 300 es
+precision highp float;
+precision highp sampler2DShadow;
+
+in vec3 v_world_pos;
+in vec3 v_normal;
+in vec4 v_color;
+in vec2 v_uv;
+
+uniform sampler2D u_base_tex;
+uniform vec3 u_camera_pos;
+uniform vec4 u_base_color;
+uniform vec4 u_tint;
+uniform vec3 u_emissive;
+uniform float u_alpha_cutoff;
+uniform float u_fog_start;
+uniform float u_fog_end;
+uniform vec3 u_fog_color;
+
+out vec4 frag_color;
+"#,
+    shadow_sampler_glsl!(),
+    r#"
+void main() {
+    vec4 tex = texture(u_base_tex, v_uv);
+    vec4 base_rgba = v_color * tex * u_base_color * u_tint;
+    if (u_alpha_cutoff > 0.0 && base_rgba.a < u_alpha_cutoff) {
+        discard;
+    }
+
+    vec3 n = normalize(v_normal);
+    if (!gl_FrontFacing) {
+        n = -n;
+    }
+    vec3 sun_dir = normalize(u_sun_dir);
+    float diff = max(dot(n, sun_dir), 0.0);
+    float shadow = (diff > 0.0) ? sample_shadow(v_world_pos, n) : 1.0;
+    float hemi = 0.5 + 0.5 * n.y;
+    vec3 ambient = mix(vec3(0.24, 0.27, 0.32), vec3(0.38, 0.42, 0.48), hemi);
     vec3 sun_light = diff * vec3(1.06, 1.00, 0.88) * 1.00;
     vec3 lit = base_rgba.rgb * (ambient + sun_light * shadow) + (u_emissive * tex.rgb * u_tint.rgb);
 

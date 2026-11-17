@@ -36,7 +36,35 @@
   margin-right: 4px;
 }
 
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.mode-btn {
+  padding: 4px 10px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.mode-btn.active {
+  background: #d97706;
+  border-color: #f59e0b;
+  color: #fff;
+}
+
+.mode-btn.active:hover {
+  background: #e3820e;
+}
+
 .divider {
+  display: block;
+  flex-shrink: 0;
   width: 1px;
   height: 22px;
   background: rgba(255, 255, 255, 0.14);

@@ -1,5 +1,6 @@
 mod asset_loader;
 mod camera;
+mod character;
 #[cfg(feature = "editor")]
 mod editor;
 mod engine;

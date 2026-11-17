@@ -14,14 +14,19 @@ use crate::glb_loader::parse_glb;
 use crate::input::InputState;
 use crate::render::{PropMeshGpu, TerrainMeshGpu};
 
+use super::character_studio::{CharacterStudioState, StudioCameraController};
 use super::gizmo::{GizmoAxis, GizmoDragState};
 use super::types::{
-    DecorationSubMode, EditorInsideState, EditorStatusSnapshot, EditorTileState, EditorTool,
-    HeightMode, PendingSave, RoadDraft, RoadSubMode, SelectedPropInfo, SelectedRoadInfo,
-    WalkabilityMode,
+    DecorationSubMode, EditorInsideState, EditorMode, EditorStatusSnapshot, EditorTileState,
+    EditorTool, HeightMode, PendingSave, RoadDraft, RoadSubMode, SelectedPropInfo,
+    SelectedRoadInfo, WalkabilityMode,
 };
 
 pub struct EditorState {
+    pub mode: EditorMode,
+    pub studio_cam: StudioCameraController,
+    pub character_studio: CharacterStudioState,
+
     pub active_area: AreaMetadata,
     pub outside_tiles: HashMap<(i32, i32), EditorTileState>,
     pub requested_tiles: HashSet<(String, i32, i32)>,
@@ -87,6 +92,9 @@ pub struct EditorState {
 impl EditorState {
     pub fn new() -> Self {
         Self {
+            mode: EditorMode::World,
+            studio_cam: StudioCameraController::default(),
+            character_studio: CharacterStudioState::new(),
             active_area: AreaMetadata {
                 id: "main".to_owned(),
                 name: "Main World".to_owned(),
@@ -484,6 +492,14 @@ impl EditorState {
         dt: f32,
         now_ms: f64,
     ) {
+        if self.mode == EditorMode::Characters {
+            self.character_studio.update(input, dt);
+            return;
+        }
+        if self.mode == EditorMode::Entities {
+            return;
+        }
+
         // 1. Stream visible tiles around editor camera target
         if self.active_area.kind == AreaKind::Outside {
             let cx = (cam_ctrl.target.x / TILE_SIZE as f32).floor() as i32;
@@ -646,6 +662,11 @@ impl EditorState {
         });
 
         EditorStatusSnapshot {
+            editor_mode: match self.mode {
+                EditorMode::World => "world",
+                EditorMode::Characters => "characters",
+                EditorMode::Entities => "entities",
+            },
             area_id: self.active_area.id.clone(),
             area_name: self.active_area.name.clone(),
             is_outside: self.active_area.kind == AreaKind::Outside,
@@ -697,6 +718,7 @@ impl EditorState {
                 WalkabilityMode::Block => "block",
                 WalkabilityMode::Walkable => "walkable",
             },
+            character_studio: self.character_studio.status_snapshot(),
         }
     }
 }

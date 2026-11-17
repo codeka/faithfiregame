@@ -8,10 +8,22 @@ use crate::render::{BrushOverlay, Renderer, RoadMeshGpu};
 
 use super::gizmo::gizmo_scale;
 use super::state::EditorState;
-use super::types::{DecorationSubMode, EditorTool, RoadSubMode, WalkabilityMode};
+use super::types::{DecorationSubMode, EditorMode, EditorTool, RoadSubMode, WalkabilityMode};
 
 impl EditorState {
     pub fn render_shadows(&self, renderer: &mut Renderer, camera: &Camera) {
+        match self.mode {
+            EditorMode::Characters => {
+                self.character_studio.render_shadows(renderer, camera);
+                return;
+            }
+            EditorMode::Entities => {
+                renderer.begin_shadow_pass_with_min_extent(camera, 8.0);
+                return;
+            }
+            EditorMode::World => {}
+        }
+
         renderer.begin_shadow_pass(camera);
         if self.active_area.kind == AreaKind::Outside {
             for tile in self.outside_tiles.values() {
@@ -27,6 +39,18 @@ impl EditorState {
     }
 
     pub fn render(&self, renderer: &Renderer, camera: &Camera) {
+        match self.mode {
+            EditorMode::Characters => {
+                self.character_studio.render(renderer, camera);
+                return;
+            }
+            EditorMode::Entities => {
+                renderer.draw_studio_stage(camera, false);
+                return;
+            }
+            EditorMode::World => {}
+        }
+
         let show_brush = self.hover_world.is_some()
             && matches!(
                 self.tool,

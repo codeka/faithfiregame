@@ -81,6 +81,15 @@ async fn main() -> anyhow::Result<()> {
                     header::CACHE_CONTROL,
                     HeaderValue::from_static("no-cache"),
                 )),
+        )
+        .nest_service(
+            "/world/characters",
+            Router::new()
+                .fallback_service(ServeDir::new(world_dir.join("characters")))
+                .layer(SetResponseHeaderLayer::if_not_present(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("no-cache"),
+                )),
         );
 
     #[cfg(feature = "editor")]
@@ -107,6 +116,22 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/editor/areas/{area_id}/inside",
             put(editor_api::save_inside_area),
+        )
+        .route(
+            "/api/editor/characters/catalog",
+            get(editor_api::get_character_catalog).put(editor_api::save_character_catalog),
+        )
+        .route(
+            "/api/editor/characters/presets",
+            get(editor_api::list_character_presets),
+        )
+        .route(
+            "/api/editor/characters/presets/{preset_id}",
+            put(editor_api::save_character_preset).delete(editor_api::delete_character_preset),
+        )
+        .route(
+            "/api/editor/characters/assets/{slug}",
+            put(editor_api::upload_character_asset).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
         )
     };
 

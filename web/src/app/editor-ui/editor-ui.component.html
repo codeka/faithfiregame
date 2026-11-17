@@ -5,27 +5,37 @@
     <div class="error-banner">Engine initialization failed: {{ err }}</div>
   }
 
-  <aside class="toolbox" aria-label="Tool Controls">
-    @switch (state.activeTool()) {
-      @case ('heightmap') {
-        <app-heightmap-tool />
-      }
-      @case ('texture') {
-        <app-texture-tool />
-      }
-      @case ('road') {
-        <app-road-tool />
-      }
-      @case ('walkability') {
-        <app-walkability-tool />
-      }
-      @default {
-        <app-decoration-tool />
+  @switch (engine.status()?.editorMode ?? 'world') {
+    @case ('characters') {
+      <app-characters-editor />
+    }
+    @case ('entities') {
+      <app-entities-placeholder />
+    }
+    @default {
+      <aside class="toolbox" aria-label="Tool Controls">
+        @switch (state.activeTool()) {
+          @case ('heightmap') {
+            <app-heightmap-tool />
+          }
+          @case ('texture') {
+            <app-texture-tool />
+          }
+          @case ('road') {
+            <app-road-tool />
+          }
+          @case ('walkability') {
+            <app-walkability-tool />
+          }
+          @default {
+            <app-decoration-tool />
+          }
+        }
+      </aside>
+
+      @if (state.showNewAreaModal()) {
+        <app-create-area-modal />
       }
     }
-  </aside>
-
-  @if (state.showNewAreaModal()) {
-    <app-create-area-modal />
   }
 </div>

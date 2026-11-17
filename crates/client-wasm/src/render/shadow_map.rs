@@ -3,7 +3,7 @@ use glow::HasContext;
 
 use crate::camera::Camera;
 
-use super::shaders::{SHADOW_FRAG, SHADOW_VERT, compile_program};
+use super::shaders::{CHARACTER_SHADOW_VERT, SHADOW_FRAG, SHADOW_VERT, compile_program};
 
 pub const SHADOW_MAP_SIZE: i32 = 2048;
 
@@ -19,18 +19,28 @@ pub(super) struct ShadowMapGpu {
     pub(super) prog: glow::Program,
     pub(super) u_light_vp_loc: Option<glow::UniformLocation>,
     pub(super) u_model_loc: Option<glow::UniformLocation>,
+    pub(super) char_prog: glow::Program,
+    pub(super) u_char_light_vp_loc: Option<glow::UniformLocation>,
+    pub(super) u_char_model_loc: Option<glow::UniformLocation>,
+    pub(super) u_char_is_skinned_loc: Option<glow::UniformLocation>,
+    pub(super) u_char_joints_loc: Option<glow::UniformLocation>,
     pub(super) size: i32,
 }
 
 impl ShadowMapGpu {
-    /// Creates the 2048x2048 `DEPTH_COMPONENT24` shadow framebuffer and depth shader program.
+    /// Creates the 2048x2048 `DEPTH_COMPONENT24` shadow framebuffer and depth shader programs.
     pub(super) fn new(gl: &glow::Context) -> Result<Self, String> {
         let prog = compile_program(gl, SHADOW_VERT, SHADOW_FRAG)?;
+        let char_prog = compile_program(gl, CHARACTER_SHADOW_VERT, SHADOW_FRAG)?;
         let size = SHADOW_MAP_SIZE;
 
         unsafe {
             let u_light_vp_loc = gl.get_uniform_location(prog, "u_light_view_proj");
             let u_model_loc = gl.get_uniform_location(prog, "u_model");
+            let u_char_light_vp_loc = gl.get_uniform_location(char_prog, "u_light_view_proj");
+            let u_char_model_loc = gl.get_uniform_location(char_prog, "u_model");
+            let u_char_is_skinned_loc = gl.get_uniform_location(char_prog, "u_is_skinned");
+            let u_char_joints_loc = gl.get_uniform_location(char_prog, "u_joints");
 
             let depth_tex = gl.create_texture()?;
             gl.bind_texture(glow::TEXTURE_2D, Some(depth_tex));
@@ -75,6 +85,11 @@ impl ShadowMapGpu {
                 prog,
                 u_light_vp_loc,
                 u_model_loc,
+                char_prog,
+                u_char_light_vp_loc,
+                u_char_model_loc,
+                u_char_is_skinned_loc,
+                u_char_joints_loc,
                 size,
             })
         }
@@ -83,9 +98,18 @@ impl ShadowMapGpu {
 
 /// Computes an orthographic WebGL clip-space light matrix centered on `camera.target`
 /// and snapped to shadow-map texels so panning does not shimmer shadow edges.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn compute_light_space_matrix(camera: &Camera, shadow_map_size: i32) -> Mat4 {
+    compute_light_space_matrix_with_min_extent(camera, shadow_map_size, 28.0)
+}
+
+pub(super) fn compute_light_space_matrix_with_min_extent(
+    camera: &Camera,
+    shadow_map_size: i32,
+    min_half_extent: f32,
+) -> Mat4 {
     let cam_dist = (camera.eye - camera.target).length();
-    let half_extent = ((cam_dist * 1.25).clamp(28.0, 140.0) / 4.0).ceil() * 4.0;
+    let half_extent = ((cam_dist * 1.25).clamp(min_half_extent, 140.0) / 4.0).ceil() * 4.0;
 
     let sun_dir = sun_direction();
     let light_forward = -sun_dir;

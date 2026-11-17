@@ -4,7 +4,7 @@ use glam::{Mat4, Vec3};
 use glow::HasContext;
 use shared::world::PropPlacement;
 
-use crate::glb_loader::{ParsedPropMesh, PropTexWrap};
+use crate::glb_loader::{ParsedPropMesh, ParsedPropTexture, PropTexWrap};
 
 pub struct PropSubmeshGpu {
     pub(super) index_offset_bytes: i32,
@@ -31,6 +31,69 @@ fn gl_wrap_mode(mode: PropTexWrap) -> i32 {
         PropTexWrap::Repeat => glow::REPEAT as i32,
         PropTexWrap::ClampToEdge => glow::CLAMP_TO_EDGE as i32,
         PropTexWrap::MirroredRepeat => glow::MIRRORED_REPEAT as i32,
+    }
+}
+
+pub(super) fn upload_prop_textures(
+    gl: &glow::Context,
+    parsed_textures: &[ParsedPropTexture],
+) -> Result<Vec<glow::Texture>, String> {
+    unsafe {
+        let mut textures = Vec::with_capacity(parsed_textures.len());
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+        for tex_data in parsed_textures {
+            let tex = gl.create_texture()?;
+            gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA8 as i32,
+                tex_data.width as i32,
+                tex_data.height as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(&tex_data.rgba8)),
+            );
+            if tex_data.nearest_filter {
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_MIN_FILTER,
+                    glow::NEAREST as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_MAG_FILTER,
+                    glow::NEAREST as i32,
+                );
+            } else {
+                gl.generate_mipmap(glow::TEXTURE_2D);
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_MIN_FILTER,
+                    glow::LINEAR_MIPMAP_LINEAR as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_MAG_FILTER,
+                    glow::LINEAR as i32,
+                );
+            }
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                gl_wrap_mode(tex_data.wrap_s),
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                gl_wrap_mode(tex_data.wrap_t),
+            );
+            textures.push(tex);
+        }
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        Ok(textures)
     }
 }
 
@@ -73,60 +136,7 @@ impl PropMeshGpu {
             gl.vertex_attrib_pointer_f32(3, 2, glow::FLOAT, false, stride, 40);
             gl.bind_vertex_array(None);
 
-            let mut textures = Vec::with_capacity(parsed.textures.len());
-            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-            for tex_data in &parsed.textures {
-                let tex = gl.create_texture()?;
-                gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-                gl.tex_image_2d(
-                    glow::TEXTURE_2D,
-                    0,
-                    glow::RGBA8 as i32,
-                    tex_data.width as i32,
-                    tex_data.height as i32,
-                    0,
-                    glow::RGBA,
-                    glow::UNSIGNED_BYTE,
-                    glow::PixelUnpackData::Slice(Some(&tex_data.rgba8)),
-                );
-                if tex_data.nearest_filter {
-                    gl.tex_parameter_i32(
-                        glow::TEXTURE_2D,
-                        glow::TEXTURE_MIN_FILTER,
-                        glow::NEAREST as i32,
-                    );
-                    gl.tex_parameter_i32(
-                        glow::TEXTURE_2D,
-                        glow::TEXTURE_MAG_FILTER,
-                        glow::NEAREST as i32,
-                    );
-                } else {
-                    gl.generate_mipmap(glow::TEXTURE_2D);
-                    gl.tex_parameter_i32(
-                        glow::TEXTURE_2D,
-                        glow::TEXTURE_MIN_FILTER,
-                        glow::LINEAR_MIPMAP_LINEAR as i32,
-                    );
-                    gl.tex_parameter_i32(
-                        glow::TEXTURE_2D,
-                        glow::TEXTURE_MAG_FILTER,
-                        glow::LINEAR as i32,
-                    );
-                }
-                gl.tex_parameter_i32(
-                    glow::TEXTURE_2D,
-                    glow::TEXTURE_WRAP_S,
-                    gl_wrap_mode(tex_data.wrap_s),
-                );
-                gl.tex_parameter_i32(
-                    glow::TEXTURE_2D,
-                    glow::TEXTURE_WRAP_T,
-                    gl_wrap_mode(tex_data.wrap_t),
-                );
-                textures.push(tex);
-            }
-            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
-            gl.bind_texture(glow::TEXTURE_2D, None);
+            let textures = upload_prop_textures(gl, &parsed.textures)?;
 
             let submeshes = if parsed.submeshes.is_empty() && !parsed.indices.is_empty() {
                 vec![PropSubmeshGpu {

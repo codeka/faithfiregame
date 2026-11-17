@@ -7,6 +7,7 @@ use shared::world::{
     blend_splat_sample, compute_inside_sim_from_vis, compute_sim_from_vis,
 };
 
+use super::characters::seed_characters;
 use super::cryo_prison::seed_cryo_prison_inside_area;
 use super::decorations::starter_decoration_assets;
 use super::road_textures::starter_road_textures;
@@ -124,6 +125,7 @@ pub fn ensure_world_seeded(world_dir: &Path) -> anyhow::Result<()> {
     seed_main_outside_area(world_dir)?;
     seed_village_shop_inside_area(world_dir)?;
     seed_cryo_prison_inside_area(world_dir)?;
+    seed_characters(world_dir)?;
     Ok(())
 }
 
@@ -430,6 +432,47 @@ mod tests {
                 .iter()
                 .any(|r| r.layer == 5 && r.id == "gravel_trail" && r.is_soft_edge())
         );
+
+        let char_catalog_path = root.join("characters").join("catalog.json");
+        assert!(char_catalog_path.exists());
+        assert!(
+            root.join("assets")
+                .join("characters")
+                .join("human_base_body.glb")
+                .exists()
+        );
+        assert!(
+            root.join("characters")
+                .join("presets")
+                .join("cryo_prisoner.json")
+                .exists()
+        );
+
+        let mut char_cat: shared::character::CharacterCatalog =
+            serde_json::from_slice(&fs::read(&char_catalog_path).unwrap()).unwrap();
+        assert_eq!(char_cat.skeletons.len(), 1);
+        assert_eq!(char_cat.parts.len(), 12);
+        char_cat.parts.push(shared::character::CharacterPartDef {
+            id: "custom_visor".to_owned(),
+            name: "Custom Visor".to_owned(),
+            skeleton_id: "humanoid".to_owned(),
+            attachment: shared::character::PartAttachment::Socket {
+                socket_id: "socket_head".to_owned(),
+                offset: [0.0, 0.05, 0.0],
+                rotation_deg: [0.0, 0.0, 0.0],
+                scale: 1.0,
+            },
+            path: "/world/assets/characters/custom_visor.glb".to_owned(),
+            category: "Headgear".to_owned(),
+        });
+        fs::write(&char_catalog_path, serde_json::to_vec_pretty(&char_cat).unwrap()).unwrap();
+
+        ensure_world_seeded(&root).unwrap();
+
+        let char_cat_after: shared::character::CharacterCatalog =
+            serde_json::from_slice(&fs::read(&char_catalog_path).unwrap()).unwrap();
+        assert_eq!(char_cat_after.parts.len(), 13);
+        assert!(char_cat_after.parts.iter().any(|p| p.id == "custom_visor"));
 
         let _ = fs::remove_dir_all(&root);
     }

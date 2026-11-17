@@ -9,7 +9,7 @@ use crate::camera::EditorCameraController;
 use crate::camera::GameplayCameraController;
 use crate::camera::{Camera, CameraController};
 #[cfg(feature = "editor")]
-use crate::editor::{EditorState, io::{FrameIoBatch, spawn_frame_io}};
+use crate::editor::{EditorMode, EditorState, io::{FrameIoBatch, spawn_frame_io}};
 use crate::input::InputState;
 use crate::net::NetClient;
 use crate::render::Renderer;
@@ -58,7 +58,23 @@ pub(crate) fn step_frame(inner: &Rc<RefCell<EngineInner>>, time_ms: f64) {
                 editor,
                 ..
             } = &mut *st;
-            editor_cam.update(camera, input, dt);
+            if editor.mode == EditorMode::World {
+                camera.znear = 0.25;
+                camera.zfar = 600.0;
+                renderer.fog_color = [0.56, 0.72, 0.86];
+                renderer.fog_start = 140.0;
+                renderer.fog_end = 240.0;
+                editor_cam.update(camera, input, dt);
+            } else {
+                camera.znear = 0.08;
+                camera.zfar = 120.0;
+                renderer.fog_color = [0.11, 0.13, 0.18];
+                renderer.fog_start = 45.0;
+                renderer.fog_end = 110.0;
+                let turntable =
+                    editor.mode == EditorMode::Characters && editor.character_studio.turntable;
+                editor.studio_cam.update(camera, input, dt, turntable);
+            }
             editor.update(&renderer.gl, camera, editor_cam, input, dt, time_ms);
             editor.render_shadows(renderer, camera);
             renderer.begin_frame(cw, ch);
@@ -68,6 +84,9 @@ pub(crate) fn step_frame(inner: &Rc<RefCell<EngineInner>>, time_ms: f64) {
                 tile_fetches: std::mem::take(&mut editor.pending_tile_fetches),
                 inside_fetch: editor.pending_inside_fetch.take(),
                 asset_fetches: std::mem::take(&mut editor.pending_asset_fetches),
+                character_glb_fetches: std::mem::take(
+                    &mut editor.character_studio.pending_glb_fetches,
+                ),
                 saves: std::mem::take(&mut editor.pending_saves),
             };
         }

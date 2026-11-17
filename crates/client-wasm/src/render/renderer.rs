@@ -1,9 +1,11 @@
 use glam::{Mat4, Vec3, Vec4};
 use glow::HasContext;
+use shared::character::{CharacterPalette, MAX_CHARACTER_JOINTS};
 use shared::world::PropPlacement;
 
 use crate::camera::Camera;
 
+use super::character_mesh::CharacterMeshGpu;
 use super::gizmo_mesh::GizmoMeshGpu;
 use super::prop_mesh::{PropMeshGpu, create_selection_ring_mesh, prop_model_matrix};
 use super::road_mesh::RoadMeshGpu;
@@ -11,10 +13,11 @@ use super::road_textures::{
     RoadLayerImage, create_placeholder_road_texture_array, create_road_texture_array_from_images,
 };
 use super::shaders::{
-    GIZMO_FRAG, GIZMO_VERT, LINE_FRAG, LINE_VERT, PROP_FRAG, PROP_VERT, ROAD_FRAG, ROAD_VERT,
-    TERRAIN_FRAG, TERRAIN_VERT, compile_program,
+    CHARACTER_FRAG, CHARACTER_VERT, GIZMO_FRAG, GIZMO_VERT, LINE_FRAG, LINE_VERT, PROP_FRAG,
+    PROP_VERT, ROAD_FRAG, ROAD_VERT, TERRAIN_FRAG, TERRAIN_VERT, compile_program,
 };
-use super::shadow_map::{ShadowMapGpu, compute_light_space_matrix, sun_direction};
+use super::shadow_map::{ShadowMapGpu, compute_light_space_matrix_with_min_extent, sun_direction};
+use super::studio_stage::StudioStageGpu;
 use super::terrain_mesh::{BrushOverlay, TerrainMeshGpu};
 use super::terrain_textures::{
     TerrainLayerImage, create_placeholder_terrain_texture_array,
@@ -25,6 +28,8 @@ pub struct Renderer {
     pub gl: glow::Context,
     terrain_prog: glow::Program,
     prop_prog: glow::Program,
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    char_prog: glow::Program,
     line_prog: glow::Program,
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     road_prog: glow::Program,
@@ -44,6 +49,8 @@ pub struct Renderer {
     dyn_line_vbo: glow::Buffer,
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     gizmo_mesh: GizmoMeshGpu,
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    studio_stage: StudioStageGpu,
     shadow_map: ShadowMapGpu,
     light_view_proj: Mat4,
     pub sun_dir: Vec3,
@@ -56,6 +63,7 @@ impl Renderer {
     pub fn new(gl: glow::Context) -> Result<Self, String> {
         let terrain_prog = compile_program(&gl, TERRAIN_VERT, TERRAIN_FRAG)?;
         let prop_prog = compile_program(&gl, PROP_VERT, PROP_FRAG)?;
+        let char_prog = compile_program(&gl, CHARACTER_VERT, CHARACTER_FRAG)?;
         let line_prog = compile_program(&gl, LINE_VERT, LINE_FRAG)?;
         let road_prog = compile_program(&gl, ROAD_VERT, ROAD_FRAG)?;
         let gizmo_prog = compile_program(&gl, GIZMO_VERT, GIZMO_FRAG)?;
@@ -93,6 +101,7 @@ impl Renderer {
             (vao, vbo)
         };
         let gizmo_mesh = GizmoMeshGpu::new(&gl)?;
+        let studio_stage = StudioStageGpu::new(&gl)?;
         let shadow_map = ShadowMapGpu::new(&gl)?;
 
         unsafe {
@@ -106,6 +115,7 @@ impl Renderer {
             gl,
             terrain_prog,
             prop_prog,
+            char_prog,
             line_prog,
             road_prog,
             gizmo_prog,
@@ -118,6 +128,7 @@ impl Renderer {
             dyn_line_vao,
             dyn_line_vbo,
             gizmo_mesh,
+            studio_stage,
             shadow_map,
             light_view_proj: Mat4::IDENTITY,
             sun_dir: sun_direction(),
@@ -159,7 +170,17 @@ impl Renderer {
 
     /// Binds and clears the directional shadow depth map FBO for shadow-caster draws.
     pub fn begin_shadow_pass(&mut self, camera: &Camera) {
-        self.light_view_proj = compute_light_space_matrix(camera, self.shadow_map.size);
+        self.begin_shadow_pass_with_min_extent(camera, 28.0);
+    }
+
+    /// Binds and clears the shadow depth map FBO with a configurable minimum orthographic half-extent.
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn begin_shadow_pass_with_min_extent(&mut self, camera: &Camera, min_half_extent: f32) {
+        self.light_view_proj = compute_light_space_matrix_with_min_extent(
+            camera,
+            self.shadow_map.size,
+            min_half_extent,
+        );
         unsafe {
             let gl = &self.gl;
             // Unbind TEXTURE2 before binding the shadow FBO to avoid WebGL2 feedback loops.
@@ -205,6 +226,56 @@ impl Renderer {
                 0,
             );
             gl.bind_vertex_array(None);
+        }
+    }
+
+    /// Renders a skinned or rigid modular character mesh into the active shadow depth map.
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_character_shadow(
+        &self,
+        mesh: &CharacterMeshGpu,
+        model: &Mat4,
+        skin_matrices: Option<&[[f32; 16]; MAX_CHARACTER_JOINTS]>,
+    ) {
+        if mesh.total_index_count <= 0 {
+            return;
+        }
+        let skinned = mesh.is_skinned && skin_matrices.is_some();
+        unsafe {
+            let gl = &self.gl;
+            gl.use_program(Some(self.shadow_map.char_prog));
+            gl.uniform_matrix_4_f32_slice(
+                self.shadow_map.u_char_light_vp_loc.as_ref(),
+                false,
+                self.light_view_proj.as_ref(),
+            );
+            gl.uniform_matrix_4_f32_slice(
+                self.shadow_map.u_char_model_loc.as_ref(),
+                false,
+                model.as_ref(),
+            );
+            gl.uniform_1_i32(
+                self.shadow_map.u_char_is_skinned_loc.as_ref(),
+                i32::from(skinned),
+            );
+            if skinned {
+                if let Some(mats) = skin_matrices {
+                    gl.uniform_matrix_4_f32_slice(
+                        self.shadow_map.u_char_joints_loc.as_ref(),
+                        false,
+                        mats.as_flattened(),
+                    );
+                }
+            }
+            gl.bind_vertex_array(Some(mesh.vao));
+            gl.draw_elements(
+                glow::TRIANGLES,
+                mesh.total_index_count,
+                glow::UNSIGNED_INT,
+                0,
+            );
+            gl.bind_vertex_array(None);
+            gl.use_program(Some(self.shadow_map.prog));
         }
     }
 
@@ -410,6 +481,135 @@ impl Renderer {
         }
     }
 
+    /// Renders a skinned or rigid modular character mesh with per-material palette overrides and shadows.
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_character_mesh(
+        &self,
+        camera: &Camera,
+        mesh: &CharacterMeshGpu,
+        model: &Mat4,
+        skin_matrices: Option<&[[f32; 16]; MAX_CHARACTER_JOINTS]>,
+        palette: Option<&CharacterPalette>,
+        tint: Vec4,
+    ) {
+        if mesh.submeshes.is_empty() {
+            return;
+        }
+        let vp = camera.view_proj_matrix();
+        let skinned = mesh.is_skinned && skin_matrices.is_some();
+        unsafe {
+            let gl = &self.gl;
+            gl.use_program(Some(self.char_prog));
+            let loc = |name| gl.get_uniform_location(self.char_prog, name);
+
+            gl.uniform_matrix_4_f32_slice(loc("u_view_proj").as_ref(), false, vp.as_ref());
+            gl.uniform_matrix_4_f32_slice(loc("u_model").as_ref(), false, model.as_ref());
+            gl.uniform_1_i32(loc("u_is_skinned").as_ref(), i32::from(skinned));
+            if skinned {
+                if let Some(mats) = skin_matrices {
+                    gl.uniform_matrix_4_f32_slice(
+                        loc("u_joints").as_ref(),
+                        false,
+                        mats.as_flattened(),
+                    );
+                }
+            }
+            gl.uniform_3_f32(loc("u_camera_pos").as_ref(), camera.eye.x, camera.eye.y, camera.eye.z);
+            gl.uniform_4_f32(loc("u_tint").as_ref(), tint.x, tint.y, tint.z, tint.w);
+            gl.uniform_1_f32(loc("u_fog_start").as_ref(), self.fog_start);
+            gl.uniform_1_f32(loc("u_fog_end").as_ref(), self.fog_end);
+            gl.uniform_3_f32(
+                loc("u_fog_color").as_ref(),
+                self.fog_color[0],
+                self.fog_color[1],
+                self.fog_color[2],
+            );
+
+            self.bind_shadow_uniforms(self.char_prog);
+
+            let base_tex_loc = loc("u_base_tex");
+            let base_color_loc = loc("u_base_color");
+            let emissive_loc = loc("u_emissive");
+            let cutoff_loc = loc("u_alpha_cutoff");
+            gl.uniform_1_i32(base_tex_loc.as_ref(), 0);
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_vertex_array(Some(mesh.vao));
+
+            let mut culling_enabled = true;
+            for sub in &mesh.submeshes {
+                if sub.double_sided && culling_enabled {
+                    gl.disable(glow::CULL_FACE);
+                    culling_enabled = false;
+                } else if !sub.double_sided && !culling_enabled {
+                    gl.enable(glow::CULL_FACE);
+                    culling_enabled = true;
+                }
+
+                let tex = sub
+                    .texture_index
+                    .and_then(|idx| mesh.textures.get(idx).copied())
+                    .unwrap_or(self.white_tex);
+                gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+
+                let base_color = palette
+                    .and_then(|p| p.override_for_material(&sub.material_name))
+                    .map(|rgb| [rgb[0], rgb[1], rgb[2], sub.base_color[3]])
+                    .unwrap_or(sub.base_color);
+                gl.uniform_4_f32(
+                    base_color_loc.as_ref(),
+                    base_color[0],
+                    base_color[1],
+                    base_color[2],
+                    base_color[3],
+                );
+                gl.uniform_3_f32(
+                    emissive_loc.as_ref(),
+                    sub.emissive[0],
+                    sub.emissive[1],
+                    sub.emissive[2],
+                );
+                gl.uniform_1_f32(cutoff_loc.as_ref(), sub.alpha_cutoff);
+                gl.draw_elements(
+                    glow::TRIANGLES,
+                    sub.index_count,
+                    glow::UNSIGNED_INT,
+                    sub.index_offset_bytes,
+                );
+            }
+
+            if !culling_enabled {
+                gl.enable(glow::CULL_FACE);
+            }
+            gl.bind_vertex_array(None);
+        }
+    }
+
+    /// Renders the Character Studio lit pedestal floor, reference grid, and +Z forward indicator.
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_studio_stage(&self, camera: &Camera, draw_pedestal: bool) {
+        if draw_pedestal {
+            self.draw_mesh(camera, &self.studio_stage.pedestal, &Mat4::IDENTITY, Vec4::ONE);
+        }
+        self.draw_line_segments(
+            camera,
+            &self.studio_stage.grid_segments,
+            [0.34, 0.39, 0.48, 0.55],
+            false,
+        );
+        self.draw_line_segments(
+            camera,
+            &self.studio_stage.axis_x,
+            [0.75, 0.28, 0.28, 0.72],
+            false,
+        );
+        self.draw_line_segments(
+            camera,
+            &self.studio_stage.axis_z,
+            [0.30, 0.62, 0.95, 0.85],
+            false,
+        );
+    }
+
     pub fn draw_prop(&self, camera: &Camera, mesh: &PropMeshGpu, placement: &PropPlacement, tint: Vec4) {
         let model = prop_model_matrix(placement);
         self.draw_mesh(camera, mesh, &model, tint);
@@ -518,6 +718,29 @@ impl Renderer {
         color: [f32; 4],
         on_top: bool,
     ) {
+        self.draw_dynamic_lines(camera, points, color, on_top, glow::LINE_STRIP);
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn draw_line_segments(
+        &self,
+        camera: &Camera,
+        points: &[[f32; 3]],
+        color: [f32; 4],
+        on_top: bool,
+    ) {
+        self.draw_dynamic_lines(camera, points, color, on_top, glow::LINES);
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    fn draw_dynamic_lines(
+        &self,
+        camera: &Camera,
+        points: &[[f32; 3]],
+        color: [f32; 4],
+        on_top: bool,
+        mode: u32,
+    ) {
         if points.len() < 2 {
             return;
         }
@@ -540,7 +763,7 @@ impl Renderer {
             let bytes: &[u8] =
                 std::slice::from_raw_parts(floats.as_ptr() as *const u8, floats.len() * 4);
             gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::DYNAMIC_DRAW);
-            gl.draw_arrays(glow::LINE_STRIP, 0, points.len() as i32);
+            gl.draw_arrays(mode, 0, points.len() as i32);
             gl.bind_vertex_array(None);
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
             if on_top {

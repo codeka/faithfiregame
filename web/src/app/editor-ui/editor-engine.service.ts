@@ -2,9 +2,94 @@ import { effect, inject, Injectable, OnDestroy, signal } from '@angular/core';
 import { EngineService } from '../engine.service';
 import { EditorEngineHandle, EngineHandle } from '../wasm/client_wasm';
 
+export type EditorMode = 'world' | 'characters' | 'entities';
+
 export type AreaKind =
   | 'Outside'
   | { Inside: 'Generated' | 'Ephemeral' | 'Permanent' };
+
+export interface SkinnedSlotDef {
+  id: string;
+  name: string;
+}
+
+export interface SocketDef {
+  id: string;
+  name: string;
+  parent_bone: string;
+  offset: [number, number, number];
+  rotation_deg: [number, number, number];
+  scale: number;
+}
+
+export interface SkeletonDef {
+  id: string;
+  name: string;
+  rig_path: string;
+  render_base_mesh: boolean;
+  skinned_slots: SkinnedSlotDef[];
+  sockets: SocketDef[];
+  animation_paths: string[];
+}
+
+export type PartAttachment =
+  | { kind: 'skinned'; slot: string }
+  | {
+      kind: 'socket';
+      socket_id: string;
+      offset: [number, number, number];
+      rotation_deg: [number, number, number];
+      scale: number;
+    };
+
+export interface CharacterPartDef {
+  id: string;
+  name: string;
+  skeleton_id: string;
+  attachment: PartAttachment;
+  path: string;
+  category: string;
+}
+
+export interface CharacterCatalog {
+  skeletons: SkeletonDef[];
+  parts: CharacterPartDef[];
+}
+
+export interface CharacterPalette {
+  skin_color?: [number, number, number] | null;
+  hair_color?: [number, number, number] | null;
+  eye_color?: [number, number, number] | null;
+  primary_color?: [number, number, number] | null;
+  secondary_color?: [number, number, number] | null;
+  accent_color?: [number, number, number] | null;
+}
+
+export interface CharacterDefinition {
+  id: string;
+  name: string;
+  skeleton_id: string;
+  show_base_mesh: boolean;
+  skinned_parts: Record<string, string>;
+  socket_parts: Record<string, string>;
+  palette: CharacterPalette;
+}
+
+export interface CharacterStudioStatus {
+  activePresetId: string;
+  activeSkeletonId: string;
+  availableClips: string[];
+  activeClip: string | null;
+  playing: boolean;
+  animTime: number;
+  clipDuration: number;
+  playbackSpeed: number;
+  showSkeletonDebug: boolean;
+  turntable: boolean;
+  selectedSocketId: string | null;
+  boneNames: string[];
+  saveState: string;
+}
 
 export interface AreaMetadata {
   id: string;
@@ -100,6 +185,7 @@ export interface SelectedRoadInfo {
 }
 
 export interface EditorStatus {
+  editorMode: EditorMode;
   areaId: string;
   areaName: string;
   isOutside: boolean;
@@ -124,6 +210,7 @@ export interface EditorStatus {
   previewScale: number;
   previewCastShadow: boolean;
   walkabilityMode: 'block' | 'walkable';
+  characterStudio: CharacterStudioStatus;
 }
 
 export function formatAreaKind(meta: AreaMetadata): string {
@@ -143,7 +230,10 @@ export class EditorEngineService implements OnDestroy {
 
   private handle: EditorEngineHandle | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pendingMode: EditorMode | null = null;
   private pendingArea: AreaMetadata | null = null;
+  private pendingCharacterCatalog: CharacterCatalog | null = null;
+  private pendingActiveCharacter: CharacterDefinition | null = null;
 
   readonly ready = this.core.ready;
   readonly initError = this.core.initError;
@@ -161,9 +251,21 @@ export class EditorEngineService implements OnDestroy {
         return;
       }
       const h = this.ensureHandle();
+      if (h && this.pendingMode) {
+        h.set_editor_mode(this.pendingMode);
+        this.pendingMode = null;
+      }
       if (h && this.pendingArea) {
         h.set_area(JSON.stringify(this.pendingArea));
         this.pendingArea = null;
+      }
+      if (h && this.pendingCharacterCatalog) {
+        h.set_character_catalog_json(JSON.stringify(this.pendingCharacterCatalog));
+        this.pendingCharacterCatalog = null;
+      }
+      if (h && this.pendingActiveCharacter) {
+        h.set_active_character_json(JSON.stringify(this.pendingActiveCharacter));
+        this.pendingActiveCharacter = null;
       }
       this.refreshStatus();
       if (this.pollTimer === null) {
@@ -351,6 +453,80 @@ export class EditorEngineService implements OnDestroy {
   saveNow(): void {
     this.ensureHandle()?.save_editor_changes();
     this.refreshStatus();
+  }
+
+  setEditorMode(mode: EditorMode): void {
+    const h = this.ensureHandle();
+    if (!h) {
+      this.pendingMode = mode;
+      return;
+    }
+    h.set_editor_mode(mode);
+    this.refreshStatus();
+  }
+
+  setCharacterCatalog(catalog: CharacterCatalog): void {
+    const h = this.ensureHandle();
+    if (!h) {
+      this.pendingCharacterCatalog = catalog;
+      return;
+    }
+    h.set_character_catalog_json(JSON.stringify(catalog));
+    this.refreshStatus();
+  }
+
+  setActiveCharacter(def: CharacterDefinition): void {
+    const h = this.ensureHandle();
+    if (!h) {
+      this.pendingActiveCharacter = def;
+      return;
+    }
+    h.set_active_character_json(JSON.stringify(def));
+    this.refreshStatus();
+  }
+
+  loadCharacterGlbBytes(path: string, bytes: Uint8Array): void {
+    this.ensureHandle()?.load_character_glb_bytes(path, bytes);
+    this.refreshStatus();
+  }
+
+  setCharacterAnimClip(clip: string): void {
+    this.ensureHandle()?.set_character_anim_clip(clip);
+    this.refreshStatus();
+  }
+
+  setCharacterAnimPlaying(playing: boolean): void {
+    this.ensureHandle()?.set_character_anim_playing(playing);
+    this.refreshStatus();
+  }
+
+  setCharacterAnimTime(timeSec: number): void {
+    this.ensureHandle()?.set_character_anim_time(timeSec);
+    this.refreshStatus();
+  }
+
+  setCharacterAnimSpeed(speed: number): void {
+    this.ensureHandle()?.set_character_anim_speed(speed);
+    this.refreshStatus();
+  }
+
+  setCharacterDebugSkeleton(show: boolean): void {
+    this.ensureHandle()?.set_character_debug_skeleton(show);
+    this.refreshStatus();
+  }
+
+  setCharacterTurntable(enabled: boolean): void {
+    this.ensureHandle()?.set_character_turntable(enabled);
+    this.refreshStatus();
+  }
+
+  setSelectedSocketId(socketId: string | null): void {
+    this.ensureHandle()?.set_selected_socket_id(socketId ?? '');
+    this.refreshStatus();
+  }
+
+  resetCharacterStudioCamera(): void {
+    this.ensureHandle()?.reset_character_studio_camera();
   }
 
   ngOnDestroy(): void {

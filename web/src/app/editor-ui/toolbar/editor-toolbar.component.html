@@ -1,96 +1,213 @@
 <header class="toolbar">
-  <!-- Area Switcher -->
-  <div class="group">
+  <!-- Brand + Top-Level Editor Mode Switcher -->
+  <section class="group" aria-label="Editor Mode Switcher">
     <span class="brand">Faith &amp; Fire Editor</span>
-    <select
-      class="select"
-      name="activeArea"
-      aria-label="Active Area"
-      [ngModel]="state.selectedAreaId()"
-      (ngModelChange)="state.selectArea($event)"
-    >
-      @for (area of state.areas(); track area.id) {
-        <option [value]="area.id">{{ describeArea(area) }}</option>
-      }
-    </select>
-    <button type="button" class="btn btn-secondary" (click)="state.openNewAreaModal()">+ Area</button>
+    <div class="mode-switch" role="tablist" aria-label="Editor Mode">
+      <button
+        type="button"
+        class="btn mode-btn"
+        [class.active]="editorMode() === 'world'"
+        (click)="engine.setEditorMode('world')"
+      >
+        World
+      </button>
+      <button
+        type="button"
+        class="btn mode-btn"
+        [class.active]="editorMode() === 'characters'"
+        (click)="engine.setEditorMode('characters')"
+      >
+        Characters
+      </button>
+      <button
+        type="button"
+        class="btn mode-btn"
+        [class.active]="editorMode() === 'entities'"
+        (click)="engine.setEditorMode('entities')"
+      >
+        Entities
+      </button>
+    </div>
+  </section>
 
-    <span class="coord-pill">
-      @if (state.status(); as s) {
-        @if (s.isOutside) {
-          Tile ({{ s.currentTile[0] }}, {{ s.currentTile[1] }})
-        } @else if (s.dimensions) {
-          {{ s.dimensions[0] }}×{{ s.dimensions[1] }}m
+  <span class="divider"></span>
+
+  @if (editorMode() === 'world') {
+    <!-- Area Switcher -->
+    <div class="group">
+      <select
+        class="select"
+        name="activeArea"
+        aria-label="Active Area"
+        [ngModel]="state.selectedAreaId()"
+        (ngModelChange)="state.selectArea($event)"
+      >
+        @for (area of state.areas(); track area.id) {
+          <option [value]="area.id">{{ describeArea(area) }}</option>
         }
-        @if (s.cursorPos; as p) {
-          · {{ p[0].toFixed(1) }}, {{ p[1].toFixed(1) }}, {{ p[2].toFixed(1) }}
+      </select>
+      <button type="button" class="btn btn-secondary" (click)="state.openNewAreaModal()">+ Area</button>
+
+      <span class="coord-pill">
+        @if (state.status(); as s) {
+          @if (s.isOutside) {
+            Tile ({{ s.currentTile[0] }}, {{ s.currentTile[1] }})
+          } @else if (s.dimensions) {
+            {{ s.dimensions[0] }}×{{ s.dimensions[1] }}m
+          }
+          @if (s.cursorPos; as p) {
+            · {{ p[0].toFixed(1) }}, {{ p[1].toFixed(1) }}, {{ p[2].toFixed(1) }}
+          } @else {
+            · —, —, —
+          }
         } @else {
-          · —, —, —
+          Tile (0, 0) · —, —, —
         }
-      } @else {
-        Tile (0, 0) · —, —, —
+      </span>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Primary World Tools -->
+    <div class="group">
+      <button
+        type="button"
+        class="btn"
+        [class.active]="state.activeTool() === 'heightmap'"
+        (click)="engine.setTool('heightmap')"
+      >
+        Heightmap
+      </button>
+      <button
+        type="button"
+        class="btn"
+        [class.active]="state.activeTool() === 'texture'"
+        (click)="engine.setTool('texture')"
+      >
+        Texture
+      </button>
+      <button
+        type="button"
+        class="btn"
+        [class.active]="state.activeTool() === 'road'"
+        (click)="engine.setTool('road')"
+      >
+        Roads
+      </button>
+      <button
+        type="button"
+        class="btn"
+        [class.active]="state.activeTool() === 'decoration'"
+        (click)="engine.setTool('decoration')"
+      >
+        Decoration
+      </button>
+      <button
+        type="button"
+        class="btn"
+        [class.active]="state.activeTool() === 'walkability'"
+        (click)="engine.setTool('walkability')"
+      >
+        Walkability
+      </button>
+    </div>
+
+    <!-- Status & Save -->
+    <div class="group right-group">
+      <span class="hint">WASD / Arrows: Pan · Mid-Drag: Orbit · Wheel: Zoom</span>
+      @if (state.status(); as s) {
+        <span
+          class="save-badge"
+          [class.dirty]="s.saveState === 'Unsaved'"
+          [class.error]="s.saveState.includes('fail')"
+        >
+          {{ s.saveState }}
+        </span>
       }
-    </span>
-  </div>
+      <button type="button" class="btn btn-primary" (click)="engine.saveNow()">Save</button>
+    </div>
+  } @else if (editorMode() === 'characters') {
+    <!-- Character Presets -->
+    <div class="group">
+      <select
+        class="select"
+        name="activeCharacterPreset"
+        aria-label="Active Character Preset"
+        [ngModel]="charState.activeCharacter().id"
+        (ngModelChange)="charState.selectPreset($event)"
+      >
+        @for (preset of charState.presets(); track preset.id) {
+          <option [value]="preset.id">{{ preset.name }} ({{ preset.id }})</option>
+        }
+      </select>
+      <button type="button" class="btn" (click)="charState.createNewPreset()">+ New</button>
+      <button type="button" class="btn" (click)="charState.duplicatePreset()">Duplicate</button>
+      <button
+        type="button"
+        class="btn btn-danger"
+        [disabled]="charState.presets().length <= 1"
+        (click)="charState.deleteActivePreset()"
+      >
+        Delete
+      </button>
+    </div>
 
-  <div class="divider"></div>
+    <div class="divider"></div>
 
-  <!-- Primary Tools -->
-  <div class="group">
-    <button
-      type="button"
-      class="btn"
-      [class.active]="state.activeTool() === 'heightmap'"
-      (click)="engine.setTool('heightmap')"
-    >
-      Heightmap
-    </button>
-    <button
-      type="button"
-      class="btn"
-      [class.active]="state.activeTool() === 'texture'"
-      (click)="engine.setTool('texture')"
-    >
-      Texture
-    </button>
-    <button
-      type="button"
-      class="btn"
-      [class.active]="state.activeTool() === 'road'"
-      (click)="engine.setTool('road')"
-    >
-      Roads
-    </button>
-    <button
-      type="button"
-      class="btn"
-      [class.active]="state.activeTool() === 'decoration'"
-      (click)="engine.setTool('decoration')"
-    >
-      Decoration
-    </button>
-    <button
-      type="button"
-      class="btn"
-      [class.active]="state.activeTool() === 'walkability'"
-      (click)="engine.setTool('walkability')"
-    >
-      Walkability
-    </button>
-  </div>
+    <!-- Sub-view & Studio Viewport Controls -->
+    <div class="group">
+      <button
+        type="button"
+        class="btn"
+        [class.active]="charState.selectedSubTab() === 'assemble'"
+        (click)="charState.selectedSubTab.set('assemble')"
+      >
+        Assemble
+      </button>
+      <button
+        type="button"
+        class="btn"
+        [class.active]="charState.selectedSubTab() === 'rig'"
+        (click)="charState.selectedSubTab.set('rig')"
+      >
+        Parts &amp; Rig
+      </button>
+      <button
+        type="button"
+        class="btn"
+        [class.active]="charStudio()?.showSkeletonDebug"
+        (click)="engine.setCharacterDebugSkeleton(!(charStudio()?.showSkeletonDebug ?? false))"
+      >
+        Bones &amp; Sockets
+      </button>
+      <button
+        type="button"
+        class="btn"
+        [class.active]="charStudio()?.turntable"
+        (click)="engine.setCharacterTurntable(!(charStudio()?.turntable ?? false))"
+      >
+        Turntable
+      </button>
+      <button type="button" class="btn" (click)="engine.resetCharacterStudioCamera()">
+        Frame
+      </button>
+    </div>
 
-  <!-- Status & Save -->
-  <div class="group right-group">
-    <span class="hint">WASD / Arrows: Pan · Mid-Drag: Orbit · Wheel: Zoom</span>
-    @if (state.status(); as s) {
+    <!-- Character Studio Status & Save -->
+    <div class="group right-group">
+      <span class="hint">Drag: Orbit · Shift+Drag / WS: Height · Wheel: Zoom · Space: Play</span>
       <span
         class="save-badge"
-        [class.dirty]="s.saveState === 'Unsaved'"
-        [class.error]="s.saveState.includes('fail')"
+        [class.dirty]="charState.saveState() === 'Unsaved'"
+        [class.error]="charState.saveState().includes('fail')"
       >
-        {{ s.saveState }}
+        {{ charState.saveState() }}
       </span>
-    }
-    <button type="button" class="btn btn-primary" (click)="engine.saveNow()">Save</button>
-  </div>
+      <button type="button" class="btn btn-primary" (click)="charState.saveAll()">Save</button>
+    </div>
+  } @else {
+    <div class="group right-group">
+      <span class="hint">Entity templates &amp; spawn definitions — coming soon</span>
+    </div>
+  }
 </header>

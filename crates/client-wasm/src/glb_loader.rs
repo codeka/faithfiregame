@@ -111,14 +111,24 @@ fn map_wrap(mode: gltf::texture::WrappingMode) -> PropTexWrap {
 }
 
 fn resolve_texture(tex: &gltf::Texture<'_>, state: &mut BuildState<'_>) -> Option<usize> {
-    if let Some(&existing) = state.tex_map.get(&tex.index()) {
+    load_gltf_texture(tex, state.blob, &mut state.tex_map, &mut state.textures)
+}
+
+/// Decodes and caches an embedded glTF texture (PNG/JPEG) into `textures`.
+pub fn load_gltf_texture(
+    tex: &gltf::Texture<'_>,
+    blob: Option<&[u8]>,
+    tex_map: &mut HashMap<usize, usize>,
+    textures: &mut Vec<ParsedPropTexture>,
+) -> Option<usize> {
+    if let Some(&existing) = tex_map.get(&tex.index()) {
         return Some(existing);
     }
 
     let decoded_uri_bytes: Vec<u8>;
     let (raw_bytes, mime_hint): (&[u8], Option<&str>) = match tex.source().source() {
         gltf::image::Source::View { view, mime_type } => {
-            let blob = state.blob?;
+            let blob = blob?;
             let start = view.offset();
             let end = start.checked_add(view.length())?;
             if end > blob.len() {
@@ -164,8 +174,8 @@ fn resolve_texture(tex: &gltf::Texture<'_>, state: &mut BuildState<'_>) -> Optio
         )
     );
 
-    let new_idx = state.textures.len();
-    state.textures.push(ParsedPropTexture {
+    let new_idx = textures.len();
+    textures.push(ParsedPropTexture {
         width,
         height,
         rgba8,
@@ -173,8 +183,35 @@ fn resolve_texture(tex: &gltf::Texture<'_>, state: &mut BuildState<'_>) -> Optio
         wrap_t: map_wrap(sampler.wrap_t()),
         nearest_filter,
     });
-    state.tex_map.insert(tex.index(), new_idx);
+    tex_map.insert(tex.index(), new_idx);
     Some(new_idx)
+}
+
+/// Computes smooth area-weighted vertex normals from triangle positions and indices.
+pub fn compute_vertex_normals(positions: &[Vec3], indices: &[u32]) -> Vec<[f32; 3]> {
+    let mut accum = vec![Vec3::ZERO; positions.len()];
+    for tri in indices.chunks_exact(3) {
+        let (i0, i1, i2) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
+        if let (Some(&p0), Some(&p1), Some(&p2)) =
+            (positions.get(i0), positions.get(i1), positions.get(i2))
+        {
+            let fnrm = (p1 - p0).cross(p2 - p0);
+            accum[i0] += fnrm;
+            accum[i1] += fnrm;
+            accum[i2] += fnrm;
+        }
+    }
+    accum
+        .into_iter()
+        .map(|n| {
+            let nn = n.normalize_or_zero();
+            if nn.length_squared() > 1e-6 {
+                nn.to_array()
+            } else {
+                [0.0, 1.0, 0.0]
+            }
+        })
+        .collect()
 }
 
 pub fn decode_embedded_rgba8(
@@ -359,31 +396,7 @@ fn visit_node(node: &gltf::Node<'_>, parent_xform: Mat4, state: &mut BuildState<
                     })
                     .collect()
             } else {
-                let mut accum = vec![Vec3::ZERO; world_positions.len()];
-                for tri in prim_indices.chunks_exact(3) {
-                    let (i0, i1, i2) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
-                    if let (Some(&p0), Some(&p1), Some(&p2)) = (
-                        world_positions.get(i0),
-                        world_positions.get(i1),
-                        world_positions.get(i2),
-                    ) {
-                        let fnrm = (p1 - p0).cross(p2 - p0);
-                        accum[i0] += fnrm;
-                        accum[i1] += fnrm;
-                        accum[i2] += fnrm;
-                    }
-                }
-                accum
-                    .into_iter()
-                    .map(|n| {
-                        let nn = n.normalize_or_zero();
-                        if nn.length_squared() > 1e-6 {
-                            nn.to_array()
-                        } else {
-                            [0.0, 1.0, 0.0]
-                        }
-                    })
-                    .collect()
+                compute_vertex_normals(&world_positions, &prim_indices)
             };
 
             for (i, wp) in world_positions.into_iter().enumerate() {

@@ -14,6 +14,7 @@ pub(crate) struct FrameIoBatch {
     pub tile_fetches: Vec<(String, i32, i32)>,
     pub inside_fetch: Option<String>,
     pub asset_fetches: Vec<AssetEntry>,
+    pub character_glb_fetches: Vec<String>,
     pub saves: Vec<PendingSave>,
 }
 
@@ -74,6 +75,32 @@ pub(crate) fn spawn_frame_io(inner: &Rc<RefCell<EngineInner>>, batch: FrameIoBat
                 } = &mut *st;
                 if let Err(e) = editor.on_glb_loaded(&renderer.gl, entry.id, &bytes) {
                     console::error_1(&e.into());
+                }
+            }
+        });
+    }
+
+    for url in batch.character_glb_fetches {
+        let weak = Rc::clone(inner);
+        spawn_local(async move {
+            match http_get_bytes(&url).await {
+                Ok((200, bytes)) => {
+                    let mut st = weak.borrow_mut();
+                    let EngineInner {
+                        renderer, editor, ..
+                    } = &mut *st;
+                    if let Err(e) = editor
+                        .character_studio
+                        .on_glb_loaded(&renderer.gl, url.clone(), &bytes)
+                    {
+                        console::error_1(&format!("Character GLB {url}: {e}").into());
+                    }
+                }
+                Ok((status, _)) => {
+                    console::warn_1(&format!("Failed loading character GLB {url}: HTTP {status}").into());
+                }
+                Err(e) => {
+                    console::warn_1(&format!("Error loading character GLB {url}: {e}").into());
                 }
             }
         });

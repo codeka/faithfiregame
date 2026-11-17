@@ -1,0 +1,435 @@
+<aside class="char-panel" aria-label="Character Controls">
+  @if (charState.selectedSubTab() === 'assemble') {
+    <div class="toolbox-title">Character Assembly</div>
+
+    <div class="tool-section">
+      <div class="row-between">
+        <span class="section-label">Identity</span>
+        <span class="id-pill">{{ charState.activeCharacter().id }}</span>
+      </div>
+      <input
+        type="text"
+        name="characterName"
+        class="text-input"
+        placeholder="Character Name"
+        [ngModel]="charState.activeCharacter().name"
+        (ngModelChange)="charState.setCharacterName($event)"
+      />
+      <label class="field-row">
+        <span class="section-label">Skeleton</span>
+        <select
+          class="select"
+          name="characterSkeleton"
+          [ngModel]="charState.activeCharacter().skeleton_id"
+          (ngModelChange)="charState.setSkeletonId($event)"
+        >
+          @for (skel of charState.catalog().skeletons; track skel.id) {
+            <option [value]="skel.id">{{ skel.name }}</option>
+          }
+        </select>
+      </label>
+      <label class="checkbox-field">
+        <input
+          type="checkbox"
+          name="showBaseMesh"
+          [checked]="charState.activeCharacter().show_base_mesh"
+          (change)="onShowBaseMeshChange($event)"
+        />
+        <span>Show Base Body</span>
+      </label>
+    </div>
+
+    @if (charState.activeSkeleton(); as skel) {
+      @if (skel.skinned_slots.length > 0) {
+        <div class="tool-section">
+          <span class="section-label">Skinned Slots</span>
+          @for (slot of skel.skinned_slots; track slot.id) {
+            <label class="field-row">
+              <span class="field-name">{{ slot.name }}</span>
+              <select
+                class="select"
+                [attr.name]="'slot_' + slot.id"
+                [ngModel]="charState.equippedSkinnedPart(slot.id)"
+                (ngModelChange)="charState.setSkinnedPart(slot.id, $event)"
+              >
+                <option value="">(None)</option>
+                @for (part of charState.partsForSlot(slot.id); track part.id) {
+                  <option [value]="part.id">{{ part.name }}</option>
+                }
+              </select>
+            </label>
+          }
+        </div>
+      }
+
+      @if (skel.sockets.length > 0) {
+        <div class="tool-section">
+          <span class="section-label">Socket Attachments</span>
+          @for (sock of skel.sockets; track sock.id) {
+            <label class="field-row">
+              <span class="field-name">{{ sock.name }}</span>
+              <select
+                class="select"
+                [attr.name]="'socket_' + sock.id"
+                [ngModel]="charState.equippedSocketPart(sock.id)"
+                (ngModelChange)="charState.setSocketPart(sock.id, $event)"
+              >
+                <option value="">(None)</option>
+                @for (part of charState.partsForSocket(sock.id); track part.id) {
+                  <option [value]="part.id">{{ part.name }}</option>
+                }
+              </select>
+            </label>
+          }
+        </div>
+      }
+    }
+
+    <div class="tool-section">
+      <span class="section-label">Material Palette Tints</span>
+      @for (ch of paletteChannels; track ch.key) {
+        <div class="palette-row">
+          <span class="field-name">{{ ch.label }}</span>
+          <input
+            type="color"
+            class="color-swatch"
+            [attr.name]="'palette_' + ch.key"
+            [value]="paletteHex(ch.key, ch.defaultHex)"
+            (input)="onPaletteInput(ch.key, $event)"
+          />
+          <button
+            type="button"
+            class="btn btn-sm"
+            [disabled]="!hasPaletteOverride(ch.key)"
+            (click)="charState.clearPaletteColor(ch.key)"
+          >
+            Default
+          </button>
+        </div>
+      }
+    </div>
+  } @else {
+    <div class="toolbox-title">Parts &amp; Rig</div>
+
+    <div
+      class="tool-section import-dropzone"
+      [class.drag-over]="dragOver()"
+      (dragover)="onDragOver($event)"
+      (dragleave)="onDragLeave($event)"
+      (drop)="onDrop($event)"
+    >
+      <span class="section-label">Import .glb Asset</span>
+      <label class="field-row">
+        <span class="field-name">Import As</span>
+        <select class="select" name="importKind" [ngModel]="importKind()" (ngModelChange)="importKind.set($event)">
+          <option value="skinned">Skinned Part</option>
+          <option value="socket">Socket Part</option>
+          <option value="animation">Animation Clip</option>
+          <option value="skeleton">New Skeleton</option>
+        </select>
+      </label>
+
+      @if (importKind() === 'skinned') {
+        <label class="field-row">
+          <span class="field-name">Slot</span>
+          <select class="select" name="importSlot" [ngModel]="importSlot()" (ngModelChange)="importSlot.set($event)">
+            @for (slot of charState.activeSkeleton()?.skinned_slots ?? []; track slot.id) {
+              <option [value]="slot.id">{{ slot.name }}</option>
+            }
+          </select>
+        </label>
+        <input
+          type="text"
+          name="importCategory"
+          class="text-input"
+          placeholder="Category (e.g. Torso)"
+          [ngModel]="importCategory()"
+          (ngModelChange)="importCategory.set($event)"
+        />
+      } @else if (importKind() === 'socket') {
+        <label class="field-row">
+          <span class="field-name">Socket</span>
+          <select class="select" name="importSocket" [ngModel]="importSocket()" (ngModelChange)="importSocket.set($event)">
+            @for (sock of charState.activeSkeleton()?.sockets ?? []; track sock.id) {
+              <option [value]="sock.id">{{ sock.name }}</option>
+            }
+          </select>
+        </label>
+        <input
+          type="text"
+          name="importCategory"
+          class="text-input"
+          placeholder="Category (e.g. Weapons)"
+          [ngModel]="importCategory()"
+          (ngModelChange)="importCategory.set($event)"
+        />
+      } @else if (importKind() === 'skeleton') {
+        <input
+          type="text"
+          name="importSkeletonName"
+          class="text-input"
+          placeholder="Skeleton display name (optional)"
+          [ngModel]="importSkeletonName()"
+          (ngModelChange)="importSkeletonName.set($event)"
+        />
+      }
+
+      <input #charGlbInput type="file" accept=".glb" multiple hidden (change)="onGlbSelected($event)" />
+      <button
+        type="button"
+        class="btn btn-sm btn-import"
+        [disabled]="charState.importingGlb()"
+        (click)="charGlbInput.click()"
+      >
+        @if (charState.importingGlb()) {
+          Importing .glb…
+        } @else {
+          + Import Character .glb…
+        }
+      </button>
+      @if (charState.importMessage(); as msg) {
+        <div class="feedback ok">{{ msg }}</div>
+      }
+      @if (charState.importError(); as err) {
+        <div class="feedback err">{{ err }}</div>
+      }
+    </div>
+
+    <div class="tool-section">
+      <span class="section-label">Add Skinned Slot</span>
+      <div class="inline-add">
+        <input
+          type="text"
+          name="newSlotName"
+          class="text-input"
+          placeholder="Slot name (e.g. Gloves)"
+          [ngModel]="newSlotName()"
+          (ngModelChange)="newSlotName.set($event)"
+        />
+        <button type="button" class="btn btn-sm" (click)="addCustomSlot()">+ Slot</button>
+      </div>
+    </div>
+
+    <div class="tool-section">
+      <span class="section-label">Sockets &amp; Transforms</span>
+      <select
+        class="select"
+        name="selectedSocket"
+        [ngModel]="charState.selectedSocket()?.id ?? ''"
+        (ngModelChange)="charState.selectSocket($event)"
+      >
+        @for (sock of charState.activeSkeleton()?.sockets ?? []; track sock.id) {
+          <option [value]="sock.id">{{ sock.name }} ({{ sock.id }})</option>
+        }
+      </select>
+
+      <div class="inline-add">
+        <input
+          type="text"
+          name="newSocketName"
+          class="text-input"
+          placeholder="New socket name"
+          [ngModel]="newSocketName()"
+          (ngModelChange)="newSocketName.set($event)"
+        />
+        <button type="button" class="btn btn-sm" (click)="addCustomSocket()">+ Socket</button>
+      </div>
+
+      @if (charState.selectedSocket(); as sock) {
+        <label class="field-row">
+          <span class="field-name">Parent Bone</span>
+          <select
+            class="select"
+            name="socketParentBone"
+            [ngModel]="sock.parent_bone"
+            (ngModelChange)="charState.updateSocket(sock.id, { parent_bone: $event })"
+          >
+            @for (b of boneOptions(); track b) {
+              <option [value]="b">{{ b }}</option>
+            }
+          </select>
+        </label>
+
+        <span class="sub-label">Socket Offset (m)</span>
+        <div class="xyz-grid">
+          <label class="num-cell">
+            <span>X</span>
+            <input
+              type="number"
+              name="socketOffsetX"
+              step="0.01"
+              [ngModel]="sock.offset[0]"
+              (ngModelChange)="updateSocketOffset(0, +$event)"
+            />
+          </label>
+          <label class="num-cell">
+            <span>Y</span>
+            <input
+              type="number"
+              name="socketOffsetY"
+              step="0.01"
+              [ngModel]="sock.offset[1]"
+              (ngModelChange)="updateSocketOffset(1, +$event)"
+            />
+          </label>
+          <label class="num-cell">
+            <span>Z</span>
+            <input
+              type="number"
+              name="socketOffsetZ"
+              step="0.01"
+              [ngModel]="sock.offset[2]"
+              (ngModelChange)="updateSocketOffset(2, +$event)"
+            />
+          </label>
+        </div>
+
+        <span class="sub-label">Socket Rotation (deg)</span>
+        <div class="xyz-grid">
+          <label class="num-cell">
+            <span>X</span>
+            <input
+              type="number"
+              name="socketRotX"
+              step="1"
+              [ngModel]="sock.rotation_deg[0]"
+              (ngModelChange)="updateSocketRotation(0, +$event)"
+            />
+          </label>
+          <label class="num-cell">
+            <span>Y</span>
+            <input
+              type="number"
+              name="socketRotY"
+              step="1"
+              [ngModel]="sock.rotation_deg[1]"
+              (ngModelChange)="updateSocketRotation(1, +$event)"
+            />
+          </label>
+          <label class="num-cell">
+            <span>Z</span>
+            <input
+              type="number"
+              name="socketRotZ"
+              step="1"
+              [ngModel]="sock.rotation_deg[2]"
+              (ngModelChange)="updateSocketRotation(2, +$event)"
+            />
+          </label>
+        </div>
+
+        <label class="field-row">
+          <span class="field-name">Socket Scale</span>
+          <input
+            type="number"
+            name="socketScale"
+            class="text-input num-single"
+            step="0.05"
+            min="0.05"
+            max="10"
+            [ngModel]="sock.scale"
+            (ngModelChange)="updateSocketScale(+$event)"
+          />
+        </label>
+
+        @if (charState.equippedPartOnSelectedSocket(); as eqPart) {
+          @if (eqPart.attachment.kind === 'socket') {
+            <span class="sub-label">{{ eqPart.name }} Local Offset (m)</span>
+            <div class="xyz-grid">
+              <label class="num-cell">
+                <span>X</span>
+                <input
+                  type="number"
+                  name="partOffsetX"
+                  step="0.01"
+                  [ngModel]="eqPart.attachment.offset[0]"
+                  (ngModelChange)="updatePartOffset(0, +$event)"
+                />
+              </label>
+              <label class="num-cell">
+                <span>Y</span>
+                <input
+                  type="number"
+                  name="partOffsetY"
+                  step="0.01"
+                  [ngModel]="eqPart.attachment.offset[1]"
+                  (ngModelChange)="updatePartOffset(1, +$event)"
+                />
+              </label>
+              <label class="num-cell">
+                <span>Z</span>
+                <input
+                  type="number"
+                  name="partOffsetZ"
+                  step="0.01"
+                  [ngModel]="eqPart.attachment.offset[2]"
+                  (ngModelChange)="updatePartOffset(2, +$event)"
+                />
+              </label>
+            </div>
+          }
+        }
+      }
+    </div>
+  }
+</aside>
+
+<div class="anim-transport" aria-label="Animation Controls">
+  <div class="clip-pills">
+    <button
+      type="button"
+      class="btn btn-sm"
+      [class.active]="!(studioStatus()?.activeClip)"
+      (click)="engine.setCharacterAnimClip('__bind__')"
+    >
+      Bind Pose
+    </button>
+    @for (clip of studioStatus()?.availableClips ?? []; track clip) {
+      <button
+        type="button"
+        class="btn btn-sm"
+        [class.active]="studioStatus()?.activeClip === clip"
+        (click)="engine.setCharacterAnimClip(clip)"
+      >
+        {{ clip }}
+      </button>
+    }
+  </div>
+
+  <div class="transport-row">
+    <button
+      type="button"
+      class="btn btn-sm play-btn"
+      [disabled]="!(studioStatus()?.activeClip)"
+      (click)="engine.setCharacterAnimPlaying(!(studioStatus()?.playing ?? false))"
+    >
+      {{ studioStatus()?.playing ? 'Pause' : 'Play' }}
+    </button>
+    <input
+      type="range"
+      name="animScrubber"
+      class="scrubber"
+      min="0"
+      [max]="studioStatus()?.clipDuration || 1"
+      step="0.01"
+      [disabled]="!(studioStatus()?.activeClip)"
+      [value]="studioStatus()?.animTime ?? 0"
+      (input)="onScrubInput($event)"
+    />
+    <span class="time-readout">
+      {{ (studioStatus()?.animTime ?? 0).toFixed(2) }}s / {{ (studioStatus()?.clipDuration ?? 0).toFixed(2) }}s
+    </span>
+    <div class="speed-pills">
+      @for (spd of speedOptions; track spd) {
+        <button
+          type="button"
+          class="btn btn-sm speed-btn"
+          [class.active]="((studioStatus()?.playbackSpeed ?? 1) - spd) * ((studioStatus()?.playbackSpeed ?? 1) - spd) < 0.001"
+          (click)="engine.setCharacterAnimSpeed(spd)"
+        >
+          {{ spd }}x
+        </button>
+      }
+    </div>
+  </div>
+</div>

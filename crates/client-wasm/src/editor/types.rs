@@ -6,6 +6,13 @@ use shared::world::{InsideVisData, RoadStyle, TileVisData};
 use crate::render::{RoadMeshGpu, TerrainMeshGpu};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorMode {
+    World,
+    Characters,
+    Entities,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorTool {
     Heightmap,
     Texture,
@@ -101,7 +108,26 @@ pub struct SelectedRoadInfo {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CharacterStudioStatusSnapshot {
+    pub active_preset_id: String,
+    pub active_skeleton_id: String,
+    pub available_clips: Vec<String>,
+    pub active_clip: Option<String>,
+    pub playing: bool,
+    pub anim_time: f32,
+    pub clip_duration: f32,
+    pub playback_speed: f32,
+    pub show_skeleton_debug: bool,
+    pub turntable: bool,
+    pub selected_socket_id: Option<String>,
+    pub bone_names: Vec<String>,
+    pub save_state: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EditorStatusSnapshot {
+    pub editor_mode: &'static str,
     pub area_id: String,
     pub area_name: String,
     pub is_outside: bool,
@@ -126,4 +152,5 @@ pub struct EditorStatusSnapshot {
     pub preview_scale: f32,
     pub preview_cast_shadow: bool,
     pub walkability_mode: &'static str,
+    pub character_studio: CharacterStudioStatusSnapshot,
 }
