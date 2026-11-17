@@ -46,6 +46,15 @@
   text-align: center;
 }
 
+.landing-logo {
+  width: 112px;
+  height: 112px;
+  margin: 0 auto 2px;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.55));
+}
+
 .eyebrow {
   margin: 0;
   font-size: 11px;

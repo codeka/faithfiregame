@@ -79,6 +79,10 @@ describe('HudComponent & LoginComponent entry flow', () => {
       (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
     ).map((b) => b.textContent?.trim());
     expect(text).toContain('Faith & Fire');
+    const landingLogo = (fixture.nativeElement as HTMLElement).querySelector(
+      'img.landing-logo',
+    ) as HTMLImageElement | null;
+    expect(landingLogo?.getAttribute('src')).toBe('/logo-landing.png');
     expect(buttons).toContain('Play');
     expect(buttons).toContain('Login');
     expect(landingCalls).toBeGreaterThan(0);
@@ -208,6 +212,11 @@ describe('HudComponent & LoginComponent entry flow', () => {
     const fixture = TestBed.createComponent(LoginComponent);
     fixture.detectChanges();
     await fixture.whenStable();
+
+    const loginLogo = (fixture.nativeElement as HTMLElement).querySelector(
+      'img.login-logo',
+    ) as HTMLImageElement | null;
+    expect(loginLogo?.getAttribute('src')).toBe('/logo-icon.png');
 
     fixture.componentInstance.username = 'survivor';
     fixture.componentInstance.password = 'secret-pass';

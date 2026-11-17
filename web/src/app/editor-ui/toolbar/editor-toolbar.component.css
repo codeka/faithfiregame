@@ -30,10 +30,20 @@
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-weight: 700;
   letter-spacing: 0.02em;
   color: #f6ad55;
   margin-right: 4px;
+}
+
+.brand-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .mode-switch {
