@@ -1,0 +1,48 @@
+<main class="login-backdrop">
+  <section class="login-card" aria-label="Account Login">
+    <header class="card-header">
+      <p class="eyebrow">Faith &amp; Fire</p>
+      <h1>Sign In</h1>
+      <p class="subtitle">Resume your journey across the ruins.</p>
+    </header>
+
+    @if (errorMessage(); as err) {
+      <div class="error-banner" role="alert">{{ err }}</div>
+    }
+
+    <form class="login-form" (ngSubmit)="onSubmit()">
+      <label class="field">
+        <span>Username</span>
+        <input
+          type="text"
+          name="username"
+          autocomplete="username"
+          maxlength="32"
+          [(ngModel)]="username"
+          [disabled]="submitting()"
+          required
+        />
+      </label>
+
+      <label class="field">
+        <span>Password</span>
+        <input
+          type="password"
+          name="password"
+          autocomplete="current-password"
+          maxlength="128"
+          [(ngModel)]="password"
+          [disabled]="submitting()"
+          required
+        />
+      </label>
+
+      <div class="actions">
+        <button type="submit" class="btn-primary" [disabled]="submitting()">
+          {{ submitting() ? 'Signing in...' : 'Log In' }}
+        </button>
+        <a routerLink="/" class="btn-back">Back</a>
+      </div>
+    </form>
+  </section>
+</main>

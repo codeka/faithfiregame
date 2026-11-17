@@ -129,13 +129,16 @@ pub(crate) fn spawn_asset_catalog_load(inner: &Rc<RefCell<EngineInner>>) {
             catalog.road_textures = default_road_texture_entries();
         }
 
-        #[cfg(feature = "editor")]
         {
             let mut st = weak.borrow_mut();
-            let EngineInner {
-                renderer, editor, ..
-            } = &mut *st;
-            editor.set_catalog(&renderer.gl, &catalog);
+            st.game.set_asset_catalog(&catalog);
+            #[cfg(feature = "editor")]
+            {
+                let EngineInner {
+                    renderer, editor, ..
+                } = &mut *st;
+                editor.set_catalog(&renderer.gl, &catalog);
+            }
         }
 
         let mut terrain_images = Vec::with_capacity(catalog.terrain_textures.len());

@@ -1517,9 +1517,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "hmac",
  "postcard",
  "serde",
  "serde_json",
+ "sha2",
  "shared",
  "sqlx",
  "tokio",

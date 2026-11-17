@@ -55,7 +55,9 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let app = Router::new()
+        .route("/api/auth/play", post(net::play_guest_handler))
         .route("/api/auth/login", post(net::login_handler))
+        .route("/api/auth/logout", post(net::logout_handler))
         .route("/ws", get(net::ws_handler))
         .route("/world/areas/{area_id}/area.bin", get(net::get_area_bin))
         .route(

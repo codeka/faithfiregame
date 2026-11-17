@@ -26,6 +26,15 @@ impl TileSimData {
             spawns: Vec::new(),
         }
     }
+
+    pub fn elevation_at(&self, lx: f32, lz: f32) -> f32 {
+        if self.elevation.len() < TILE_SIZE * TILE_SIZE {
+            return 0.0;
+        }
+        let ix = (lx.floor() as isize).clamp(0, TILE_SIZE as isize - 1) as usize;
+        let iz = (lz.floor() as isize).clamp(0, TILE_SIZE as isize - 1) as usize;
+        self.elevation[iz * TILE_SIZE + ix]
+    }
 }
 
 /// Client visual payload for one 64m × 64m Outside tile (`vis.bin`).

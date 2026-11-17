@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
-use crate::world::{InsideVisData, TILE_SIZE, WalkMask};
+use crate::world::{InsideSimData, InsideVisData, TILE_SIZE, WalkMask};
 
 /// Read-only 1m × 1m grid interface for A* and Line-of-Sight pathfinding.
 pub trait WalkGrid {
@@ -28,6 +28,23 @@ impl WalkGrid for WalkMask {
 }
 
 impl WalkGrid for InsideVisData {
+    fn width(&self) -> usize {
+        self.width as usize
+    }
+
+    fn length(&self) -> usize {
+        self.length as usize
+    }
+
+    fn is_walkable(&self, x: i32, z: i32) -> bool {
+        if x < 0 || z < 0 {
+            return false;
+        }
+        self.get_walkable(x as usize, z as usize)
+    }
+}
+
+impl WalkGrid for InsideSimData {
     fn width(&self) -> usize {
         self.width as usize
     }

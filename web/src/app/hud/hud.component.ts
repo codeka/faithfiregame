@@ -1,26 +1,115 @@
-import { Component } from '@angular/core';
+import { Component, effect, inject, OnDestroy, signal } from '@angular/core';
+import { Router, RouterLink } from '@angular/router';
+import { AuthService } from '../auth/auth.service';
+import { EngineService } from '../engine.service';
+
+export type WakeOverlayState = 'closed' | 'animating' | 'fading' | 'done';
 
 @Component({
   selector: 'app-hud',
   standalone: true,
-  template: `
-    <div class="hud-banner">
-      <span>Faith &amp; Fire — In-Game HUD</span>
-    </div>
-  `,
-  styles: [
-    `
-      .hud-banner {
-        position: fixed;
-        top: 12px;
-        left: 12px;
-        pointer-events: auto;
-        padding: 6px 12px;
-        border-radius: 6px;
-        background: rgba(16, 20, 28, 0.85);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-      }
-    `,
-  ],
+  imports: [RouterLink],
+  templateUrl: './hud.component.html',
+  styleUrl: './hud.component.css',
 })
-export class HudComponent {}
+export class HudComponent implements OnDestroy {
+  readonly auth = inject(AuthService);
+  readonly engine = inject(EngineService);
+  private readonly router = inject(Router);
+
+  readonly startingPlay = signal(false);
+  readonly playError = signal<string | null>(null);
+  readonly wakeOverlayState = signal<WakeOverlayState>('done');
+
+  private wakeTriggered = false;
+  private wakeFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor() {
+    effect(() => {
+      const token = this.auth.sessionToken();
+      this.clearWakeTimer();
+      this.wakeTriggered = false;
+      if (token) {
+        this.playError.set(null);
+        this.wakeOverlayState.set('closed');
+        this.engine.connectGameSession(token);
+      } else {
+        this.wakeOverlayState.set('done');
+        this.engine.enterLandingMode();
+      }
+    });
+
+    effect(() => {
+      if (!this.auth.hasSession()) {
+        return;
+      }
+      const st = this.engine.gameStatus();
+      if (!st) {
+        return;
+      }
+      if (st.phase === 'unauthorized') {
+        void this.auth.logout(false);
+        return;
+      }
+      if (st.wakeReady && !this.wakeTriggered) {
+        this.wakeTriggered = true;
+        const mode: WakeOverlayState = st.freshCryoWake ? 'animating' : 'fading';
+        this.wakeOverlayState.set(mode);
+        this.scheduleWakeComplete(mode === 'animating' ? 3700 : 380);
+      }
+    });
+  }
+
+  async onPlay(): Promise<void> {
+    if (this.startingPlay()) {
+      return;
+    }
+    this.playError.set(null);
+    this.startingPlay.set(true);
+    try {
+      await this.auth.startFreshPlay();
+    } catch (err) {
+      this.playError.set(err instanceof Error ? err.message : String(err));
+    } finally {
+      this.startingPlay.set(false);
+    }
+  }
+
+  onGoLogin(): void {
+    void this.router.navigate(['/login']);
+  }
+
+  async onLeave(): Promise<void> {
+    this.clearWakeTimer();
+    this.engine.disconnectGameSession();
+    await this.auth.logout();
+  }
+
+  onWakeOverlayEnd(event: Event): void {
+    if (event.target === event.currentTarget) {
+      this.finishWakeOverlay();
+    }
+  }
+
+  private scheduleWakeComplete(delayMs: number): void {
+    this.clearWakeTimer();
+    this.wakeFallbackTimer = setTimeout(() => this.finishWakeOverlay(), delayMs);
+  }
+
+  private finishWakeOverlay(): void {
+    this.clearWakeTimer();
+    this.wakeOverlayState.set('done');
+  }
+
+  private clearWakeTimer(): void {
+    if (this.wakeFallbackTimer !== null) {
+      clearTimeout(this.wakeFallbackTimer);
+      this.wakeFallbackTimer = null;
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.clearWakeTimer();
+    this.engine.stopGamePolling();
+  }
+}

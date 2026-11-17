@@ -134,6 +134,23 @@ pub struct CharacterDefinition {
 }
 
 impl CharacterDefinition {
+    /// Default bare-plus-underwear awakening character spawned in `cryo_prison`.
+    pub fn cryo_awakening_default() -> Self {
+        let mut skinned_parts = BTreeMap::new();
+        skinned_parts.insert("head".to_owned(), "head_standard".to_owned());
+        let mut socket_parts = BTreeMap::new();
+        socket_parts.insert("socket_head".to_owned(), "hair_short_crop".to_owned());
+        Self {
+            id: "cryo_awakening".to_owned(),
+            name: "Cryo Prisoner".to_owned(),
+            skeleton_id: "humanoid".to_owned(),
+            show_base_mesh: true,
+            skinned_parts,
+            socket_parts,
+            palette: CharacterPalette::default(),
+        }
+    }
+
     /// Encodes this definition into a compact index-based representation using `catalog`.
     pub fn to_compact(&self, catalog: &CharacterCatalog) -> Option<CompactCharacterAppearance> {
         let skel_pos = catalog
@@ -375,6 +392,26 @@ mod tests {
             postcard::from_bytes(&encoded).expect("postcard decode");
         let rebuilt = decoded
             .to_definition("cryo_prisoner", "Cryo Prisoner", &catalog)
+            .expect("to_definition succeeds");
+        assert_eq!(rebuilt, def);
+    }
+
+    #[test]
+    fn cryo_awakening_default_roundtrips_without_clothes() {
+        let catalog = sample_catalog();
+        let def = CharacterDefinition::cryo_awakening_default();
+        assert!(def.show_base_mesh);
+        assert_eq!(def.skinned_parts.get("head").map(String::as_str), Some("head_standard"));
+        assert!(!def.skinned_parts.contains_key("torso"));
+        assert!(!def.skinned_parts.contains_key("legs"));
+        assert_eq!(
+            def.socket_parts.get("socket_head").map(String::as_str),
+            Some("hair_short_crop")
+        );
+
+        let compact = def.to_compact(&catalog).expect("to_compact succeeds");
+        let rebuilt = compact
+            .to_definition("cryo_awakening", "Cryo Prisoner", &catalog)
             .expect("to_definition succeeds");
         assert_eq!(rebuilt, def);
     }

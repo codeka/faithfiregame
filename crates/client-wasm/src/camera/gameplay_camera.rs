@@ -13,6 +13,8 @@ pub struct GameplayCameraController {
     pub yaw_deg: f32,
     pub pitch_deg: f32,
     pub distance: f32,
+    pub min_distance: f32,
+    pub max_distance: f32,
 }
 
 impl Default for GameplayCameraController {
@@ -23,7 +25,19 @@ impl Default for GameplayCameraController {
             yaw_deg: 45.0,
             pitch_deg: 42.0,
             distance: 22.0,
+            min_distance: 8.0,
+            max_distance: 58.0,
         }
+    }
+}
+
+impl GameplayCameraController {
+    pub fn snap_to(&mut self, pos: Vec3, yaw_deg: f32, pitch_deg: f32, distance: f32) {
+        self.player_pos = pos;
+        self.current_target = pos + Vec3::Y * 1.2;
+        self.yaw_deg = yaw_deg;
+        self.pitch_deg = pitch_deg.clamp(18.0, 72.0);
+        self.distance = distance.clamp(self.min_distance, self.max_distance);
     }
 }
 
@@ -35,7 +49,7 @@ impl CameraController for GameplayCameraController {
         }
         if input.scroll_delta.abs() > 0.0 {
             let factor = (1.0 + input.scroll_delta * 0.1).clamp(0.7, 1.4);
-            self.distance = (self.distance * factor).clamp(8.0, 58.0);
+            self.distance = (self.distance * factor).clamp(self.min_distance, self.max_distance);
         }
 
         let lerp_t = (8.0 * dt).min(1.0);

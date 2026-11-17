@@ -31,6 +31,30 @@ impl InsideSimData {
             spawns: Vec::new(),
         }
     }
+
+    pub fn get_walkable(&self, x: usize, z: usize) -> bool {
+        let w = self.width as usize;
+        let l = self.length as usize;
+        if x >= w || z >= l {
+            return false;
+        }
+        let idx = z * w + x;
+        self.walkable
+            .get(idx / 64)
+            .map(|word| (word >> (idx % 64)) & 1 != 0)
+            .unwrap_or(false)
+    }
+
+    pub fn elevation_at(&self, x: f32, z: f32) -> f32 {
+        let w = self.width as usize;
+        let l = self.length as usize;
+        if w == 0 || l == 0 || self.elevation.len() < w * l {
+            return 0.0;
+        }
+        let ix = (x.floor() as isize).clamp(0, w as isize - 1) as usize;
+        let iz = (z.floor() as isize).clamp(0, l as isize - 1) as usize;
+        self.elevation[iz * w + ix]
+    }
 }
 
 /// Client visual payload for an arbitrary-size Inside area (`vis.bin`).

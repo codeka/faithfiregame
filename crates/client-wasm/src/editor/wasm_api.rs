@@ -6,12 +6,25 @@ use shared::world::{AreaMetadata, RoadStyle};
 use wasm_bindgen::prelude::*;
 
 use crate::EngineHandle;
-use crate::engine::EngineInner;
+use crate::engine::{ClientRunMode, EngineInner};
+use crate::net::NetClient;
 
 use super::{
     DecorationSubMode, EditorMode, EditorTool, HeightMode, RoadSubMode, WalkabilityMode,
     io::dispatch_pending_saves,
 };
+
+fn activate_editor_mode(st: &mut EngineInner) {
+    st.active_run_mode = ClientRunMode::Editor;
+    let _ = st.canvas.style().set_property("cursor", "");
+    let need_editor_ws = st
+        .net
+        .as_ref()
+        .is_none_or(|n| n.is_closed() || n.session_token() != "editor");
+    if need_editor_ws {
+        st.net = NetClient::connect(&st.ws_url, "editor".to_owned()).ok();
+    }
+}
 
 #[wasm_bindgen]
 pub struct EditorEngineHandle {
@@ -22,6 +35,7 @@ pub struct EditorEngineHandle {
 impl EditorEngineHandle {
     #[wasm_bindgen(constructor)]
     pub fn new(engine: &EngineHandle) -> EditorEngineHandle {
+        activate_editor_mode(&mut engine.inner.borrow_mut());
         EditorEngineHandle {
             inner: Rc::clone(&engine.inner),
         }
@@ -31,6 +45,7 @@ impl EditorEngineHandle {
         let meta: AreaMetadata = serde_json::from_str(area_json)
             .map_err(|e| JsValue::from_str(&format!("invalid AreaMetadata json: {e}")))?;
         let mut st = self.inner.borrow_mut();
+        activate_editor_mode(&mut st);
         let EngineInner {
             renderer,
             editor,
@@ -320,6 +335,7 @@ impl EditorEngineHandle {
             _ => EditorMode::World,
         };
         let mut st = self.inner.borrow_mut();
+        activate_editor_mode(&mut st);
         st.editor.mode = next;
     }
 

@@ -1,0 +1,74 @@
+@if (!auth.hasSession()) {
+  <main class="landing-backdrop">
+    @if (engine.editorBuild()) {
+      <a routerLink="/editor" class="dev-editor-link">World Editor</a>
+    }
+
+    <section class="landing-card" aria-label="Welcome to Faith & Fire">
+      <p class="eyebrow">Online Role-Playing World</p>
+      <h1>Faith &amp; Fire</h1>
+      <p class="tagline">
+        Awaken from centuries of cryo sleep. Step out into what remains.
+      </p>
+
+      @if (playError(); as err) {
+        <div class="error-banner" role="alert">{{ err }}</div>
+      }
+
+      <div class="landing-actions">
+        <button
+          type="button"
+          class="btn-play"
+          [disabled]="startingPlay()"
+          (click)="onPlay()"
+        >
+          {{ startingPlay() ? 'Awakening...' : 'Play' }}
+        </button>
+        <button type="button" class="btn-login" (click)="onGoLogin()">
+          Login
+        </button>
+      </div>
+    </section>
+  </main>
+} @else {
+  @if (wakeOverlayState() !== 'done') {
+    <div
+      class="wake-overlay"
+      [class.wake-closed]="wakeOverlayState() === 'closed'"
+      [class.wake-animating]="wakeOverlayState() === 'animating'"
+      [class.wake-fading]="wakeOverlayState() === 'fading'"
+      aria-hidden="true"
+      (animationend)="onWakeOverlayEnd($event)"
+      (transitionend)="onWakeOverlayEnd($event)"
+    >
+      <div class="eyelid eyelid-top"></div>
+      <div class="eyelid eyelid-bottom"></div>
+    </div>
+  }
+
+  @if (engine.gameStatus(); as status) {
+    @if (status.phase === 'error') {
+      <div class="error-modal" role="alert">
+        <h2>Connection Interrupted</h2>
+        <p>{{ status.error || 'Could not reach the game server.' }}</p>
+        <button type="button" class="btn-play" (click)="onLeave()">
+          Return to Menu
+        </button>
+      </div>
+    } @else if (status.phase === 'playing') {
+      <div class="hud-top-left">
+        <div class="area-pill">
+          <span class="area-name">{{ status.areaName || 'Cryo Prison' }}</span>
+          <span class="controls-hint">Click floor to walk · Middle-drag orbit · Scroll zoom</span>
+        </div>
+      </div>
+
+      <div class="hud-top-right">
+        @if (engine.editorBuild()) {
+          <a routerLink="/editor" class="hud-btn">Editor</a>
+        }
+        <button type="button" class="hud-btn" (click)="onLeave()">Leave</button>
+      </div>
+    }
+  }
+}

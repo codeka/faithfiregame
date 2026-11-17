@@ -4,6 +4,7 @@ mod character;
 #[cfg(feature = "editor")]
 mod editor;
 mod engine;
+mod game;
 mod glb_loader;
 mod input;
 mod net;
@@ -21,14 +22,15 @@ use web_sys::HtmlCanvasElement;
 
 #[cfg(feature = "editor")]
 use crate::camera::EditorCameraController;
-#[cfg(not(feature = "editor"))]
-use crate::camera::GameplayCameraController;
-use crate::camera::Camera;
+use crate::camera::{Camera, GameplayCameraController};
 #[cfg(feature = "editor")]
 use crate::editor::EditorState;
 #[cfg(feature = "editor")]
 pub use crate::editor::EditorEngineHandle;
+#[cfg(feature = "editor")]
+use crate::engine::ClientRunMode;
 use crate::engine::{EngineInner, step_frame};
+use crate::game::{GameClientState, GamePhase};
 use crate::input::{InputState, attach_input_listeners};
 use crate::net::NetClient;
 use crate::render::Renderer;
@@ -62,7 +64,6 @@ impl EngineHandle {
         };
         let host = loc.host().unwrap_or_else(|_| "127.0.0.1:4200".to_owned());
         let ws_url = format!("{proto}://{host}/ws");
-        let net = NetClient::connect(&ws_url, "editor".to_owned()).ok();
 
         let mut camera = Camera::default();
         let rect = canvas.get_bounding_client_rect();
@@ -79,13 +80,16 @@ impl EngineHandle {
                 canvas_height: ch,
                 ..Default::default()
             },
-            #[cfg(not(feature = "editor"))]
+            ws_url,
             gameplay_cam: GameplayCameraController::default(),
+            game: GameClientState::new(),
+            #[cfg(feature = "editor")]
+            active_run_mode: ClientRunMode::Game,
             #[cfg(feature = "editor")]
             editor_cam: EditorCameraController::default(),
             #[cfg(feature = "editor")]
             editor: EditorState::new(),
-            _net: net,
+            net: None,
             last_time_ms: now_ms,
         }));
 
@@ -152,5 +156,56 @@ impl EngineHandle {
         st.camera.aspect = w as f32 / h as f32;
         st.input.canvas_width = st.canvas.client_width().max(1) as f32;
         st.input.canvas_height = st.canvas.client_height().max(1) as f32;
+    }
+
+    pub fn enter_landing_mode(&self) {
+        let mut st = self.inner.borrow_mut();
+        #[cfg(feature = "editor")]
+        {
+            st.active_run_mode = ClientRunMode::Game;
+        }
+        let _ = st.canvas.style().set_property("cursor", "");
+        st.net = None;
+        let EngineInner { renderer, game, .. } = &mut *st;
+        game.reset_to_idle(&renderer.gl);
+    }
+
+    pub fn connect_game_session(&self, session_token: &str) {
+        let mut st = self.inner.borrow_mut();
+        #[cfg(feature = "editor")]
+        {
+            st.active_run_mode = ClientRunMode::Game;
+        }
+        let _ = st.canvas.style().set_property("cursor", "");
+
+        let already_active = !matches!(st.game.phase, GamePhase::Unauthorized | GamePhase::Error(_))
+            && st
+                .net
+                .as_ref()
+                .is_some_and(|n| !n.is_closed() && n.session_token() == session_token);
+        if already_active {
+            return;
+        }
+
+        let ws_url = st.ws_url.clone();
+        st.net = None;
+        {
+            let EngineInner { renderer, game, .. } = &mut *st;
+            game.begin_connecting(&renderer.gl);
+        }
+
+        match NetClient::connect(&ws_url, session_token.to_owned()) {
+            Ok(client) => st.net = Some(client),
+            Err(err) => st.game.phase = GamePhase::Error(err),
+        }
+    }
+
+    pub fn disconnect_game_session(&self) {
+        self.enter_landing_mode();
+    }
+
+    pub fn get_game_status_json(&self) -> String {
+        let st = self.inner.borrow();
+        serde_json::to_string(&st.game.status_snapshot()).unwrap_or_else(|_| "{}".to_owned())
     }
 }
