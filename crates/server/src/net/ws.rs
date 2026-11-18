@@ -184,7 +184,7 @@ async fn handle_ws_socket(mut socket: WebSocket, state: AppState) {
         // Players who disconnect inside cryo_prison restart from scratch; do not persist character state.
         if removed.area_id != CRYO_PRISON_AREA_ID {
             let record = CharacterSaveRecord {
-                account_id: removed.player_id,
+                account_id: removed.account_id,
                 area_id: removed.area_id,
                 pos: removed.pos,
                 yaw: removed.yaw,

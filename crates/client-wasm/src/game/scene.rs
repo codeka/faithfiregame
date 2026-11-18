@@ -6,6 +6,7 @@ use shared::character::{
     CharacterCatalog, CharacterDefinition, CharacterPartDef, CompactCharacterAppearance,
     PartAttachment, SkeletonDef,
 };
+use shared::entity::{EntityCapabilities, EntityId, EntityVisual};
 use shared::protocol::ServerMessage;
 use shared::world::{
     AreaKind, AssetEntry, InsideVisData, PropPlacement, RoadSpline, TILE_SIZE, TILE_VERTICES,
@@ -26,7 +27,8 @@ use crate::render::{
 };
 
 use super::state::{
-    GameClientState, GameInsideState, GamePhase, GameTileState, PlayerEntityRenderState,
+    ClientEntityRenderState, ClientEntityVisualState, GameClientState, GameInsideState, GamePhase,
+    GameTileState,
 };
 
 impl GameClientState {
@@ -74,29 +76,33 @@ impl GameClientState {
                 }
                 ServerMessage::Unauthorized => {
                     self.clear_world_meshes(gl);
-                    self.players.clear();
+                    self.entities.clear();
                     self.local_player_id = None;
+                    self.local_entity_id = None;
                     self.phase = GamePhase::Unauthorized;
                 }
                 ServerMessage::VersionMismatch { server_version } => {
                     self.clear_world_meshes(gl);
-                    self.players.clear();
+                    self.entities.clear();
+                    self.local_entity_id = None;
                     self.phase = GamePhase::Error(format!(
                         "Client protocol outdated (server expects v{server_version}). Please reload."
                     ));
                 }
                 ServerMessage::EnterArea {
+                    entity_id,
                     area_id,
                     area_name,
                     area_kind,
                     dimensions,
                     pos,
                     yaw,
-                    appearance,
+                    visual,
                     fresh_cryo_wake,
                 } => {
                     self.clear_world_meshes(gl);
-                    self.players.clear();
+                    self.entities.clear();
+                    self.local_entity_id = Some(entity_id);
                     self.pending_tile_fetches.clear();
                     self.pending_inside_fetch = None;
 
@@ -110,22 +116,23 @@ impl GameClientState {
                     self.move_target_marker = None;
                     self.phase = GamePhase::LoadingArea;
 
+                    self.ensure_entity_visual_requested(&area_id, &visual);
+
                     let spawn_pos = Vec3::from(pos);
-                    if let Some(local_id) = self.local_player_id {
-                        self.players.insert(
-                            local_id,
-                            PlayerEntityRenderState {
-                                render_pos: spawn_pos,
-                                target_pos: spawn_pos,
-                                render_yaw: yaw,
-                                target_yaw: yaw,
-                                moving: false,
-                                anim_time: 0.0,
-                                appearance: appearance.clone(),
-                                pose: SkeletonPose::default(),
-                            },
-                        );
-                    }
+                    self.entities.insert(
+                        entity_id,
+                        ClientEntityRenderState {
+                            entity_id,
+                            name: None,
+                            capabilities: EntityCapabilities::PLAYER | EntityCapabilities::MOVABLE,
+                            render_pos: spawn_pos,
+                            target_pos: spawn_pos,
+                            render_yaw: yaw,
+                            target_yaw: yaw,
+                            moving: false,
+                            visual: client_visual_from_wire(visual),
+                        },
+                    );
 
                     if area_kind == AreaKind::Outside {
                         cam_ctrl.min_distance = 8.0;
@@ -146,39 +153,47 @@ impl GameClientState {
                         self.requested_inside = Some(area_id.clone());
                         self.pending_inside_fetch = Some(area_id);
                     }
-
-                    if self.character_catalog.is_none() && !self.character_catalog_requested {
-                        self.character_catalog_requested = true;
-                        self.pending_char_catalog_fetch = true;
-                    }
-                    self.ensure_appearance_glbs_requested(&appearance);
                 }
-                ServerMessage::WorldSnapshot { players } => {
-                    let keep_ids: HashMap<u64, _> = players
+                ServerMessage::WorldSnapshot { entities } => {
+                    let keep_ids: HashMap<EntityId, _> = entities
                         .into_iter()
-                        .map(|snap| (snap.player_id, snap))
+                        .map(|snap| (snap.entity_id, snap))
                         .collect();
-                    self.players.retain(|id, _| keep_ids.contains_key(id));
+                    self.entities.retain(|id, _| keep_ids.contains_key(id));
+                    let area_id = self.area_id.clone();
                     for (id, snap) in keep_ids {
-                        self.ensure_appearance_glbs_requested(&snap.appearance);
+                        self.ensure_entity_visual_requested(&area_id, &snap.visual);
                         let target_pos = Vec3::from(snap.pos);
-                        if let Some(existing) = self.players.get_mut(&id) {
+                        if let Some(existing) = self.entities.get_mut(&id) {
+                            existing.name = snap.name;
+                            existing.capabilities = snap.capabilities;
                             existing.target_pos = target_pos;
                             existing.target_yaw = snap.yaw;
                             existing.moving = snap.moving;
-                            existing.appearance = snap.appearance;
+                            match (&mut existing.visual, snap.visual) {
+                                (
+                                    ClientEntityVisualState::Character { appearance, .. },
+                                    EntityVisual::Character(new_app),
+                                ) => {
+                                    *appearance = new_app;
+                                }
+                                (_, new_visual) => {
+                                    existing.visual = client_visual_from_wire(new_visual);
+                                }
+                            }
                         } else {
-                            self.players.insert(
+                            self.entities.insert(
                                 id,
-                                PlayerEntityRenderState {
+                                ClientEntityRenderState {
+                                    entity_id: id,
+                                    name: snap.name,
+                                    capabilities: snap.capabilities,
                                     render_pos: target_pos,
                                     target_pos,
                                     render_yaw: snap.yaw,
                                     target_yaw: snap.yaw,
                                     moving: snap.moving,
-                                    anim_time: 0.0,
-                                    appearance: snap.appearance,
-                                    pose: SkeletonPose::default(),
+                                    visual: client_visual_from_wire(snap.visual),
                                 },
                             );
                         }
@@ -206,9 +221,12 @@ impl GameClientState {
     pub fn on_character_catalog_loaded(&mut self, catalog: CharacterCatalog) {
         self.character_catalog = Some(catalog);
         let appearances: Vec<CompactCharacterAppearance> = self
-            .players
+            .entities
             .values()
-            .map(|p| p.appearance.clone())
+            .filter_map(|entity| match &entity.visual {
+                ClientEntityVisualState::Character { appearance, .. } => Some(appearance.clone()),
+                ClientEntityVisualState::Prop { .. } => None,
+            })
             .collect();
         for app in &appearances {
             self.ensure_appearance_glbs_requested(app);
@@ -431,15 +449,15 @@ impl GameClientState {
         }
 
         if self.area_kind == AreaKind::Outside {
-            if let Some(local) = self.local_player_id.and_then(|id| self.players.get(&id)) {
+            if let Some(local) = self.local_entity() {
                 let pos = local.render_pos;
                 self.queue_outside_tiles_around(pos);
             }
         }
 
-        self.update_players(dt);
+        self.update_entities(dt);
 
-        if let Some(local) = self.local_player_id.and_then(|id| self.players.get(&id)) {
+        if let Some(local) = self.local_entity() {
             cam_ctrl.player_pos = local.render_pos;
             if let Some(marker) = self.move_target_marker {
                 let dist_xz = Vec3::new(
@@ -516,8 +534,8 @@ impl GameClientState {
             self.draw_prop_shadows(renderer, &inside.vis.props);
         }
 
-        for player in self.players.values() {
-            self.draw_player_shadow(renderer, player);
+        for entity in self.entities.values() {
+            self.draw_entity_shadow(renderer, entity);
         }
     }
 
@@ -567,14 +585,14 @@ impl GameClientState {
             );
         }
 
-        for player in self.players.values() {
-            self.draw_player(renderer, camera, player);
+        for entity in self.entities.values() {
+            self.draw_entity(renderer, camera, entity);
         }
     }
 
     fn is_area_ready_for_wake(&self) -> bool {
         let terrain_ready = if self.area_kind == AreaKind::Outside {
-            if let Some(local) = self.local_player_id.and_then(|id| self.players.get(&id)) {
+            if let Some(local) = self.local_entity() {
                 let tx = (local.render_pos.x / TILE_SIZE as f32).floor() as i32;
                 let ty = (local.render_pos.z / TILE_SIZE as f32).floor() as i32;
                 self.outside_tiles.contains_key(&(tx, ty))
@@ -602,42 +620,56 @@ impl GameClientState {
             true
         };
 
-        let char_ready = self.local_player_id.is_some_and(|id| {
-            self.players.get(&id).is_some_and(|p| {
+        let char_ready = self.local_entity().is_some_and(|e| match &e.visual {
+            ClientEntityVisualState::Character { appearance, .. } => {
                 let Some(catalog) = &self.character_catalog else {
                     return false;
                 };
-                let Some(skel) = catalog.skeletons.get(p.appearance.skeleton_idx as usize) else {
+                let Some(skel) = catalog.skeletons.get(appearance.skeleton_idx as usize) else {
                     return false;
                 };
                 self.rigs.contains_key(&skel.rig_path)
                     && (!skel.render_base_mesh
-                        || !p.appearance.show_base_mesh
+                        || !appearance.show_base_mesh
                         || self.base_meshes.contains_key(&skel.rig_path))
-            })
+            }
+            ClientEntityVisualState::Prop { asset_id, .. } => {
+                self.prop_meshes.contains_key(asset_id)
+            }
         });
 
         props_ready && char_ready
     }
 
-    fn update_players(&mut self, dt: f32) {
-        let Some(catalog) = &self.character_catalog else {
-            return;
-        };
-        for player in self.players.values_mut() {
-            let pos_alpha = (12.0 * dt).min(1.0);
-            player.render_pos = player.render_pos.lerp(player.target_pos, pos_alpha);
-            player.render_yaw = lerp_angle(player.render_yaw, player.target_yaw, (14.0 * dt).min(1.0));
+    fn update_entities(&mut self, dt: f32) {
+        let pos_alpha = (12.0 * dt).min(1.0);
+        let yaw_alpha = (14.0 * dt).min(1.0);
 
-            let Some(skel) = catalog.skeletons.get(player.appearance.skeleton_idx as usize) else {
+        for entity in self.entities.values_mut() {
+            entity.render_pos = entity.render_pos.lerp(entity.target_pos, pos_alpha);
+            entity.render_yaw = lerp_angle(entity.render_yaw, entity.target_yaw, yaw_alpha);
+
+            let Some(catalog) = &self.character_catalog else {
+                continue;
+            };
+            let is_moving =
+                entity.moving || (entity.target_pos - entity.render_pos).length_squared() > 0.002;
+            let ClientEntityVisualState::Character {
+                appearance,
+                pose,
+                anim_time,
+            } = &mut entity.visual
+            else {
+                continue;
+            };
+
+            let Some(skel) = catalog.skeletons.get(appearance.skeleton_idx as usize) else {
                 continue;
             };
             let Some(rig) = self.rigs.get(&skel.rig_path) else {
                 continue;
             };
 
-            let is_moving =
-                player.moving || (player.target_pos - player.render_pos).length_squared() > 0.002;
             let preferred = if is_moving { "Walk" } else { "Idle" };
             let clip = find_clip(rig, skel, &self.extra_anims, preferred)
                 .or_else(|| find_clip(rig, skel, &self.extra_anims, "Idle"))
@@ -645,145 +677,182 @@ impl GameClientState {
 
             if let Some(c) = clip {
                 if c.duration > 1e-6 {
-                    player.anim_time = (player.anim_time + dt).rem_euclid(c.duration);
+                    *anim_time = (*anim_time + dt).rem_euclid(c.duration);
                 }
             }
-            evaluate_pose(rig, clip, player.anim_time, true, &mut player.pose);
+            evaluate_pose(rig, clip, *anim_time, true, pose);
         }
     }
 
-    fn resolve_player_parts<'a>(
+    fn resolve_character_parts<'a>(
         &self,
         catalog: &'a CharacterCatalog,
         app: &CompactCharacterAppearance,
     ) -> Option<(&'a SkeletonDef, CharacterDefinition)> {
         let skel = catalog.skeletons.get(app.skeleton_idx as usize)?;
-        let def = app.to_definition("player", "Player", catalog)?;
+        let def = app.to_definition("entity", "Entity", catalog)?;
         Some((skel, def))
     }
 
-    fn draw_player_shadow(&self, renderer: &Renderer, player: &PlayerEntityRenderState) {
-        let Some(catalog) = &self.character_catalog else {
-            return;
-        };
-        let Some((skel, def)) = self.resolve_player_parts(catalog, &player.appearance) else {
-            return;
-        };
-        let Some(rig) = self.rigs.get(&skel.rig_path) else {
-            return;
-        };
-        if player.pose.world_matrices.len() != rig.bones.len() {
-            return;
-        }
-        let char_model = Mat4::from_rotation_translation(
-            Quat::from_rotation_y(player.render_yaw),
-            player.render_pos,
-        );
+    fn draw_entity_shadow(&self, renderer: &Renderer, entity: &ClientEntityRenderState) {
+        match &entity.visual {
+            ClientEntityVisualState::Character {
+                appearance, pose, ..
+            } => {
+                let Some(catalog) = &self.character_catalog else {
+                    return;
+                };
+                let Some((skel, def)) = self.resolve_character_parts(catalog, appearance) else {
+                    return;
+                };
+                let Some(rig) = self.rigs.get(&skel.rig_path) else {
+                    return;
+                };
+                if pose.world_matrices.len() != rig.bones.len() {
+                    return;
+                }
+                let char_model = Mat4::from_rotation_translation(
+                    Quat::from_rotation_y(entity.render_yaw),
+                    entity.render_pos,
+                );
 
-        if skel.render_base_mesh && def.show_base_mesh {
-            if let Some(base_gpu) = self.base_meshes.get(&skel.rig_path) {
-                let palette = base_gpu.remapped_skin_palette(rig, &player.pose);
-                renderer.draw_character_shadow(base_gpu, &char_model, Some(&palette));
+                if skel.render_base_mesh && def.show_base_mesh {
+                    if let Some(base_gpu) = self.base_meshes.get(&skel.rig_path) {
+                        let palette = base_gpu.remapped_skin_palette(rig, pose);
+                        renderer.draw_character_shadow(base_gpu, &char_model, Some(&palette));
+                    }
+                }
+                for part_id in def.skinned_parts.values() {
+                    if let Some(part) = catalog.parts.iter().find(|p| p.id == *part_id) {
+                        if let Some(mesh) = self.part_meshes.get(&part.path) {
+                            let palette = mesh
+                                .is_skinned
+                                .then(|| mesh.remapped_skin_palette(rig, pose));
+                            renderer.draw_character_shadow(mesh, &char_model, palette.as_ref());
+                        }
+                    }
+                }
+                for (socket_id, part_id) in &def.socket_parts {
+                    let Some(sock) = skel.sockets.iter().find(|s| s.id == *socket_id) else {
+                        continue;
+                    };
+                    let Some(part) = catalog.parts.iter().find(|p| p.id == *part_id) else {
+                        continue;
+                    };
+                    let Some(mesh) = self.part_meshes.get(&part.path) else {
+                        continue;
+                    };
+                    let world =
+                        char_model * pose.socket_world_matrix(rig, sock) * part_local_matrix(part);
+                    renderer.draw_character_shadow(mesh, &world, None);
+                }
             }
-        }
-        for part_id in def.skinned_parts.values() {
-            if let Some(part) = catalog.parts.iter().find(|p| p.id == *part_id) {
-                if let Some(mesh) = self.part_meshes.get(&part.path) {
-                    let palette = mesh
-                        .is_skinned
-                        .then(|| mesh.remapped_skin_palette(rig, &player.pose));
-                    renderer.draw_character_shadow(mesh, &char_model, palette.as_ref());
+            ClientEntityVisualState::Prop {
+                asset_id,
+                scale,
+                cast_shadow,
+            } => {
+                if !*cast_shadow {
+                    return;
+                }
+                if let Some(mesh) = self.prop_meshes.get(asset_id) {
+                    let model = Mat4::from_translation(entity.render_pos)
+                        * Mat4::from_rotation_y(entity.render_yaw)
+                        * Mat4::from_scale(Vec3::from(*scale));
+                    renderer.draw_mesh_shadow(mesh, &model);
                 }
             }
         }
-        for (socket_id, part_id) in &def.socket_parts {
-            let Some(sock) = skel.sockets.iter().find(|s| s.id == *socket_id) else {
-                continue;
-            };
-            let Some(part) = catalog.parts.iter().find(|p| p.id == *part_id) else {
-                continue;
-            };
-            let Some(mesh) = self.part_meshes.get(&part.path) else {
-                continue;
-            };
-            let world =
-                char_model * player.pose.socket_world_matrix(rig, sock) * part_local_matrix(part);
-            renderer.draw_character_shadow(mesh, &world, None);
-        }
     }
 
-    fn draw_player(&self, renderer: &Renderer, camera: &Camera, player: &PlayerEntityRenderState) {
-        let Some(catalog) = &self.character_catalog else {
-            return;
-        };
-        let Some((skel, def)) = self.resolve_player_parts(catalog, &player.appearance) else {
-            return;
-        };
-        let Some(rig) = self.rigs.get(&skel.rig_path) else {
-            return;
-        };
-        if player.pose.world_matrices.len() != rig.bones.len() {
-            return;
-        }
+    fn draw_entity(&self, renderer: &Renderer, camera: &Camera, entity: &ClientEntityRenderState) {
+        match &entity.visual {
+            ClientEntityVisualState::Character {
+                appearance, pose, ..
+            } => {
+                let Some(catalog) = &self.character_catalog else {
+                    return;
+                };
+                let Some((skel, def)) = self.resolve_character_parts(catalog, appearance) else {
+                    return;
+                };
+                let Some(rig) = self.rigs.get(&skel.rig_path) else {
+                    return;
+                };
+                if pose.world_matrices.len() != rig.bones.len() {
+                    return;
+                }
 
-        let char_model = Mat4::from_rotation_translation(
-            Quat::from_rotation_y(player.render_yaw),
-            player.render_pos,
-        );
-        let char_palette = &def.palette;
-
-        if skel.render_base_mesh && def.show_base_mesh {
-            if let Some(base_gpu) = self.base_meshes.get(&skel.rig_path) {
-                let skin_mats = base_gpu.remapped_skin_palette(rig, &player.pose);
-                renderer.draw_character_mesh(
-                    camera,
-                    base_gpu,
-                    &char_model,
-                    Some(&skin_mats),
-                    Some(char_palette),
-                    Vec4::ONE,
+                let char_model = Mat4::from_rotation_translation(
+                    Quat::from_rotation_y(entity.render_yaw),
+                    entity.render_pos,
                 );
-            }
-        }
+                let char_palette = &def.palette;
 
-        for part_id in def.skinned_parts.values() {
-            if let Some(part) = catalog.parts.iter().find(|p| p.id == *part_id) {
-                if let Some(mesh) = self.part_meshes.get(&part.path) {
-                    let skin_mats = mesh
-                        .is_skinned
-                        .then(|| mesh.remapped_skin_palette(rig, &player.pose));
+                if skel.render_base_mesh && def.show_base_mesh {
+                    if let Some(base_gpu) = self.base_meshes.get(&skel.rig_path) {
+                        let skin_mats = base_gpu.remapped_skin_palette(rig, pose);
+                        renderer.draw_character_mesh(
+                            camera,
+                            base_gpu,
+                            &char_model,
+                            Some(&skin_mats),
+                            Some(char_palette),
+                            Vec4::ONE,
+                        );
+                    }
+                }
+
+                for part_id in def.skinned_parts.values() {
+                    if let Some(part) = catalog.parts.iter().find(|p| p.id == *part_id) {
+                        if let Some(mesh) = self.part_meshes.get(&part.path) {
+                            let skin_mats = mesh
+                                .is_skinned
+                                .then(|| mesh.remapped_skin_palette(rig, pose));
+                            renderer.draw_character_mesh(
+                                camera,
+                                mesh,
+                                &char_model,
+                                skin_mats.as_ref(),
+                                Some(char_palette),
+                                Vec4::ONE,
+                            );
+                        }
+                    }
+                }
+
+                for (socket_id, part_id) in &def.socket_parts {
+                    let Some(sock) = skel.sockets.iter().find(|s| s.id == *socket_id) else {
+                        continue;
+                    };
+                    let Some(part) = catalog.parts.iter().find(|p| p.id == *part_id) else {
+                        continue;
+                    };
+                    let Some(mesh) = self.part_meshes.get(&part.path) else {
+                        continue;
+                    };
+                    let world =
+                        char_model * pose.socket_world_matrix(rig, sock) * part_local_matrix(part);
                     renderer.draw_character_mesh(
                         camera,
                         mesh,
-                        &char_model,
-                        skin_mats.as_ref(),
+                        &world,
+                        None,
                         Some(char_palette),
                         Vec4::ONE,
                     );
                 }
             }
-        }
-
-        for (socket_id, part_id) in &def.socket_parts {
-            let Some(sock) = skel.sockets.iter().find(|s| s.id == *socket_id) else {
-                continue;
-            };
-            let Some(part) = catalog.parts.iter().find(|p| p.id == *part_id) else {
-                continue;
-            };
-            let Some(mesh) = self.part_meshes.get(&part.path) else {
-                continue;
-            };
-            let world =
-                char_model * player.pose.socket_world_matrix(rig, sock) * part_local_matrix(part);
-            renderer.draw_character_mesh(
-                camera,
-                mesh,
-                &world,
-                None,
-                Some(char_palette),
-                Vec4::ONE,
-            );
+            ClientEntityVisualState::Prop {
+                asset_id, scale, ..
+            } => {
+                if let Some(mesh) = self.prop_meshes.get(asset_id) {
+                    let model = Mat4::from_translation(entity.render_pos)
+                        * Mat4::from_rotation_y(entity.render_yaw)
+                        * Mat4::from_scale(Vec3::from(*scale));
+                    renderer.draw_mesh(camera, mesh, &model, Vec4::ONE);
+                }
+            }
         }
     }
 
@@ -817,6 +886,21 @@ impl GameClientState {
         for road in roads {
             if let Some(mesh) = meshes.get(&road.id) {
                 renderer.draw_road(camera, mesh, road.material, 1.0, Vec3::ONE, brush);
+            }
+        }
+    }
+
+    fn ensure_entity_visual_requested(&mut self, area_id: &str, visual: &EntityVisual) {
+        match visual {
+            EntityVisual::Character(app) => {
+                if self.character_catalog.is_none() && !self.character_catalog_requested {
+                    self.character_catalog_requested = true;
+                    self.pending_char_catalog_fetch = true;
+                }
+                self.ensure_appearance_glbs_requested(app);
+            }
+            EntityVisual::Prop { asset_id, .. } => {
+                self.ensure_asset_id_requested(area_id, asset_id);
             }
         }
     }
@@ -855,30 +939,36 @@ impl GameClientState {
         }
     }
 
-    pub(super) fn ensure_prop_assets_requested(&mut self, area_id: &str, props: &[PropPlacement]) {
-        for prop in props {
-            if self.prop_meshes.contains_key(&prop.asset_id)
-                || self.requested_assets.contains(&prop.asset_id)
-            {
-                continue;
-            }
-            let resolved = if let Some(slug) = local_asset_slug(&prop.asset_id) {
+    pub(super) fn ensure_asset_id_requested(&mut self, area_id: &str, asset_id: &str) {
+        if self.prop_meshes.contains_key(asset_id) || self.requested_assets.contains(asset_id) {
+            return;
+        }
+        let resolved = if let Some(slug) = local_asset_slug(asset_id) {
+            if area_id.is_empty() {
+                None
+            } else {
                 Some(AssetEntry {
-                    id: prop.asset_id.clone(),
+                    id: asset_id.to_owned(),
                     name: prettify_asset_slug(slug),
                     path: local_asset_http_path(area_id, slug),
                     category: "Area".to_owned(),
                 })
-            } else {
-                self.asset_catalog
-                    .iter()
-                    .find(|e| e.id == prop.asset_id)
-                    .cloned()
-            };
-            if let Some(entry) = resolved {
-                self.requested_assets.insert(prop.asset_id.clone());
-                self.pending_asset_fetches.push(entry);
             }
+        } else {
+            self.asset_catalog
+                .iter()
+                .find(|e| e.id == asset_id)
+                .cloned()
+        };
+        if let Some(entry) = resolved {
+            self.requested_assets.insert(asset_id.to_owned());
+            self.pending_asset_fetches.push(entry);
+        }
+    }
+
+    pub(super) fn ensure_prop_assets_requested(&mut self, area_id: &str, props: &[PropPlacement]) {
+        for prop in props {
+            self.ensure_asset_id_requested(area_id, &prop.asset_id);
         }
     }
 
@@ -1057,6 +1147,25 @@ impl GameClientState {
         inside
             .gpu
             .upload_vertices(gl, 0.0, 0.0, &inside.vis.heights, &normals);
+    }
+}
+
+fn client_visual_from_wire(visual: EntityVisual) -> ClientEntityVisualState {
+    match visual {
+        EntityVisual::Character(appearance) => ClientEntityVisualState::Character {
+            appearance,
+            pose: SkeletonPose::default(),
+            anim_time: 0.0,
+        },
+        EntityVisual::Prop {
+            asset_id,
+            scale,
+            cast_shadow,
+        } => ClientEntityVisualState::Prop {
+            asset_id,
+            scale,
+            cast_shadow,
+        },
     }
 }
 

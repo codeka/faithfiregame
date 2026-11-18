@@ -45,7 +45,7 @@ faith-and-fire/
 │   ├── server/                 # Authoritative Rust game server
 │   │   └── src/
 │   │       ├── main.rs
-│   │       ├── sim/            # world.rs (10Hz loop, 3x3 hibernation), player.rs
+│   │       ├── sim/            # world.rs (10Hz loop, 3x3 hibernation), entity.rs, components.rs, glue.rs
 │   │       ├── net/            # state.rs, auth.rs, world_files.rs, ws.rs
 │   │       ├── db/             # repository.rs (Storage trait), sqlite.rs (SQLite WAL)
 │   │       └── editor_api/     # #[cfg(feature = "editor")] areas.rs, assets.rs, characters.rs, save.rs

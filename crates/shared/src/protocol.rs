@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::character::CompactCharacterAppearance;
+use crate::entity::{EntityCapabilities, EntityId, EntityVisual};
 use crate::world::AreaKind;
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientMessage {
@@ -19,12 +19,14 @@ pub enum ClientMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PlayerSnapshot {
-    pub player_id: u64,
+pub struct EntitySnapshot {
+    pub entity_id: EntityId,
+    pub name: Option<String>,
     pub pos: [f32; 3],
     pub yaw: f32,
     pub moving: bool,
-    pub appearance: CompactCharacterAppearance,
+    pub capabilities: EntityCapabilities,
+    pub visual: EntityVisual,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -38,17 +40,18 @@ pub enum ServerMessage {
     Unauthorized,
     Pong(u64),
     EnterArea {
+        entity_id: EntityId,
         area_id: String,
         area_name: String,
         area_kind: AreaKind,
         dimensions: Option<(u32, u32)>,
         pos: [f32; 3],
         yaw: f32,
-        appearance: CompactCharacterAppearance,
+        visual: EntityVisual,
         fresh_cryo_wake: bool,
     },
     WorldSnapshot {
-        players: Vec<PlayerSnapshot>,
+        entities: Vec<EntitySnapshot>,
     },
     TileUpdated {
         area_id: String,
@@ -103,7 +106,7 @@ pub fn decode_server_msg(bytes: &[u8]) -> Result<ServerMessage, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::character::CharacterPalette;
+    use crate::character::{CharacterPalette, CompactCharacterAppearance};
     use crate::world::InsideKind;
 
     #[test]
@@ -130,27 +133,46 @@ mod tests {
             socket_part_indices: vec![(0, 7)],
             palette: CharacterPalette::default(),
         };
+        let char_visual = EntityVisual::Character(appearance);
         let enter = ServerMessage::EnterArea {
+            entity_id: EntityId::new(1),
             area_id: "cryo_prison".to_owned(),
             area_name: "Cryo Prison".to_owned(),
             area_kind: AreaKind::Inside(InsideKind::Ephemeral),
             dimensions: Some((24, 20)),
             pos: [7.4, 0.0, 7.4],
             yaw: 1.5,
-            appearance: appearance.clone(),
+            visual: char_visual.clone(),
             fresh_cryo_wake: true,
         };
         let ebytes = encode_server_msg(&enter).unwrap();
         assert_eq!(decode_server_msg(&ebytes).unwrap(), enter);
 
         let snap = ServerMessage::WorldSnapshot {
-            players: vec![PlayerSnapshot {
-                player_id: 7,
-                pos: [7.4, 0.0, 7.4],
-                yaw: 1.5,
-                moving: false,
-                appearance,
-            }],
+            entities: vec![
+                EntitySnapshot {
+                    entity_id: EntityId::new(1),
+                    name: Some("Player".to_owned()),
+                    pos: [7.4, 0.0, 7.4],
+                    yaw: 1.5,
+                    moving: false,
+                    capabilities: EntityCapabilities::PLAYER | EntityCapabilities::MOVABLE,
+                    visual: char_visual,
+                },
+                EntitySnapshot {
+                    entity_id: EntityId::new(2),
+                    name: Some("Cryo Terminal".to_owned()),
+                    pos: [9.0, 0.0, 7.5],
+                    yaw: 0.0,
+                    moving: false,
+                    capabilities: EntityCapabilities::INTERACTABLE,
+                    visual: EntityVisual::Prop {
+                        asset_id: "local:cryo_terminal".to_owned(),
+                        scale: [1.0, 1.0, 1.0],
+                        cast_shadow: true,
+                    },
+                },
+            ],
         };
         let snap_bytes = encode_server_msg(&snap).unwrap();
         assert_eq!(decode_server_msg(&snap_bytes).unwrap(), snap);

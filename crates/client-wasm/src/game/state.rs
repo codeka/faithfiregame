@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use glam::Vec3;
 use serde::Serialize;
 use shared::character::{CharacterCatalog, CompactCharacterAppearance};
+use shared::entity::{EntityCapabilities, EntityId};
 use shared::world::{
     AreaKind, AssetCatalog, AssetEntry, InsideKind, InsideVisData, ROAD_MAT_DIRT, TileVisData,
 };
@@ -60,20 +61,36 @@ pub struct GameTileState {
     pub road_meshes: HashMap<u64, RoadMeshGpu>,
 }
 
-pub struct PlayerEntityRenderState {
+pub enum ClientEntityVisualState {
+    Character {
+        appearance: CompactCharacterAppearance,
+        pose: SkeletonPose,
+        anim_time: f32,
+    },
+    Prop {
+        asset_id: String,
+        scale: [f32; 3],
+        cast_shadow: bool,
+    },
+}
+
+#[allow(dead_code)]
+pub struct ClientEntityRenderState {
+    pub entity_id: EntityId,
+    pub name: Option<String>,
+    pub capabilities: EntityCapabilities,
     pub render_pos: Vec3,
     pub target_pos: Vec3,
     pub render_yaw: f32,
     pub target_yaw: f32,
     pub moving: bool,
-    pub anim_time: f32,
-    pub appearance: CompactCharacterAppearance,
-    pub pose: SkeletonPose,
+    pub visual: ClientEntityVisualState,
 }
 
 pub struct GameClientState {
     pub phase: GamePhase,
     pub local_player_id: Option<u64>,
+    pub local_entity_id: Option<EntityId>,
     pub area_id: String,
     pub area_name: String,
     pub area_kind: AreaKind,
@@ -101,7 +118,7 @@ pub struct GameClientState {
     pub extra_anims: HashMap<String, Vec<AnimationClip>>,
     pub requested_char_glbs: HashSet<String>,
 
-    pub players: HashMap<u64, PlayerEntityRenderState>,
+    pub entities: HashMap<EntityId, ClientEntityRenderState>,
     pub move_target_marker: Option<Vec3>,
     pub hover_walkable: Option<bool>,
 
@@ -117,6 +134,7 @@ impl GameClientState {
         Self {
             phase: GamePhase::Idle,
             local_player_id: None,
+            local_entity_id: None,
             area_id: String::new(),
             area_name: String::new(),
             area_kind: AreaKind::Inside(InsideKind::Ephemeral),
@@ -140,7 +158,7 @@ impl GameClientState {
             part_meshes: HashMap::new(),
             extra_anims: HashMap::new(),
             requested_char_glbs: HashSet::new(),
-            players: HashMap::new(),
+            entities: HashMap::new(),
             move_target_marker: None,
             hover_walkable: None,
             pending_tile_fetches: Vec::new(),
@@ -149,6 +167,10 @@ impl GameClientState {
             pending_char_catalog_fetch: false,
             pending_char_glb_fetches: Vec::new(),
         }
+    }
+
+    pub fn local_entity(&self) -> Option<&ClientEntityRenderState> {
+        self.local_entity_id.and_then(|id| self.entities.get(&id))
     }
 
     pub fn set_asset_catalog(&mut self, catalog: &AssetCatalog) {
@@ -165,8 +187,20 @@ impl GameClientState {
         }
         self.road_soft_edge_mask = mask;
 
-        if !self.area_id.is_empty() {
-            let area_id = self.area_id.clone();
+        let area_id = self.area_id.clone();
+        let entity_prop_ids: Vec<String> = self
+            .entities
+            .values()
+            .filter_map(|entity| match &entity.visual {
+                ClientEntityVisualState::Prop { asset_id, .. } => Some(asset_id.clone()),
+                ClientEntityVisualState::Character { .. } => None,
+            })
+            .collect();
+        for asset_id in entity_prop_ids {
+            self.ensure_asset_id_requested(&area_id, &asset_id);
+        }
+
+        if !area_id.is_empty() {
             let mut props_to_check = Vec::new();
             if let Some(inside) = &self.inside_area {
                 props_to_check.extend(inside.vis.props.iter().cloned());
@@ -189,6 +223,7 @@ impl GameClientState {
         self.clear_world_meshes(gl);
         self.phase = GamePhase::Idle;
         self.local_player_id = None;
+        self.local_entity_id = None;
         self.area_id.clear();
         self.area_name.clear();
         self.dimensions = None;
@@ -196,7 +231,7 @@ impl GameClientState {
         self.wake_ready = false;
         self.area_enter_elapsed_s = 0.0;
         self.wake_cam_timer = None;
-        self.players.clear();
+        self.entities.clear();
         self.move_target_marker = None;
         self.hover_walkable = None;
         self.pending_tile_fetches.clear();
@@ -210,10 +245,7 @@ impl GameClientState {
     }
 
     pub fn status_snapshot(&self) -> GameStatusSnapshot {
-        let player_pos = self
-            .local_player_id
-            .and_then(|id| self.players.get(&id))
-            .map(|p| p.render_pos.to_array());
+        let player_pos = self.local_entity().map(|e| e.render_pos.to_array());
         let error = match &self.phase {
             GamePhase::Error(msg) => Some(msg.clone()),
             _ => None,
