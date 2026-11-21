@@ -1,3 +1,4 @@
+mod cursor;
 mod io;
 mod scene;
 mod state;

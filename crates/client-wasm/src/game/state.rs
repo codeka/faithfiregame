@@ -7,6 +7,7 @@ use shared::entity::{EntityCapabilities, EntityId, TriggerConfig};
 use shared::world::{
     AreaKind, AssetCatalog, AssetEntry, InsideKind, InsideVisData, ROAD_MAT_DIRT, TileVisData,
 };
+use web_sys::HtmlCanvasElement;
 
 use crate::character::{AnimationClip, ParsedSkeletonRig, SkeletonPose};
 use crate::render::{CharacterMeshGpu, PropMeshGpu, RoadMeshGpu, TerrainMeshGpu};
@@ -122,6 +123,7 @@ pub struct GameClientState {
     pub entities: HashMap<EntityId, ClientEntityRenderState>,
     pub move_target_marker: Option<Vec3>,
     pub hover_walkable: Option<bool>,
+    pub applied_cursor: &'static str,
 
     pub pending_tile_fetches: Vec<(String, i32, i32)>,
     pub pending_inside_fetch: Option<String>,
@@ -162,6 +164,7 @@ impl GameClientState {
             entities: HashMap::new(),
             move_target_marker: None,
             hover_walkable: None,
+            applied_cursor: "",
             pending_tile_fetches: Vec::new(),
             pending_inside_fetch: None,
             pending_asset_fetches: Vec::new(),
@@ -235,6 +238,7 @@ impl GameClientState {
         self.entities.clear();
         self.move_target_marker = None;
         self.hover_walkable = None;
+        self.applied_cursor = "";
         self.pending_tile_fetches.clear();
         self.pending_inside_fetch = None;
         self.pending_asset_fetches.clear();
@@ -261,6 +265,18 @@ impl GameClientState {
             wake_ready: self.wake_ready,
             error,
         }
+    }
+
+    pub fn apply_cursor(&mut self, canvas: &HtmlCanvasElement, css_cursor: &'static str) {
+        if self.applied_cursor != css_cursor {
+            let _ = canvas.style().set_property("cursor", css_cursor);
+            self.applied_cursor = css_cursor;
+        }
+    }
+
+    pub fn clear_cursor(&mut self, canvas: &HtmlCanvasElement) {
+        let _ = canvas.style().set_property("cursor", "");
+        self.applied_cursor = "";
     }
 
     pub fn take_io_batch(&mut self) -> GameIoBatch {

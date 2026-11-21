@@ -17,7 +17,8 @@ use super::{
 
 fn activate_editor_mode(st: &mut EngineInner) {
     st.active_run_mode = ClientRunMode::Editor;
-    let _ = st.canvas.style().set_property("cursor", "");
+    let canvas = st.canvas.clone();
+    st.game.clear_cursor(&canvas);
     let need_editor_ws = st
         .net
         .as_ref()

@@ -164,9 +164,14 @@ impl EngineHandle {
         {
             st.active_run_mode = ClientRunMode::Game;
         }
-        let _ = st.canvas.style().set_property("cursor", "");
         st.net = None;
-        let EngineInner { renderer, game, .. } = &mut *st;
+        let EngineInner {
+            canvas,
+            renderer,
+            game,
+            ..
+        } = &mut *st;
+        game.clear_cursor(canvas);
         game.reset_to_idle(&renderer.gl);
     }
 
@@ -176,7 +181,8 @@ impl EngineHandle {
         {
             st.active_run_mode = ClientRunMode::Game;
         }
-        let _ = st.canvas.style().set_property("cursor", "");
+        let canvas = st.canvas.clone();
+        st.game.clear_cursor(&canvas);
 
         let already_active = !matches!(st.game.phase, GamePhase::Unauthorized | GamePhase::Error(_))
             && st

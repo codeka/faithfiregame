@@ -26,6 +26,7 @@ use crate::render::{
     BrushOverlay, CharacterMeshGpu, PropMeshGpu, Renderer, RoadMeshGpu, TerrainMeshGpu,
 };
 
+use super::cursor::resolve_game_cursor;
 use super::state::{
     ClientEntityRenderState, ClientEntityVisualState, GameClientState, GameInsideState, GamePhase,
     GameTileState,
@@ -502,7 +503,6 @@ impl GameClientState {
 
             if let Some(target_id) = clicked_entity {
                 self.hover_walkable = None;
-                let _ = canvas.style().set_property("cursor", "pointer");
                 if input.left_just_pressed {
                     if let Some(net) = net {
                         net.send(&shared::protocol::ClientMessage::Interact {
@@ -513,13 +513,6 @@ impl GameClientState {
                 }
             } else {
                 self.hover_walkable = terrain_hit.and_then(|p| self.is_point_walkable(p.x, p.z));
-                let cursor = match self.hover_walkable {
-                    Some(true) => "pointer",
-                    Some(false) => "not-allowed",
-                    None => "",
-                };
-                let _ = canvas.style().set_property("cursor", cursor);
-
                 if input.left_just_pressed {
                     if let Some(hit_pos) = terrain_hit {
                         if let Some(net) = net {
@@ -534,9 +527,24 @@ impl GameClientState {
                     }
                 }
             }
+            let kind = resolve_game_cursor(
+                true,
+                false,
+                clicked_entity.is_some(),
+                self.hover_walkable,
+                input.left_mouse_down,
+            );
+            self.apply_cursor(canvas, kind.css_value());
         } else {
             self.hover_walkable = None;
-            let _ = canvas.style().set_property("cursor", "");
+            let kind = resolve_game_cursor(
+                self.phase == GamePhase::Playing,
+                input.middle_mouse_down,
+                false,
+                None,
+                input.left_mouse_down,
+            );
+            self.apply_cursor(canvas, kind.css_value());
         }
     }
 
