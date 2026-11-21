@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use glam::Vec3;
 use serde::Serialize;
 use shared::character::{CharacterCatalog, CompactCharacterAppearance};
-use shared::entity::{EntityCapabilities, EntityId};
+use shared::entity::{EntityCapabilities, EntityId, TriggerConfig};
 use shared::world::{
     AreaKind, AssetCatalog, AssetEntry, InsideKind, InsideVisData, ROAD_MAT_DIRT, TileVisData,
 };
@@ -84,7 +84,8 @@ pub struct ClientEntityRenderState {
     pub render_yaw: f32,
     pub target_yaw: f32,
     pub moving: bool,
-    pub visual: ClientEntityVisualState,
+    pub visual: Option<ClientEntityVisualState>,
+    pub trigger: Option<TriggerConfig>,
 }
 
 pub struct GameClientState {
@@ -192,8 +193,8 @@ impl GameClientState {
             .entities
             .values()
             .filter_map(|entity| match &entity.visual {
-                ClientEntityVisualState::Prop { asset_id, .. } => Some(asset_id.clone()),
-                ClientEntityVisualState::Character { .. } => None,
+                Some(ClientEntityVisualState::Prop { asset_id, .. }) => Some(asset_id.clone()),
+                _ => None,
             })
             .collect();
         for asset_id in entity_prop_ids {

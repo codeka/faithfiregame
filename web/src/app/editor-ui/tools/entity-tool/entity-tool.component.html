@@ -1,0 +1,533 @@
+<div class="toolbox-title">Entities</div>
+
+<div class="tool-section">
+  <span class="section-label">Mode</span>
+  <div class="option-grid">
+    @for (sub of submodes; track sub.id) {
+      <button
+        type="button"
+        class="btn btn-sm"
+        [class.active]="activeSubmode() === sub.id"
+        (click)="engine.setEntitySubmode(sub.id)"
+      >
+        <span class="key-hint">{{ sub.shortcut }}</span>
+        <span>{{ sub.label }}</span>
+      </button>
+    }
+  </div>
+</div>
+
+@if (activeSubmode() === 'place') {
+  <div class="tool-section">
+    <div class="section-head">
+      <span class="section-label">Entity Template</span>
+      <span class="asset-count">{{ entityState.templates().length }}</span>
+    </div>
+
+    <div class="search-box">
+      <input
+        type="text"
+        name="entityTemplateSearch"
+        class="search-input"
+        placeholder="Search templates…"
+        autocomplete="off"
+        [value]="entityState.templateSearch()"
+        (input)="onSearchInput($event)"
+      />
+      @if (entityState.templateSearch()) {
+        <button type="button" class="search-clear" aria-label="Clear search" (click)="clearSearch()">
+          ×
+        </button>
+      }
+    </div>
+
+    <div class="template-list">
+      @for (tpl of entityState.filteredTemplates(); track tpl.id) {
+        <button
+          type="button"
+          class="btn btn-sm template-btn"
+          [class.active]="activeTemplateId() === tpl.id"
+          (click)="selectPlacementTemplate(tpl.id)"
+        >
+          <span>{{ tpl.name }}</span>
+          <span class="tpl-id">{{ tpl.id }}</span>
+        </button>
+      } @empty {
+        <div class="empty-assets">
+          @if (entityState.templates().length === 0) {
+            No entity templates yet
+          } @else {
+            No matching templates
+          }
+        </div>
+      }
+    </div>
+
+    @if (entityState.templates().length === 0) {
+      <button type="button" class="btn btn-primary open-templates-btn" (click)="engine.setEditorMode('entities')">
+        Open Entity Templates…
+      </button>
+    }
+  </div>
+
+  <div class="toolbox-hint">
+    1–4: Mode · Click terrain to place · Q/E: Rotate ({{ previewYawDeg() }}°)
+  </div>
+} @else {
+  @if (selectedEntity(); as sel) {
+    <div class="tool-section">
+      <div class="section-head">
+        <span class="section-label">#{{ sel.id }} · {{ sel.template_id }}</span>
+        @if (hasAnyOverrides()) {
+          <button type="button" class="btn btn-sm reset-all-btn" (click)="resetAllOverrides()">
+            Reset All
+          </button>
+        }
+      </div>
+      <div class="pos-readout">
+        X {{ sel.position[0].toFixed(2) }} · Y {{ sel.position[1].toFixed(2) }} · Z {{ sel.position[2].toFixed(2) }}
+      </div>
+      <label class="slider-field axis-y">
+        <span class="slider-head">
+          <span class="axis-tag">Yaw</span>
+          <span>{{ selectedYawDeg() }}°</span>
+        </span>
+        <input
+          type="range"
+          name="entityYaw"
+          class="axis-y"
+          min="0"
+          max="359"
+          step="1"
+          [value]="selectedYawDeg()"
+          (input)="onYawInput($event)"
+        />
+      </label>
+      <div class="action-row">
+        <button type="button" class="btn btn-sm" (click)="engine.snapSelectedEntityToTerrain()">
+          Snap to Terrain
+        </button>
+        <button type="button" class="btn btn-sm btn-duplicate" (click)="engine.duplicateSelectedEntity()">
+          Duplicate
+        </button>
+        <button type="button" class="btn btn-sm btn-danger" (click)="engine.deleteSelectedEntity()">
+          Delete
+        </button>
+      </div>
+    </div>
+
+    @if (resolved(); as res) {
+      <div class="tool-section">
+        <div class="section-head">
+          <span class="section-label">Name</span>
+          <div class="override-meta">
+            <span class="badge" [class.overridden]="sel.overrides.name !== null">
+              {{ sel.overrides.name !== null ? 'Overridden' : 'Inherited' }}
+            </span>
+            @if (sel.overrides.name !== null) {
+              <button type="button" class="btn btn-sm btn-mini reset-name-btn" (click)="resetNameOverride()">
+                Reset
+              </button>
+            }
+          </div>
+        </div>
+        <input
+          type="text"
+          name="instanceEntityName"
+          class="text-input"
+          [ngModel]="res.name"
+          (ngModelChange)="setNameOverride($event)"
+        />
+      </div>
+
+      <div class="tool-section">
+        <span class="section-label">Properties</span>
+        @for (prop of propertyEntries(); track prop.key) {
+          <div class="prop-row">
+            <span class="prop-key" [class.overridden-key]="prop.overridden" [title]="prop.key">
+              {{ prop.key }}
+            </span>
+            @switch (prop.kind) {
+              @case ('Bool') {
+                <input
+                  type="checkbox"
+                  class="prop-check"
+                  [attr.name]="'inst_prop_' + prop.key"
+                  [checked]="propBool(prop.value)"
+                  (change)="onBoolPropChange(prop.key, $event)"
+                />
+              }
+              @case ('Int') {
+                <input
+                  type="number"
+                  step="1"
+                  class="text-input prop-val"
+                  [attr.name]="'inst_prop_' + prop.key"
+                  [ngModel]="propNumber(prop.value)"
+                  (ngModelChange)="onIntPropChange(prop.key, +$event)"
+                />
+              }
+              @case ('Float') {
+                <input
+                  type="number"
+                  step="0.1"
+                  class="text-input prop-val"
+                  [attr.name]="'inst_prop_' + prop.key"
+                  [ngModel]="propNumber(prop.value)"
+                  (ngModelChange)="onFloatPropChange(prop.key, +$event)"
+                />
+              }
+              @default {
+                <input
+                  type="text"
+                  class="text-input prop-val"
+                  [attr.name]="'inst_prop_' + prop.key"
+                  [ngModel]="propString(prop.value)"
+                  (ngModelChange)="onStringPropChange(prop.key, $event)"
+                />
+              }
+            }
+            @if (prop.overridden && prop.inTemplate) {
+              <button
+                type="button"
+                class="btn btn-sm btn-mini"
+                title="Reset to template value"
+                (click)="resetPropertyOverride(prop.key)"
+              >
+                ↺
+              </button>
+            }
+            <button
+              type="button"
+              class="btn btn-sm btn-mini"
+              title="Remove property"
+              (click)="removePropertyOverride(prop.key, prop.inTemplate)"
+            >
+              ×
+            </button>
+          </div>
+        } @empty {
+          <div class="empty-hint">No properties</div>
+        }
+
+        @for (remKey of sel.overrides.removed_properties; track remKey) {
+          <div class="removed-chip">
+            <span>Removed: {{ remKey }}</span>
+            <button type="button" class="btn btn-sm btn-mini" (click)="restoreRemovedProperty(remKey)">
+              Restore
+            </button>
+          </div>
+        }
+
+        <div class="inline-add">
+          <input
+            type="text"
+            name="newInstancePropKey"
+            class="text-input"
+            placeholder="Override / new key"
+            [ngModel]="newPropKey()"
+            (ngModelChange)="newPropKey.set($event)"
+            (keydown.enter)="addProperty()"
+          />
+          <select
+            class="select"
+            name="newInstancePropType"
+            [ngModel]="newPropType()"
+            (ngModelChange)="newPropType.set($event)"
+          >
+            <option value="String">Str</option>
+            <option value="Int">Int</option>
+            <option value="Float">Flt</option>
+            <option value="Bool">Bool</option>
+          </select>
+          <button type="button" class="btn btn-sm" (click)="addProperty()">+</button>
+        </div>
+      </div>
+
+      <div class="tool-section">
+        <span class="section-label">Components</span>
+
+        <!-- Visual Component Override -->
+        <div class="comp-card">
+          <div class="section-head">
+            <span class="comp-title">Visual</span>
+            <div class="override-meta">
+              <span class="badge" [class.overridden]="sel.overrides.visual !== 'inherit'">
+                {{ overrideStatusLabel(sel.overrides.visual, !!linkedTemplate()?.visual) }}
+              </span>
+              @if (sel.overrides.visual !== 'inherit') {
+                <button
+                  type="button"
+                  class="btn btn-sm btn-mini reset-visual-btn"
+                  (click)="setVisualOverride('inherit')"
+                >
+                  Reset
+                </button>
+              }
+            </div>
+          </div>
+          @if (res.visual; as vis) {
+            <label class="field-row">
+              <span class="field-name">Type</span>
+              <select
+                class="select"
+                name="instVisualKind"
+                [ngModel]="isCharacterVisual(vis) ? 'character' : 'prop'"
+                (ngModelChange)="setVisualKind($event)"
+              >
+                <option value="character">Character Preset</option>
+                <option value="prop">Prop (.glb)</option>
+              </select>
+            </label>
+            @if (isCharacterVisual(vis)) {
+              <label class="field-row">
+                <span class="field-name">Preset</span>
+                <select
+                  class="select"
+                  name="instCharacterPreset"
+                  [ngModel]="vis.character.preset_id"
+                  (ngModelChange)="setCharacterPreset($event)"
+                >
+                  @for (preset of charState.presets(); track preset.id) {
+                    <option [value]="preset.id">{{ preset.name }}</option>
+                  }
+                </select>
+              </label>
+            } @else if (isPropVisual(vis)) {
+              <label class="field-row">
+                <span class="field-name">Asset</span>
+                <select
+                  class="select"
+                  name="instPropAsset"
+                  [ngModel]="vis.prop.asset_id"
+                  (ngModelChange)="setPropAsset($event)"
+                >
+                  @for (asset of worldState.catalog(); track asset.id) {
+                    <option [value]="asset.id">{{ asset.name }}</option>
+                  }
+                </select>
+              </label>
+              <label class="field-row">
+                <span class="field-name">Scale</span>
+                <input
+                  type="number"
+                  name="instPropScale"
+                  class="text-input num-single"
+                  step="0.05"
+                  min="0.05"
+                  max="20"
+                  [ngModel]="vis.prop.scale[0]"
+                  (ngModelChange)="setPropScale(+$event)"
+                />
+              </label>
+              <label class="checkbox-field">
+                <input
+                  type="checkbox"
+                  name="instPropCastShadow"
+                  [checked]="vis.prop.cast_shadow"
+                  (change)="onPropCastShadowChange($event)"
+                />
+                <span>Cast Shadow</span>
+              </label>
+            }
+            <button type="button" class="btn btn-sm btn-danger remove-visual-btn" (click)="removeVisual()">
+              Remove Visual
+            </button>
+          } @else {
+            <button type="button" class="btn btn-sm add-inst-visual-btn" (click)="addOrRestoreVisual()">
+              {{ sel.overrides.visual === 'remove' ? 'Restore Template Visual' : '+ Add Visual' }}
+            </button>
+          }
+        </div>
+
+        <!-- Movement Component Override -->
+        <div class="comp-card">
+          <div class="section-head">
+            <span class="comp-title">Movement</span>
+            <div class="override-meta">
+              <span class="badge" [class.overridden]="sel.overrides.movement !== 'inherit'">
+                {{ overrideStatusLabel(sel.overrides.movement, !!linkedTemplate()?.movement) }}
+              </span>
+              @if (sel.overrides.movement !== 'inherit') {
+                <button
+                  type="button"
+                  class="btn btn-sm btn-mini reset-movement-btn"
+                  (click)="setMovementOverride('inherit')"
+                >
+                  Reset
+                </button>
+              }
+            </div>
+          </div>
+          @if (res.movement; as mov) {
+            <label class="field-row">
+              <span class="field-name">Speed (m/s)</span>
+              <input
+                type="number"
+                name="instMoveSpeed"
+                class="text-input num-single"
+                step="0.25"
+                min="0.1"
+                [ngModel]="mov.speed"
+                (ngModelChange)="setMovementSpeed(+$event)"
+              />
+            </label>
+            <button type="button" class="btn btn-sm btn-danger remove-movement-btn" (click)="removeMovement()">
+              Remove Movement
+            </button>
+          } @else {
+            <button type="button" class="btn btn-sm add-inst-movement-btn" (click)="addOrRestoreMovement()">
+              {{ sel.overrides.movement === 'remove' ? 'Restore Template Movement' : '+ Add Movement' }}
+            </button>
+          }
+        </div>
+
+        <!-- Trigger Component Override -->
+        <div class="comp-card">
+          <div class="section-head">
+            <span class="comp-title">Trigger</span>
+            <div class="override-meta">
+              <span class="badge" [class.overridden]="sel.overrides.trigger !== 'inherit'">
+                {{ overrideStatusLabel(sel.overrides.trigger, !!linkedTemplate()?.trigger) }}
+              </span>
+              @if (sel.overrides.trigger !== 'inherit') {
+                <button
+                  type="button"
+                  class="btn btn-sm btn-mini reset-trigger-btn"
+                  (click)="setTriggerOverride('inherit')"
+                >
+                  Reset
+                </button>
+              }
+            </div>
+          </div>
+          @if (res.trigger; as trig) {
+            <label class="field-row">
+              <span class="field-name">Activation</span>
+              <select
+                class="select"
+                name="instTriggerActivation"
+                [ngModel]="trig.activation"
+                (ngModelChange)="setTriggerActivation($event)"
+              >
+                <option value="click">Click</option>
+                <option value="walk_into">Walk Into</option>
+                <option value="both">Click &amp; Walk Into</option>
+              </select>
+            </label>
+            <span class="sub-label">Size (m)</span>
+            <div class="xyz-grid">
+              <label class="num-cell">
+                <span>W</span>
+                <input
+                  type="number"
+                  name="instTriggerSizeX"
+                  step="0.1"
+                  min="0.1"
+                  [ngModel]="trig.size[0]"
+                  (ngModelChange)="setTriggerSize(0, +$event)"
+                />
+              </label>
+              <label class="num-cell">
+                <span>H</span>
+                <input
+                  type="number"
+                  name="instTriggerSizeY"
+                  step="0.1"
+                  min="0.1"
+                  [ngModel]="trig.size[1]"
+                  (ngModelChange)="setTriggerSize(1, +$event)"
+                />
+              </label>
+              <label class="num-cell">
+                <span>D</span>
+                <input
+                  type="number"
+                  name="instTriggerSizeZ"
+                  step="0.1"
+                  min="0.1"
+                  [ngModel]="trig.size[2]"
+                  (ngModelChange)="setTriggerSize(2, +$event)"
+                />
+              </label>
+            </div>
+            <span class="sub-label">Offset (m)</span>
+            <div class="xyz-grid">
+              <label class="num-cell">
+                <span>X</span>
+                <input
+                  type="number"
+                  name="instTriggerOffsetX"
+                  step="0.1"
+                  [ngModel]="trig.offset[0]"
+                  (ngModelChange)="setTriggerOffset(0, +$event)"
+                />
+              </label>
+              <label class="num-cell">
+                <span>Y</span>
+                <input
+                  type="number"
+                  name="instTriggerOffsetY"
+                  step="0.1"
+                  [ngModel]="trig.offset[1]"
+                  (ngModelChange)="setTriggerOffset(1, +$event)"
+                />
+              </label>
+              <label class="num-cell">
+                <span>Z</span>
+                <input
+                  type="number"
+                  name="instTriggerOffsetZ"
+                  step="0.1"
+                  [ngModel]="trig.offset[2]"
+                  (ngModelChange)="setTriggerOffset(2, +$event)"
+                />
+              </label>
+            </div>
+            <label class="field-row">
+              <span class="field-name">Yaw (deg)</span>
+              <input
+                type="number"
+                name="instTriggerYaw"
+                class="text-input num-single"
+                step="5"
+                [ngModel]="trig.yaw_deg"
+                (ngModelChange)="setTriggerYaw(+$event)"
+              />
+            </label>
+            <label class="field-row" [class.disabled]="trig.activation === 'walk_into'">
+              <span class="field-name">Click Range (m)</span>
+              <input
+                type="number"
+                name="instTriggerRange"
+                class="text-input num-single"
+                step="0.25"
+                min="0.1"
+                [disabled]="trig.activation === 'walk_into'"
+                [ngModel]="trig.interaction_range"
+                (ngModelChange)="setTriggerRange(+$event)"
+              />
+            </label>
+            <button type="button" class="btn btn-sm btn-danger remove-trigger-btn" (click)="removeTrigger()">
+              Remove Trigger
+            </button>
+          } @else {
+            <button type="button" class="btn btn-sm add-inst-trigger-btn" (click)="addOrRestoreTrigger()">
+              {{ sel.overrides.trigger === 'remove' ? 'Restore Template Trigger' : '+ Add Trigger' }}
+            </button>
+          }
+        </div>
+      </div>
+    }
+  } @else {
+    <div class="tool-section">
+      <div class="pos-readout muted">Click an entity in the scene to select</div>
+      <div class="action-row">
+        <button type="button" class="btn btn-sm btn-duplicate" disabled>Duplicate</button>
+        <button type="button" class="btn btn-sm btn-danger" disabled>Delete</button>
+      </div>
+    </div>
+  }
+
+  <div class="toolbox-hint">1–4: Mode · Drag gizmo/rings · Q/E: Yaw · Del: Remove</div>
+}

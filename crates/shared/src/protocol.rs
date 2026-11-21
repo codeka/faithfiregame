@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::entity::{EntityCapabilities, EntityId, EntityVisual};
+use crate::entity::{EntityCapabilities, EntityId, EntityVisual, TriggerConfig};
 use crate::world::AreaKind;
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientMessage {
@@ -16,6 +16,9 @@ pub enum ClientMessage {
         x: f32,
         z: f32,
     },
+    Interact {
+        entity_id: EntityId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -26,7 +29,8 @@ pub struct EntitySnapshot {
     pub yaw: f32,
     pub moving: bool,
     pub capabilities: EntityCapabilities,
-    pub visual: EntityVisual,
+    pub visual: Option<EntityVisual>,
+    pub trigger: Option<TriggerConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -157,7 +161,8 @@ mod tests {
                     yaw: 1.5,
                     moving: false,
                     capabilities: EntityCapabilities::PLAYER | EntityCapabilities::MOVABLE,
-                    visual: char_visual,
+                    visual: Some(char_visual),
+                    trigger: None,
                 },
                 EntitySnapshot {
                     entity_id: EntityId::new(2),
@@ -165,16 +170,23 @@ mod tests {
                     pos: [9.0, 0.0, 7.5],
                     yaw: 0.0,
                     moving: false,
-                    capabilities: EntityCapabilities::INTERACTABLE,
-                    visual: EntityVisual::Prop {
+                    capabilities: EntityCapabilities::INTERACTABLE | EntityCapabilities::TRIGGER,
+                    visual: Some(EntityVisual::Prop {
                         asset_id: "local:cryo_terminal".to_owned(),
                         scale: [1.0, 1.0, 1.0],
                         cast_shadow: true,
-                    },
+                    }),
+                    trigger: Some(TriggerConfig::default()),
                 },
             ],
         };
         let snap_bytes = encode_server_msg(&snap).unwrap();
         assert_eq!(decode_server_msg(&snap_bytes).unwrap(), snap);
+
+        let interact = ClientMessage::Interact {
+            entity_id: EntityId::new(2),
+        };
+        let ibytes = encode_client_msg(&interact).unwrap();
+        assert_eq!(decode_client_msg(&ibytes).unwrap(), interact);
     }
 }

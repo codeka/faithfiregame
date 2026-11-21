@@ -175,6 +175,11 @@ function baseStatus(tool: EditorStatus['tool'] = 'decoration'): EditorStatus {
     previewRotationDeg: [0, 0, 0],
     previewScale: 1,
     previewCastShadow: true,
+    entitySubmode: 'place',
+    activeEntityTemplateId: '',
+    entityPreviewYawDeg: 0,
+    selectedEntity: null,
+    entityStudioTurntable: false,
     walkabilityMode: 'block',
     characterStudio: {
       activePresetId: 'cryo_prisoner',
@@ -224,11 +229,13 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
   let animPlayingCalls: boolean[];
   let animSpeedCalls: number[];
   let debugSkeletonCalls: boolean[];
+  let savedEntityTemplates: { url: string; body: Record<string, unknown> }[];
+  let updatedSelectedEntities: unknown[];
   let origFetch: typeof globalThis.fetch;
 
   beforeEach(async () => {
     origFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       let body = '[]';
       if (url.includes('/world/assets/catalog.json')) {
@@ -237,6 +244,30 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
         body = JSON.stringify(MOCK_CHARACTER_CATALOG);
       } else if (url.includes('/api/editor/characters/presets')) {
         body = JSON.stringify(MOCK_CHARACTER_PRESETS);
+      } else if (url.includes('/api/editor/entities/templates')) {
+        const method = String(init?.method ?? 'GET').toUpperCase();
+        if (method === 'PUT') {
+          const rawBody = String(init?.body ?? '{}');
+          savedEntityTemplates.push({ url, body: JSON.parse(rawBody) });
+          body = rawBody;
+        } else {
+          body = JSON.stringify([
+            {
+              id: 'guard_npc',
+              name: 'Guard NPC',
+              properties: { level: { Int: 5 } },
+              visual: { character: { preset_id: 'preset_a' } },
+              movement: { speed: 3.5 },
+              trigger: {
+                size: [1.5, 2.0, 1.5],
+                offset: [0, 0, 0],
+                yaw_deg: 0,
+                activation: 'click',
+                interaction_range: 2.5,
+              },
+            },
+          ]);
+        }
       }
       return new Response(body, {
         status: 200,
@@ -271,6 +302,8 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     animPlayingCalls = [];
     animSpeedCalls = [];
     debugSkeletonCalls = [];
+    savedEntityTemplates = [];
+    updatedSelectedEntities = [];
 
     const mockEngine = {
       ready: signal(false),
@@ -439,6 +472,25 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
         );
       },
       resetCharacterStudioCamera: () => {},
+      setCharacterPresets: () => {},
+      setEntityTemplates: () => {},
+      setActiveEntityTemplate: () => {},
+      setEntityStudioTurntable: (enabled: boolean) => {
+        statusSig.update((s) => (s ? { ...s, entityStudioTurntable: enabled } : s));
+      },
+      setEntitySubmode: (submode: 'place' | 'move' | 'free_move' | 'rotate') => {
+        statusSig.update((s) => (s ? { ...s, entitySubmode: submode } : s));
+      },
+      setPlacementEntityTemplate: (templateId: string) => {
+        statusSig.update((s) => (s ? { ...s, activeEntityTemplateId: templateId } : s));
+      },
+      updateSelectedPlacedEntity: (entity: unknown) => {
+        updatedSelectedEntities.push(entity);
+        statusSig.update((s) => (s ? { ...s, selectedEntity: entity as never } : s));
+      },
+      snapSelectedEntityToTerrain: () => {},
+      duplicateSelectedEntity: () => {},
+      deleteSelectedEntity: () => {},
     };
 
     await TestBed.configureTestingModule({
@@ -732,6 +784,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
       'Texture',
       'Roads',
       'Decoration',
+      'Entities',
       'Walkability',
     ]);
 
@@ -1009,10 +1062,149 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     expect(root.querySelector('.area-unique-drawer')).not.toBeNull();
   });
 
+  it('creates, edits, and saves an Entity Template with default properties and Trigger component', async () => {
+    statusSig.set({ ...baseStatus('decoration'), editorMode: 'entities' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('app-entity-templates-editor')).not.toBeNull();
+
+    // Create a new template using the toolbar "+ New" button.
+    const newBtn = Array.from(root.querySelectorAll('.toolbar .btn')).find(
+      (b) => b.textContent?.trim() === '+ New',
+    ) as HTMLButtonElement;
+    expect(newBtn).toBeDefined();
+    newBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    // Add a default String property.
+    const keyInput = root.querySelector('input[name="newTemplatePropKey"]') as HTMLInputElement;
+    keyInput.value = 'faction';
+    keyInput.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const addPropBtn = root.querySelector('.add-prop-btn') as HTMLButtonElement;
+    addPropBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    // Add Trigger component and switch activation mode to walk_into.
+    const addTriggerBtn = root.querySelector('.add-trigger-btn') as HTMLButtonElement;
+    expect(addTriggerBtn).not.toBeNull();
+    addTriggerBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const actSelect = root.querySelector(
+      'select[name="templateTriggerActivation"]',
+    ) as HTMLSelectElement;
+    expect(actSelect).not.toBeNull();
+    actSelect.value = 'walk_into';
+    actSelect.dispatchEvent(new Event('change'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    // Save the template and assert PUT request payload.
+    const saveBtn = root.querySelector('.toolbar .btn.primary') as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(false);
+    saveBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const putCall = savedEntityTemplates.find((c) =>
+      c.url.includes('/api/editor/entities/templates/new_entity'),
+    );
+    expect(putCall).toBeDefined();
+    expect(putCall!.body['id']).toBe('new_entity');
+    expect((putCall!.body['properties'] as Record<string, unknown>)['faction']).toEqual({
+      String: '',
+    });
+    expect((putCall!.body['trigger'] as Record<string, unknown>)['activation']).toBe('walk_into');
+  });
+
+  it('switches Entities World tool submodes via hotkeys 1-4 and manages per-instance overrides', async () => {
+    statusSig.set({
+      ...baseStatus('entities'),
+      editorMode: 'world',
+      entitySubmode: 'place',
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('app-entity-tool')).not.toBeNull();
+
+    // Hotkey 2 switches to Move submode.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '2' }));
+    fixture.detectChanges();
+    expect(statusSig()?.entitySubmode).toBe('move');
+
+    // Provide a selected placed entity inheriting from guard_npc.
+    statusSig.update((s) =>
+      s
+        ? {
+            ...s,
+            entitySubmode: 'move',
+            selectedEntity: {
+              id: 42,
+              template_id: 'guard_npc',
+              position: [10, 0, 12],
+              rotation_y: 0,
+              overrides: {
+                name: null,
+                properties: {},
+                removed_properties: [],
+                visual: 'inherit',
+                movement: 'inherit',
+                trigger: 'inherit',
+              },
+            },
+          }
+        : s,
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    // Override instance name and verify updateSelectedPlacedEntity receives the override.
+    const nameInput = root.querySelector('input[name="instanceEntityName"]') as HTMLInputElement;
+    expect(nameInput.value).toBe('Guard NPC');
+    nameInput.value = 'Watch Captain';
+    nameInput.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(updatedSelectedEntities.length).toBeGreaterThan(0);
+    expect(statusSig()?.selectedEntity?.overrides.name).toBe('Watch Captain');
+
+    // Click "Reset All" to revert all instance overrides back to inherited defaults.
+    const resetAllBtn = root.querySelector('.reset-all-btn') as HTMLButtonElement;
+    expect(resetAllBtn).not.toBeNull();
+    resetAllBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(statusSig()?.selectedEntity?.overrides).toEqual({
+      name: null,
+      properties: {},
+      removed_properties: [],
+      visual: 'inherit',
+      movement: 'inherit',
+      trigger: 'inherit',
+    });
+  });
+
   it('switches top-level modes between World, Characters, and Entities and gates World hotkeys', () => {
     const root = fixture.nativeElement as HTMLElement;
     const modeBtns = Array.from(root.querySelectorAll('.mode-btn')) as HTMLButtonElement[];
-    expect(modeBtns.map((b) => b.textContent?.trim())).toEqual(['World', 'Characters', 'Entities']);
+    expect(modeBtns.map((b) => b.textContent?.trim())).toEqual([
+      'World',
+      'Characters',
+      'Entity Templates',
+    ]);
 
     // Switch to Characters mode
     modeBtns[1].click();
@@ -1030,7 +1222,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     modeBtns[2].click();
     fixture.detectChanges();
     expect(modeCalls.at(-1)).toBe('entities');
-    expect(root.querySelector('app-entities-placeholder')).not.toBeNull();
+    expect(root.querySelector('app-entity-templates-editor')).not.toBeNull();
     expect(root.querySelector('app-characters-editor')).toBeNull();
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: '4' }));

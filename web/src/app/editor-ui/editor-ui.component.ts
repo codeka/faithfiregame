@@ -4,8 +4,10 @@ import { CharactersEditorComponent } from './characters-editor/characters-editor
 import { CreateAreaModalComponent } from './create-area-modal/create-area-modal.component';
 import { EditorEngineService } from './editor-engine.service';
 import { EditorStateService } from './editor-state.service';
-import { EntitiesPlaceholderComponent } from './entities-placeholder/entities-placeholder.component';
+import { EntityEditorStateService } from './entity-editor-state.service';
+import { EntityTemplatesEditorComponent } from './entity-templates-editor/entity-templates-editor.component';
 import { EditorToolbarComponent } from './toolbar/editor-toolbar.component';
+import { ENTITY_SUBMODES, EntityToolComponent } from './tools/entity-tool/entity-tool.component';
 import {
   DECORATION_SUBMODES,
   DecorationToolComponent,
@@ -50,12 +52,13 @@ function isEditableTarget(target: EventTarget | null): boolean {
     TextureToolComponent,
     RoadToolComponent,
     DecorationToolComponent,
+    EntityToolComponent,
     WalkabilityToolComponent,
     CreateAreaModalComponent,
     CharactersEditorComponent,
-    EntitiesPlaceholderComponent,
+    EntityTemplatesEditorComponent,
   ],
-  providers: [EditorStateService, CharacterEditorStateService],
+  providers: [EditorStateService, CharacterEditorStateService, EntityEditorStateService],
   templateUrl: './editor-ui.component.html',
   styleUrl: './editor-ui.component.css',
   host: {
@@ -66,9 +69,14 @@ export class EditorUiComponent implements OnInit {
   readonly engine = inject(EditorEngineService);
   readonly state = inject(EditorStateService);
   readonly charState = inject(CharacterEditorStateService);
+  readonly entityState = inject(EntityEditorStateService);
 
   async ngOnInit(): Promise<void> {
-    await Promise.all([this.state.initData(), this.charState.initData()]);
+    await Promise.all([
+      this.state.initData(),
+      this.charState.initData(),
+      this.entityState.initData(),
+    ]);
   }
 
   onWindowKeyDown(ev: KeyboardEvent): void {
@@ -105,6 +113,11 @@ export class EditorUiComponent implements OnInit {
       case 'decoration': {
         const submode = DECORATION_SUBMODES[idx];
         if (submode) this.engine.setDecorationSubmode(submode.id);
+        break;
+      }
+      case 'entities': {
+        const submode = ENTITY_SUBMODES[idx];
+        if (submode) this.engine.setEntitySubmode(submode.id);
         break;
       }
       case 'walkability': {

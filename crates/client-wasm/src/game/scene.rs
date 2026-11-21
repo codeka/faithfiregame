@@ -130,7 +130,8 @@ impl GameClientState {
                             render_yaw: yaw,
                             target_yaw: yaw,
                             moving: false,
-                            visual: client_visual_from_wire(visual),
+                            visual: Some(client_visual_from_wire(visual)),
+                            trigger: None,
                         },
                     );
 
@@ -162,7 +163,9 @@ impl GameClientState {
                     self.entities.retain(|id, _| keep_ids.contains_key(id));
                     let area_id = self.area_id.clone();
                     for (id, snap) in keep_ids {
-                        self.ensure_entity_visual_requested(&area_id, &snap.visual);
+                        if let Some(vis) = &snap.visual {
+                            self.ensure_entity_visual_requested(&area_id, vis);
+                        }
                         let target_pos = Vec3::from(snap.pos);
                         if let Some(existing) = self.entities.get_mut(&id) {
                             existing.name = snap.name;
@@ -170,15 +173,19 @@ impl GameClientState {
                             existing.target_pos = target_pos;
                             existing.target_yaw = snap.yaw;
                             existing.moving = snap.moving;
+                            existing.trigger = snap.trigger;
                             match (&mut existing.visual, snap.visual) {
                                 (
-                                    ClientEntityVisualState::Character { appearance, .. },
-                                    EntityVisual::Character(new_app),
+                                    Some(ClientEntityVisualState::Character { appearance, .. }),
+                                    Some(EntityVisual::Character(new_app)),
                                 ) => {
                                     *appearance = new_app;
                                 }
-                                (_, new_visual) => {
-                                    existing.visual = client_visual_from_wire(new_visual);
+                                (_, Some(new_visual)) => {
+                                    existing.visual = Some(client_visual_from_wire(new_visual));
+                                }
+                                (_, None) => {
+                                    existing.visual = None;
                                 }
                             }
                         } else {
@@ -193,7 +200,8 @@ impl GameClientState {
                                     render_yaw: snap.yaw,
                                     target_yaw: snap.yaw,
                                     moving: snap.moving,
-                                    visual: client_visual_from_wire(snap.visual),
+                                    visual: snap.visual.map(client_visual_from_wire),
+                                    trigger: snap.trigger,
                                 },
                             );
                         }
@@ -224,8 +232,10 @@ impl GameClientState {
             .entities
             .values()
             .filter_map(|entity| match &entity.visual {
-                ClientEntityVisualState::Character { appearance, .. } => Some(appearance.clone()),
-                ClientEntityVisualState::Prop { .. } => None,
+                Some(ClientEntityVisualState::Character { appearance, .. }) => {
+                    Some(appearance.clone())
+                }
+                _ => None,
             })
             .collect();
         for app in &appearances {
@@ -475,33 +485,52 @@ impl GameClientState {
         cam_ctrl.update(camera, input, dt);
 
         if self.phase == GamePhase::Playing && !input.middle_mouse_down {
-            let hit = camera
-                .screen_ray(
-                    input.mouse_x,
-                    input.mouse_y,
-                    input.canvas_width,
-                    input.canvas_height,
-                )
-                .and_then(|(orig, dir)| self.raycast_terrain(orig, dir));
-
-            self.hover_walkable = hit.and_then(|p| self.is_point_walkable(p.x, p.z));
-            let cursor = match self.hover_walkable {
-                Some(true) => "pointer",
-                Some(false) => "not-allowed",
-                None => "",
+            let ray = camera.screen_ray(
+                input.mouse_x,
+                input.mouse_y,
+                input.canvas_width,
+                input.canvas_height,
+            );
+            let terrain_hit = ray.and_then(|(orig, dir)| self.raycast_terrain(orig, dir));
+            let terrain_t = match (ray, terrain_hit) {
+                (Some((orig, _)), Some(p)) => (p - orig).length(),
+                _ => f32::MAX,
             };
-            let _ = canvas.style().set_property("cursor", cursor);
+            let clicked_entity = ray.and_then(|(orig, dir)| {
+                self.raycast_clickable_entity(orig, dir, terrain_t + 0.25)
+            });
 
-            if input.left_just_pressed {
-                if let Some(hit_pos) = hit {
+            if let Some(target_id) = clicked_entity {
+                self.hover_walkable = None;
+                let _ = canvas.style().set_property("cursor", "pointer");
+                if input.left_just_pressed {
                     if let Some(net) = net {
-                        net.send(&shared::protocol::ClientMessage::MoveTo {
-                            x: hit_pos.x,
-                            z: hit_pos.z,
+                        net.send(&shared::protocol::ClientMessage::Interact {
+                            entity_id: target_id,
                         });
                     }
-                    if self.hover_walkable == Some(true) {
-                        self.move_target_marker = Some(hit_pos);
+                    self.move_target_marker = None;
+                }
+            } else {
+                self.hover_walkable = terrain_hit.and_then(|p| self.is_point_walkable(p.x, p.z));
+                let cursor = match self.hover_walkable {
+                    Some(true) => "pointer",
+                    Some(false) => "not-allowed",
+                    None => "",
+                };
+                let _ = canvas.style().set_property("cursor", cursor);
+
+                if input.left_just_pressed {
+                    if let Some(hit_pos) = terrain_hit {
+                        if let Some(net) = net {
+                            net.send(&shared::protocol::ClientMessage::MoveTo {
+                                x: hit_pos.x,
+                                z: hit_pos.z,
+                            });
+                        }
+                        if self.hover_walkable == Some(true) {
+                            self.move_target_marker = Some(hit_pos);
+                        }
                     }
                 }
             }
@@ -621,7 +650,7 @@ impl GameClientState {
         };
 
         let char_ready = self.local_entity().is_some_and(|e| match &e.visual {
-            ClientEntityVisualState::Character { appearance, .. } => {
+            Some(ClientEntityVisualState::Character { appearance, .. }) => {
                 let Some(catalog) = &self.character_catalog else {
                     return false;
                 };
@@ -633,12 +662,35 @@ impl GameClientState {
                         || !appearance.show_base_mesh
                         || self.base_meshes.contains_key(&skel.rig_path))
             }
-            ClientEntityVisualState::Prop { asset_id, .. } => {
+            Some(ClientEntityVisualState::Prop { asset_id, .. }) => {
                 self.prop_meshes.contains_key(asset_id)
             }
+            None => true,
         });
 
         props_ready && char_ready
+    }
+
+    fn raycast_clickable_entity(&self, orig: Vec3, dir: Vec3, max_t: f32) -> Option<EntityId> {
+        let mut best: Option<(f32, EntityId)> = None;
+        for entity in self.entities.values() {
+            if Some(entity.entity_id) == self.local_entity_id {
+                continue;
+            }
+            let Some(trig) = &entity.trigger else {
+                continue;
+            };
+            if !trig.activation.allows_click() {
+                continue;
+            }
+            if let Some(t) = trig.raycast(entity.render_pos.to_array(), entity.render_yaw, orig, dir)
+            {
+                if t <= max_t && best.is_none_or(|(bt, _)| t < bt) {
+                    best = Some((t, entity.entity_id));
+                }
+            }
+        }
+        best.map(|(_, id)| id)
     }
 
     fn update_entities(&mut self, dt: f32) {
@@ -654,11 +706,11 @@ impl GameClientState {
             };
             let is_moving =
                 entity.moving || (entity.target_pos - entity.render_pos).length_squared() > 0.002;
-            let ClientEntityVisualState::Character {
+            let Some(ClientEntityVisualState::Character {
                 appearance,
                 pose,
                 anim_time,
-            } = &mut entity.visual
+            }) = &mut entity.visual
             else {
                 continue;
             };
@@ -695,7 +747,10 @@ impl GameClientState {
     }
 
     fn draw_entity_shadow(&self, renderer: &Renderer, entity: &ClientEntityRenderState) {
-        match &entity.visual {
+        let Some(visual) = &entity.visual else {
+            return;
+        };
+        match visual {
             ClientEntityVisualState::Character {
                 appearance, pose, ..
             } => {
@@ -766,7 +821,10 @@ impl GameClientState {
     }
 
     fn draw_entity(&self, renderer: &Renderer, camera: &Camera, entity: &ClientEntityRenderState) {
-        match &entity.visual {
+        let Some(visual) = &entity.visual else {
+            return;
+        };
+        match visual {
             ClientEntityVisualState::Character {
                 appearance, pose, ..
             } => {

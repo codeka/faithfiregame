@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use shared::character::{CharacterCatalog, CharacterDefinition};
+use shared::entity::{EntityTemplate, PlacedEntity};
 use shared::world::{AreaMetadata, RoadStyle};
 use wasm_bindgen::prelude::*;
 
@@ -10,8 +11,8 @@ use crate::engine::{ClientRunMode, EngineInner};
 use crate::net::NetClient;
 
 use super::{
-    DecorationSubMode, EditorMode, EditorTool, HeightMode, RoadSubMode, WalkabilityMode,
-    io::dispatch_pending_saves,
+    DecorationSubMode, EditorMode, EditorTool, EntitySubMode, HeightMode, RoadSubMode,
+    WalkabilityMode, io::dispatch_pending_saves,
 };
 
 fn activate_editor_mode(st: &mut EngineInner) {
@@ -61,6 +62,7 @@ impl EditorEngineHandle {
             "texture" => EditorTool::Texture,
             "road" => EditorTool::Road,
             "decoration" => EditorTool::Decoration,
+            "entities" => EditorTool::Entities,
             "walkability" => EditorTool::Walkability,
             _ => EditorTool::Heightmap,
         };
@@ -431,6 +433,99 @@ impl EditorEngineHandle {
 
     pub fn reset_character_studio_camera(&self) {
         self.inner.borrow_mut().editor.studio_cam.reset();
+    }
+
+    pub fn set_entity_templates_json(&self, json: &str) -> Result<(), JsValue> {
+        let list: Vec<EntityTemplate> = serde_json::from_str(json)
+            .map_err(|e| JsValue::from_str(&format!("invalid EntityTemplate list json: {e}")))?;
+        self.inner.borrow_mut().editor.set_entity_templates(list);
+        Ok(())
+    }
+
+    pub fn set_character_presets_json(&self, json: &str) -> Result<(), JsValue> {
+        let list: Vec<CharacterDefinition> = serde_json::from_str(json)
+            .map_err(|e| JsValue::from_str(&format!("invalid CharacterDefinition list json: {e}")))?;
+        self.inner.borrow_mut().editor.set_character_presets(list);
+        Ok(())
+    }
+
+    pub fn set_active_entity_template_json(&self, json: &str) -> Result<(), JsValue> {
+        let tpl: Option<EntityTemplate> = if json.trim().is_empty() || json.trim() == "null" {
+            None
+        } else {
+            Some(serde_json::from_str(json).map_err(|e| {
+                JsValue::from_str(&format!("invalid EntityTemplate json: {e}"))
+            })?)
+        };
+        self.inner
+            .borrow_mut()
+            .editor
+            .set_active_entity_template(tpl);
+        Ok(())
+    }
+
+    pub fn set_entity_studio_turntable(&self, enabled: bool) {
+        self.inner
+            .borrow_mut()
+            .editor
+            .entity_studio
+            .turntable = enabled;
+    }
+
+    pub fn set_entity_submode(&self, submode: &str) {
+        let mut st = self.inner.borrow_mut();
+        st.editor.entity_submode = match submode {
+            "move" => EntitySubMode::Move,
+            "free_move" => EntitySubMode::FreeMove,
+            "rotate" => EntitySubMode::Rotate,
+            _ => EntitySubMode::Place,
+        };
+        st.editor.dragging_entity = false;
+        st.editor.gizmo_drag = None;
+        st.editor.hovered_gizmo_axis = None;
+        st.editor.rotate_drag = None;
+        st.editor.hovered_rotate_axis = None;
+    }
+
+    pub fn set_placement_entity_template(&self, template_id: &str) {
+        let mut st = self.inner.borrow_mut();
+        st.editor.active_entity_template_id = template_id.to_owned();
+        st.editor.ensure_entity_assets_queued();
+    }
+
+    pub fn update_selected_placed_entity_json(&self, json: &str) -> Result<(), JsValue> {
+        let updated: PlacedEntity = serde_json::from_str(json)
+            .map_err(|e| JsValue::from_str(&format!("invalid PlacedEntity json: {e}")))?;
+        let now_ms = browser_now_ms();
+        self.inner
+            .borrow_mut()
+            .editor
+            .update_selected_placed_entity(updated, now_ms);
+        Ok(())
+    }
+
+    pub fn snap_selected_entity_to_terrain(&self) {
+        let now_ms = browser_now_ms();
+        self.inner
+            .borrow_mut()
+            .editor
+            .snap_selected_entity_to_terrain(now_ms);
+    }
+
+    pub fn duplicate_selected_entity(&self) {
+        let now_ms = browser_now_ms();
+        self.inner
+            .borrow_mut()
+            .editor
+            .duplicate_selected_entity(now_ms);
+    }
+
+    pub fn delete_selected_entity(&self) {
+        let now_ms = browser_now_ms();
+        self.inner
+            .borrow_mut()
+            .editor
+            .delete_selected_entity(now_ms);
     }
 
     pub fn get_editor_status_json(&self) -> String {

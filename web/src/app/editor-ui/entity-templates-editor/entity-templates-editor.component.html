@@ -1,0 +1,353 @@
+<aside class="entity-panel" aria-label="Entity Template Editor">
+  @if (template(); as tpl) {
+    <div class="toolbox-title">Entity Template</div>
+
+    <div class="tool-section">
+      <div class="row-between">
+        <span class="section-label">Identity</span>
+        <span class="id-pill">{{ tpl.id }}</span>
+      </div>
+      <input
+        type="text"
+        name="entityTemplateName"
+        class="text-input"
+        placeholder="Template Name"
+        [ngModel]="tpl.name"
+        (ngModelChange)="entityState.setName($event)"
+      />
+    </div>
+
+    <div class="tool-section">
+      <span class="section-label">Default Properties</span>
+      @for (prop of propertyEntries(); track prop.key) {
+        <div class="prop-row">
+          <span class="prop-key" [title]="prop.key">{{ prop.key }}</span>
+          <span class="prop-type">{{ prop.kind }}</span>
+          @switch (prop.kind) {
+            @case ('Bool') {
+              <input
+                type="checkbox"
+                class="prop-check"
+                [attr.name]="'tpl_prop_' + prop.key"
+                [checked]="propBool(prop.value)"
+                (change)="onBoolPropChange(prop.key, $event)"
+              />
+            }
+            @case ('Int') {
+              <input
+                type="number"
+                step="1"
+                class="text-input prop-val"
+                [attr.name]="'tpl_prop_' + prop.key"
+                [ngModel]="propNumber(prop.value)"
+                (ngModelChange)="onIntPropChange(prop.key, +$event)"
+              />
+            }
+            @case ('Float') {
+              <input
+                type="number"
+                step="0.1"
+                class="text-input prop-val"
+                [attr.name]="'tpl_prop_' + prop.key"
+                [ngModel]="propNumber(prop.value)"
+                (ngModelChange)="onFloatPropChange(prop.key, +$event)"
+              />
+            }
+            @default {
+              <input
+                type="text"
+                class="text-input prop-val"
+                [attr.name]="'tpl_prop_' + prop.key"
+                [ngModel]="propString(prop.value)"
+                (ngModelChange)="onStringPropChange(prop.key, $event)"
+              />
+            }
+          }
+          <button
+            type="button"
+            class="btn btn-sm btn-icon"
+            title="Remove property"
+            (click)="entityState.removeProperty(prop.key)"
+          >
+            ×
+          </button>
+        </div>
+      } @empty {
+        <div class="empty-hint">No default properties yet</div>
+      }
+
+      <div class="inline-add">
+        <input
+          type="text"
+          name="newTemplatePropKey"
+          class="text-input"
+          placeholder="Property key"
+          [ngModel]="newPropKey()"
+          (ngModelChange)="newPropKey.set($event)"
+          (keydown.enter)="addProperty()"
+        />
+        <select
+          class="select"
+          name="newTemplatePropType"
+          [ngModel]="newPropType()"
+          (ngModelChange)="newPropType.set($event)"
+        >
+          <option value="String">String</option>
+          <option value="Int">Int</option>
+          <option value="Float">Float</option>
+          <option value="Bool">Bool</option>
+        </select>
+        <button type="button" class="btn btn-sm add-prop-btn" (click)="addProperty()">+ Add</button>
+      </div>
+    </div>
+
+    <div class="tool-section">
+      <div class="row-between">
+        <span class="section-label">Components</span>
+      </div>
+
+      @if (!tpl.visual || !tpl.movement || !tpl.trigger) {
+        <div class="add-comp-row">
+          @if (!tpl.visual) {
+            <button type="button" class="btn btn-sm add-visual-btn" (click)="addVisualComponent()">
+              + Visual
+            </button>
+          }
+          @if (!tpl.movement) {
+            <button type="button" class="btn btn-sm add-movement-btn" (click)="addMovementComponent()">
+              + Movement
+            </button>
+          }
+          @if (!tpl.trigger) {
+            <button type="button" class="btn btn-sm add-trigger-btn" (click)="addTriggerComponent()">
+              + Trigger
+            </button>
+          }
+        </div>
+      }
+
+      @if (tpl.visual; as vis) {
+        <div class="comp-card">
+          <div class="row-between comp-head">
+            <span class="comp-title">Visual</span>
+            <button type="button" class="btn btn-sm btn-danger" (click)="entityState.setVisual(null)">
+              Remove
+            </button>
+          </div>
+          <label class="field-row">
+            <span class="field-name">Model Type</span>
+            <select
+              class="select"
+              name="templateVisualKind"
+              [ngModel]="isCharacterVisual(vis) ? 'character' : 'prop'"
+              (ngModelChange)="setVisualKind($event)"
+            >
+              <option value="character">Character Preset</option>
+              <option value="prop">Prop (.glb)</option>
+            </select>
+          </label>
+          @if (isCharacterVisual(vis)) {
+            <label class="field-row">
+              <span class="field-name">Preset</span>
+              <select
+                class="select"
+                name="templateCharacterPreset"
+                [ngModel]="vis.character.preset_id"
+                (ngModelChange)="setCharacterPreset($event)"
+              >
+                @for (preset of charState.presets(); track preset.id) {
+                  <option [value]="preset.id">{{ preset.name }}</option>
+                }
+              </select>
+            </label>
+          } @else if (isPropVisual(vis)) {
+            <label class="field-row">
+              <span class="field-name">Asset</span>
+              <select
+                class="select"
+                name="templatePropAsset"
+                [ngModel]="vis.prop.asset_id"
+                (ngModelChange)="setPropAsset($event)"
+              >
+                @for (asset of worldState.catalog(); track asset.id) {
+                  <option [value]="asset.id">{{ asset.name }}</option>
+                }
+              </select>
+            </label>
+            <label class="field-row">
+              <span class="field-name">Scale</span>
+              <input
+                type="number"
+                name="templatePropScale"
+                class="text-input num-single"
+                step="0.05"
+                min="0.05"
+                max="20"
+                [ngModel]="vis.prop.scale[0]"
+                (ngModelChange)="setPropScale(+$event)"
+              />
+            </label>
+            <label class="checkbox-field">
+              <input
+                type="checkbox"
+                name="templatePropCastShadow"
+                [checked]="vis.prop.cast_shadow"
+                (change)="onPropCastShadowChange($event)"
+              />
+              <span>Cast Shadow</span>
+            </label>
+          }
+        </div>
+      }
+
+      @if (tpl.movement; as mov) {
+        <div class="comp-card">
+          <div class="row-between comp-head">
+            <span class="comp-title">Movement</span>
+            <button type="button" class="btn btn-sm btn-danger" (click)="entityState.setMovement(null)">
+              Remove
+            </button>
+          </div>
+          <label class="field-row">
+            <span class="field-name">Speed (m/s)</span>
+            <input
+              type="number"
+              name="templateMoveSpeed"
+              class="text-input num-single"
+              step="0.25"
+              min="0.1"
+              [ngModel]="mov.speed"
+              (ngModelChange)="setMovementSpeed(+$event)"
+            />
+          </label>
+        </div>
+      }
+
+      @if (tpl.trigger; as trig) {
+        <div class="comp-card">
+          <div class="row-between comp-head">
+            <span class="comp-title">Trigger</span>
+            <button type="button" class="btn btn-sm btn-danger" (click)="entityState.setTrigger(null)">
+              Remove
+            </button>
+          </div>
+          <label class="field-row">
+            <span class="field-name">Activation</span>
+            <select
+              class="select"
+              name="templateTriggerActivation"
+              [ngModel]="trig.activation"
+              (ngModelChange)="setTriggerActivation($event)"
+            >
+              <option value="click">Click</option>
+              <option value="walk_into">Walk Into</option>
+              <option value="both">Click &amp; Walk Into</option>
+            </select>
+          </label>
+          <span class="sub-label">Size (m)</span>
+          <div class="xyz-grid">
+            <label class="num-cell">
+              <span>W</span>
+              <input
+                type="number"
+                name="templateTriggerSizeX"
+                step="0.1"
+                min="0.1"
+                [ngModel]="trig.size[0]"
+                (ngModelChange)="setTriggerSize(0, +$event)"
+              />
+            </label>
+            <label class="num-cell">
+              <span>H</span>
+              <input
+                type="number"
+                name="templateTriggerSizeY"
+                step="0.1"
+                min="0.1"
+                [ngModel]="trig.size[1]"
+                (ngModelChange)="setTriggerSize(1, +$event)"
+              />
+            </label>
+            <label class="num-cell">
+              <span>D</span>
+              <input
+                type="number"
+                name="templateTriggerSizeZ"
+                step="0.1"
+                min="0.1"
+                [ngModel]="trig.size[2]"
+                (ngModelChange)="setTriggerSize(2, +$event)"
+              />
+            </label>
+          </div>
+          <span class="sub-label">Offset (m)</span>
+          <div class="xyz-grid">
+            <label class="num-cell">
+              <span>X</span>
+              <input
+                type="number"
+                name="templateTriggerOffsetX"
+                step="0.1"
+                [ngModel]="trig.offset[0]"
+                (ngModelChange)="setTriggerOffset(0, +$event)"
+              />
+            </label>
+            <label class="num-cell">
+              <span>Y</span>
+              <input
+                type="number"
+                name="templateTriggerOffsetY"
+                step="0.1"
+                [ngModel]="trig.offset[1]"
+                (ngModelChange)="setTriggerOffset(1, +$event)"
+              />
+            </label>
+            <label class="num-cell">
+              <span>Z</span>
+              <input
+                type="number"
+                name="templateTriggerOffsetZ"
+                step="0.1"
+                [ngModel]="trig.offset[2]"
+                (ngModelChange)="setTriggerOffset(2, +$event)"
+              />
+            </label>
+          </div>
+          <label class="field-row">
+            <span class="field-name">Yaw (deg)</span>
+            <input
+              type="number"
+              name="templateTriggerYaw"
+              class="text-input num-single"
+              step="5"
+              [ngModel]="trig.yaw_deg"
+              (ngModelChange)="setTriggerYaw(+$event)"
+            />
+          </label>
+          <label class="field-row" [class.disabled]="trig.activation === 'walk_into'">
+            <span class="field-name">Click Range (m)</span>
+            <input
+              type="number"
+              name="templateTriggerRange"
+              class="text-input num-single"
+              step="0.25"
+              min="0.1"
+              [disabled]="trig.activation === 'walk_into'"
+              [ngModel]="trig.interaction_range"
+              (ngModelChange)="setTriggerRange(+$event)"
+            />
+          </label>
+        </div>
+      }
+    </div>
+  } @else {
+    <div class="toolbox-title">Entity Templates</div>
+    <p class="empty-hint">
+      Create an entity template to define default properties and components (Visual, Movement,
+      Trigger), then place instances in the World editor.
+    </p>
+    <button type="button" class="btn btn-primary create-first-btn" (click)="entityState.createNewTemplate()">
+      + Create First Template
+    </button>
+  }
+</aside>

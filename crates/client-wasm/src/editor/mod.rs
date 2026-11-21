@@ -1,5 +1,7 @@
 mod character_studio;
 mod decoration_tool;
+mod entity_studio;
+mod entity_tool;
 mod gizmo;
 mod heightmap_tool;
 pub mod io;
@@ -14,11 +16,13 @@ mod wasm_api;
 
 #[allow(unused_imports)]
 pub use character_studio::{CharacterStudioState, StudioCameraController};
+#[allow(unused_imports)]
+pub use entity_studio::EntityStudioState;
 pub use state::EditorState;
 #[allow(unused_imports)]
 pub use types::{
     CharacterStudioStatusSnapshot, DecorationSubMode, EditorInsideState, EditorMode,
-    EditorStatusSnapshot, EditorTileState, EditorTool, HeightMode, PendingSave, RoadDraft,
-    RoadSubMode, SelectedPropInfo, SelectedRoadInfo, WalkabilityMode,
+    EditorStatusSnapshot, EditorTileState, EditorTool, EntitySubMode, HeightMode, PendingSave,
+    RoadDraft, RoadSubMode, SelectedPropInfo, SelectedRoadInfo, WalkabilityMode,
 };
 pub use wasm_api::EditorEngineHandle;

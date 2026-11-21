@@ -1,22 +1,23 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use shared::character::{CharacterCatalog, CharacterDefinition};
-use shared::entity::{EntityId, EntityVisual};
+use shared::entity::{EntityId, EntityTemplate, EntityVisual, PlacedEntity, VisualConfig};
 use shared::pathfinding::{WalkGrid, find_path, smooth_path};
 use shared::protocol::{EntitySnapshot, ServerMessage};
 use shared::world::{AreaKind, AreaMetadata, InsideKind, InsideSimData, TILE_SIZE, TileSimData};
 use tokio::sync::mpsc;
+use tracing::info;
 
 use crate::db::CharacterSaveRecord;
 
 use super::components::{
     CRYO_PRISON_AREA_ID, EntityLocation, InsideInstanceId, MovementComponent, PlayerComponent,
-    VisualComponent, inside_instance_for,
+    SpawnOrigin, TriggerComponent, VisualComponent, inside_instance_for,
 };
 use super::entity::{Entity, RemovedPlayer};
-use super::glue::{SimCommand, SimEvent};
+use super::glue::{SimCommand, SimEvent, TriggerWay};
 
 /// Configurable Outside simulation radius around each online player (`1` = `3×3` tiles = 9 tiles).
 pub const OUTSIDE_SIM_RADIUS: i32 = 1;
@@ -91,9 +92,51 @@ fn load_character_catalog(world_dir: &Path) -> CharacterCatalog {
         .unwrap_or_default()
 }
 
+fn load_character_presets(world_dir: &Path) -> HashMap<String, CharacterDefinition> {
+    let dir = world_dir.join("characters").join("presets");
+    let mut map = HashMap::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return map;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        if let Ok(bytes) = fs::read(&path) {
+            if let Ok(def) = serde_json::from_slice::<CharacterDefinition>(&bytes) {
+                map.insert(def.id.clone(), def);
+            }
+        }
+    }
+    map
+}
+
+fn load_entity_templates(world_dir: &Path) -> HashMap<String, EntityTemplate> {
+    let dir = world_dir.join("entities").join("templates");
+    let mut map = HashMap::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return map;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        if let Ok(bytes) = fs::read(&path) {
+            if let Ok(tpl) = serde_json::from_slice::<EntityTemplate>(&bytes) {
+                map.insert(tpl.id.clone(), tpl);
+            }
+        }
+    }
+    map
+}
+
 pub struct SimWorld {
     world_dir: PathBuf,
     character_catalog: CharacterCatalog,
+    character_presets: HashMap<String, CharacterDefinition>,
+    entity_templates: HashMap<String, EntityTemplate>,
     next_conn_id: u64,
     next_entity_id: u64,
     active_outside: HashMap<(String, i32, i32), TileSimData>,
@@ -107,9 +150,13 @@ pub struct SimWorld {
 impl SimWorld {
     pub fn new(world_dir: PathBuf) -> Self {
         let character_catalog = load_character_catalog(&world_dir);
+        let character_presets = load_character_presets(&world_dir);
+        let entity_templates = load_entity_templates(&world_dir);
         Self {
             world_dir,
             character_catalog,
+            character_presets,
+            entity_templates,
             next_conn_id: 0,
             next_entity_id: 0,
             active_outside: HashMap::new(),
@@ -121,17 +168,181 @@ impl SimWorld {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     pub fn hot_reload_outside_tile(&mut self, area_id: &str, tx: i32, ty: i32, sim: TileSimData) {
+        let entities_to_spawn = sim.entities.clone();
         self.active_outside.insert((area_id.to_owned(), tx, ty), sim);
+        let to_despawn: Vec<EntityId> = self
+            .entities
+            .values()
+            .filter(|e| {
+                matches!(
+                    &e.spawn_origin,
+                    Some(SpawnOrigin::OutsideTile { area_id: a, tx: etx, ty: ety, .. })
+                        if a == area_id && *etx == tx && *ety == ty
+                )
+            })
+            .map(|e| e.id)
+            .collect();
+        for id in to_despawn {
+            self.despawn_entity(id);
+        }
+        let location = EntityLocation::Outside {
+            area_id: area_id.to_owned(),
+        };
+        for placed in &entities_to_spawn {
+            self.instantiate_placed_entity(
+                location.clone(),
+                SpawnOrigin::OutsideTile {
+                    area_id: area_id.to_owned(),
+                    tx,
+                    ty,
+                    placed_id: placed.id,
+                },
+                placed,
+            );
+        }
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     pub fn hot_reload_inside(&mut self, area_id: &str, sim: InsideSimData) {
-        for (inst, active) in &mut self.active_inside {
-            if inst.area_id() == area_id {
-                *active = sim.clone();
+        let instances: Vec<InsideInstanceId> = self
+            .active_inside
+            .keys()
+            .filter(|inst| inst.area_id() == area_id)
+            .cloned()
+            .collect();
+        for inst in instances {
+            let entities_to_spawn = sim.entities.clone();
+            self.active_inside.insert(inst.clone(), sim.clone());
+            let to_despawn: Vec<EntityId> = self
+                .entities
+                .values()
+                .filter(|e| {
+                    matches!(
+                        &e.spawn_origin,
+                        Some(SpawnOrigin::InsideArea { instance, .. }) if instance == &inst
+                    )
+                })
+                .map(|e| e.id)
+                .collect();
+            for id in to_despawn {
+                self.despawn_entity(id);
             }
+            let location = EntityLocation::Inside(inst.clone());
+            for placed in &entities_to_spawn {
+                self.instantiate_placed_entity(
+                    location.clone(),
+                    SpawnOrigin::InsideArea {
+                        instance: inst.clone(),
+                        placed_id: placed.id,
+                    },
+                    placed,
+                );
+            }
+        }
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn reload_character_catalog(&mut self, catalog: CharacterCatalog) {
+        self.character_catalog = catalog;
+        let catalog_ref = &self.character_catalog;
+        for entity in self.entities.values_mut() {
+            if let Some(VisualComponent::Character {
+                definition,
+                compact,
+            }) = &mut entity.visual
+            {
+                *compact = definition.to_compact(catalog_ref).unwrap_or_default();
+            }
+        }
+        self.refresh_entities_for_template(None);
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn upsert_character_preset(&mut self, def: CharacterDefinition) {
+        self.character_presets.insert(def.id.clone(), def);
+        self.refresh_entities_for_template(None);
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn remove_character_preset(&mut self, preset_id: &str) {
+        self.character_presets.remove(preset_id);
+        self.refresh_entities_for_template(None);
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn upsert_entity_template(&mut self, template: EntityTemplate) {
+        let id = template.id.clone();
+        self.entity_templates.insert(id.clone(), template);
+        self.refresh_entities_for_template(Some(&id));
+    }
+
+    #[cfg_attr(not(feature = "editor"), allow(dead_code))]
+    pub fn remove_entity_template(&mut self, template_id: &str) {
+        self.entity_templates.remove(template_id);
+        self.refresh_entities_for_template(Some(template_id));
+    }
+
+    fn find_placed_source(&self, origin: &SpawnOrigin) -> Option<PlacedEntity> {
+        let placed_id = origin.placed_id();
+        match origin {
+            SpawnOrigin::OutsideTile { area_id, tx, ty, .. } => self
+                .active_outside
+                .get(&(area_id.clone(), *tx, *ty))
+                .and_then(|tile| tile.entities.iter().find(|p| p.id == placed_id))
+                .cloned(),
+            SpawnOrigin::InsideArea { instance, .. } => self
+                .active_inside
+                .get(instance)
+                .and_then(|inside| inside.entities.iter().find(|p| p.id == placed_id))
+                .cloned(),
+        }
+    }
+
+    fn refresh_entities_for_template(&mut self, template_filter: Option<&str>) {
+        let targets: Vec<(EntityId, PlacedEntity)> = self
+            .entities
+            .values()
+            .filter_map(|e| {
+                let origin = e.spawn_origin.as_ref()?;
+                let placed = self.find_placed_source(origin)?;
+                if template_filter.is_none_or(|id| id == placed.template_id) {
+                    Some((e.id, placed))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (eid, placed) in targets {
+            let resolved = placed.resolve(self.entity_templates.get(&placed.template_id));
+            let new_visual = resolved
+                .visual
+                .as_ref()
+                .map(|v| self.build_visual_component(v));
+            let Some(entity) = self.entities.get_mut(&eid) else {
+                continue;
+            };
+            entity.name = Some(resolved.name);
+            entity.properties = resolved.properties;
+            entity.visual = new_visual;
+            entity.movement = resolved.movement.map(|m| {
+                let mut mov = entity
+                    .movement
+                    .take()
+                    .unwrap_or_else(|| MovementComponent::new(m.speed));
+                mov.speed = m.speed;
+                mov
+            });
+            entity.trigger = resolved.trigger.map(|cfg| {
+                let mut trig = entity
+                    .trigger
+                    .take()
+                    .unwrap_or_else(|| TriggerComponent::new(cfg.clone()));
+                trig.config = cfg;
+                trig
+            });
         }
     }
 
@@ -177,7 +388,10 @@ impl SimWorld {
             self.ensure_location_loaded(&entity.location, entity.transform.pos);
             self.player_entities.insert(account_id, id);
         }
-        entity.transform.pos[1] = self.ground_elevation(&entity.location, entity.transform.pos);
+        if entity.spawn_origin.is_none() || entity.movement.is_some() {
+            entity.transform.pos[1] =
+                self.ground_elevation(&entity.location, entity.transform.pos);
+        }
         self.entities.insert(id, entity);
         self.recent_events.push(SimEvent::EntitySpawned { entity_id: id });
         id
@@ -193,6 +407,58 @@ impl SimWorld {
         self.recent_events
             .push(SimEvent::EntityDespawned { entity_id });
         Some(removed)
+    }
+
+    fn build_visual_component(&self, cfg: &VisualConfig) -> VisualComponent {
+        match cfg {
+            VisualConfig::Character { preset_id } => {
+                let definition = self
+                    .character_presets
+                    .get(preset_id)
+                    .cloned()
+                    .unwrap_or_else(CharacterDefinition::cryo_awakening_default);
+                let compact = definition
+                    .to_compact(&self.character_catalog)
+                    .unwrap_or_default();
+                VisualComponent::Character {
+                    definition,
+                    compact,
+                }
+            }
+            VisualConfig::Prop {
+                asset_id,
+                scale,
+                cast_shadow,
+            } => VisualComponent::Prop {
+                asset_id: asset_id.clone(),
+                scale: *scale,
+                cast_shadow: *cast_shadow,
+            },
+        }
+    }
+
+    fn instantiate_placed_entity(
+        &mut self,
+        location: EntityLocation,
+        origin: SpawnOrigin,
+        placed: &PlacedEntity,
+    ) -> EntityId {
+        let resolved = placed.resolve(self.entity_templates.get(&placed.template_id));
+        let id = self.alloc_entity_id();
+        let mut entity = Entity::new(id, location, placed.position, placed.rotation_y)
+            .with_name(resolved.name)
+            .with_spawn_origin(origin);
+        entity.properties = resolved.properties;
+        if let Some(vis) = &resolved.visual {
+            entity.visual = Some(self.build_visual_component(vis));
+        }
+        if let Some(mov) = &resolved.movement {
+            entity.movement = Some(MovementComponent::new(mov.speed));
+        }
+        if let Some(trig) = resolved.trigger {
+            entity.trigger = Some(TriggerComponent::new(trig));
+        }
+        self.spawn_entity(entity)
     }
 
     fn load_area_meta(&self, area_id: &str) -> AreaMetadata {
@@ -235,8 +501,24 @@ impl SimWorld {
             .join(format!("{tx},{ty}"))
             .join("sim.bin");
         if let Ok(bytes) = fs::read(sim_path) {
-            if let Ok(sim) = postcard::from_bytes::<TileSimData>(&bytes) {
+            if let Ok(sim) = TileSimData::from_postcard_bytes(&bytes) {
+                let entities_to_spawn = sim.entities.clone();
                 self.active_outside.insert(key, sim);
+                let location = EntityLocation::Outside {
+                    area_id: area_id.to_owned(),
+                };
+                for placed in &entities_to_spawn {
+                    self.instantiate_placed_entity(
+                        location.clone(),
+                        SpawnOrigin::OutsideTile {
+                            area_id: area_id.to_owned(),
+                            tx,
+                            ty,
+                            placed_id: placed.id,
+                        },
+                        placed,
+                    );
+                }
             }
         }
     }
@@ -251,8 +533,20 @@ impl SimWorld {
             .join(inst.area_id())
             .join("sim.bin");
         if let Ok(bytes) = fs::read(sim_path) {
-            if let Ok(sim) = postcard::from_bytes::<InsideSimData>(&bytes) {
+            if let Ok(sim) = InsideSimData::from_postcard_bytes(&bytes) {
+                let entities_to_spawn = sim.entities.clone();
                 self.active_inside.insert(inst.clone(), sim);
+                let location = EntityLocation::Inside(inst.clone());
+                for placed in &entities_to_spawn {
+                    self.instantiate_placed_entity(
+                        location.clone(),
+                        SpawnOrigin::InsideArea {
+                            instance: inst.clone(),
+                            placed_id: placed.id,
+                        },
+                        placed,
+                    );
+                }
             }
         }
     }
@@ -305,35 +599,33 @@ impl SimWorld {
         }
     }
 
+    fn entities_in_visible_range(a: &Entity, b: &Entity) -> bool {
+        match (&a.location, &b.location) {
+            (
+                EntityLocation::Outside { area_id: area_a },
+                EntityLocation::Outside { area_id: area_b },
+            ) => {
+                if area_a != area_b {
+                    return false;
+                }
+                let a_tx = (a.transform.pos[0] / TILE_SIZE as f32).floor() as i32;
+                let a_ty = (a.transform.pos[2] / TILE_SIZE as f32).floor() as i32;
+                let b_tx = (b.transform.pos[0] / TILE_SIZE as f32).floor() as i32;
+                let b_ty = (b.transform.pos[2] / TILE_SIZE as f32).floor() as i32;
+                (b_tx - a_tx).abs() <= OUTSIDE_SIM_RADIUS
+                    && (b_ty - a_ty).abs() <= OUTSIDE_SIM_RADIUS
+            }
+            (EntityLocation::Inside(inst_a), EntityLocation::Inside(inst_b)) => inst_a == inst_b,
+            _ => false,
+        }
+    }
+
     fn visible_entities_for(&self, observer: &Entity) -> Vec<EntitySnapshot> {
         let mut out = Vec::new();
-        match &observer.location {
-            EntityLocation::Outside { area_id: obs_area } => {
-                let obs_tx = (observer.transform.pos[0] / TILE_SIZE as f32).floor() as i32;
-                let obs_ty = (observer.transform.pos[2] / TILE_SIZE as f32).floor() as i32;
-                for candidate in self.entities.values() {
-                    if let EntityLocation::Outside { area_id } = &candidate.location {
-                        if area_id == obs_area {
-                            let c_tx = (candidate.transform.pos[0] / TILE_SIZE as f32).floor() as i32;
-                            let c_ty = (candidate.transform.pos[2] / TILE_SIZE as f32).floor() as i32;
-                            if (c_tx - obs_tx).abs() <= OUTSIDE_SIM_RADIUS
-                                && (c_ty - obs_ty).abs() <= OUTSIDE_SIM_RADIUS
-                            {
-                                if let Some(snap) = candidate.to_snapshot() {
-                                    out.push(snap);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            EntityLocation::Inside(obs_inst) => {
-                for candidate in self.entities.values() {
-                    if candidate.location.inside_instance() == Some(obs_inst) {
-                        if let Some(snap) = candidate.to_snapshot() {
-                            out.push(snap);
-                        }
-                    }
+        for candidate in self.entities.values() {
+            if Self::entities_in_visible_range(observer, candidate) {
+                if let Some(snap) = candidate.to_snapshot() {
+                    out.push(snap);
                 }
             }
         }
@@ -419,6 +711,31 @@ impl SimWorld {
         }
     }
 
+    fn fire_click_trigger(&mut self, actor_id: EntityId, target_id: EntityId, target_pos: [f32; 3]) {
+        if let Some(actor) = self.entities.get_mut(&actor_id) {
+            if let Some(mov) = &mut actor.movement {
+                mov.clear_path();
+            }
+            if let Some(player) = &mut actor.player {
+                player.pending_interaction = None;
+            }
+            let dx = target_pos[0] - actor.transform.pos[0];
+            let dz = target_pos[2] - actor.transform.pos[2];
+            if dx * dx + dz * dz > 1e-6 {
+                actor.transform.yaw = dx.atan2(dz);
+            }
+        }
+        info!(
+            "Trigger fired (click): trigger_entity={} actor_entity={}",
+            target_id, actor_id
+        );
+        self.recent_events.push(SimEvent::EntityTriggered {
+            trigger_entity_id: target_id,
+            actor_entity_id: actor_id,
+            way: TriggerWay::Click,
+        });
+    }
+
     pub fn process_commands(&mut self) {
         while let Some(cmd) = self.command_queue.pop_front() {
             match cmd {
@@ -443,6 +760,66 @@ impl SimWorld {
                         if let Some(entity) = self.entities.get_mut(&entity_id) {
                             if let Some(movement) = &mut entity.movement {
                                 movement.waypoints = waypoints;
+                            }
+                        }
+                    }
+                }
+                SimCommand::Interact {
+                    actor_id,
+                    target_id,
+                } => {
+                    if actor_id == target_id {
+                        continue;
+                    }
+                    let Some((actor_loc, actor_pos, can_move)) =
+                        self.entities.get(&actor_id).and_then(|a| {
+                            a.player
+                                .as_ref()
+                                .map(|_| (a.location.clone(), a.transform.pos, a.movement.is_some()))
+                        })
+                    else {
+                        continue;
+                    };
+                    let Some((target_pos, target_yaw, trig_cfg)) =
+                        self.entities.get(&target_id).and_then(|t| {
+                            let actor = self.entities.get(&actor_id)?;
+                            if !Self::entities_in_visible_range(actor, t) {
+                                return None;
+                            }
+                            let trig = t.trigger.as_ref()?;
+                            trig.config
+                                .activation
+                                .allows_click()
+                                .then(|| (t.transform.pos, t.transform.yaw, trig.config.clone()))
+                        })
+                    else {
+                        continue;
+                    };
+
+                    let dist = trig_cfg.horizontal_distance_to_point(
+                        target_pos,
+                        target_yaw,
+                        actor_pos,
+                    );
+                    if dist <= trig_cfg.interaction_range.max(0.1) {
+                        self.fire_click_trigger(actor_id, target_id, target_pos);
+                    } else if can_move {
+                        let waypoints = self.compute_waypoints(
+                            &actor_loc,
+                            actor_pos,
+                            target_pos[0],
+                            target_pos[2],
+                        );
+                        if let Some(actor) = self.entities.get_mut(&actor_id) {
+                            if let Some(wps) = waypoints {
+                                if let Some(mov) = &mut actor.movement {
+                                    mov.waypoints = wps;
+                                }
+                                if let Some(player) = &mut actor.player {
+                                    player.pending_interaction = Some(target_id);
+                                }
+                            } else if let Some(player) = &mut actor.player {
+                                player.pending_interaction = None;
                             }
                         }
                     }
@@ -476,6 +853,9 @@ impl SimWorld {
                         }
                         if let Some(movement) = &mut entity.movement {
                             movement.clear_path();
+                        }
+                        if let Some(player) = &mut entity.player {
+                            player.pending_interaction = None;
                         }
                     }
                 }
@@ -554,6 +934,7 @@ impl SimWorld {
                 account_id,
                 conn_id,
                 tx_out,
+                pending_interaction: None,
             });
         self.spawn_entity(entity);
 
@@ -613,7 +994,22 @@ impl SimWorld {
 
     pub fn move_player_to(&mut self, account_id: u64, target_x: f32, target_z: f32) {
         if let Some(entity_id) = self.player_entities.get(&account_id).copied() {
+            if let Some(entity) = self.entities.get_mut(&entity_id) {
+                if let Some(player) = &mut entity.player {
+                    player.pending_interaction = None;
+                }
+            }
             self.move_entity_to(entity_id, target_x, target_z);
+        }
+    }
+
+    pub fn interact_player_with(&mut self, account_id: u64, target_id: EntityId) {
+        if let Some(actor_id) = self.player_entities.get(&account_id).copied() {
+            self.enqueue_command(SimCommand::Interact {
+                actor_id,
+                target_id,
+            });
+            self.process_commands();
         }
     }
 
@@ -648,21 +1044,37 @@ impl SimWorld {
         self.active_outside.retain(|k, _| needed_outside.contains(k));
         self.active_inside.retain(|k, _| needed_inside.contains(k));
 
-        // Despawn orphaned non-player entities living in solo instances that no longer have an owner online.
-        let stale_solo_entities: Vec<EntityId> = self
+        // Despawn template entities from unloaded tiles/instances & orphaned solo-instance entities.
+        let stale_entities: Vec<EntityId> = self
             .entities
             .values()
             .filter(|e| {
-                e.player.is_none()
-                    && matches!(
-                        &e.location,
-                        EntityLocation::Inside(inst @ InsideInstanceId::Solo { .. })
-                            if !needed_inside.contains(inst)
-                    )
+                if e.player.is_some() {
+                    return false;
+                }
+                if let Some(origin) = &e.spawn_origin {
+                    match origin {
+                        SpawnOrigin::OutsideTile { area_id, tx, ty, .. } => {
+                            if !self.active_outside.contains_key(&(area_id.clone(), *tx, *ty)) {
+                                return true;
+                            }
+                        }
+                        SpawnOrigin::InsideArea { instance, .. } => {
+                            if !self.active_inside.contains_key(instance) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                matches!(
+                    &e.location,
+                    EntityLocation::Inside(inst @ InsideInstanceId::Solo { .. })
+                        if !needed_inside.contains(inst)
+                )
             })
             .map(|e| e.id)
             .collect();
-        for id in stale_solo_entities {
+        for id in stale_entities {
             self.despawn_entity(id);
         }
 
@@ -750,6 +1162,127 @@ impl SimWorld {
             }
         }
 
+        // Resolve deferred click interactions once players walk into interaction range.
+        let pending_actors: Vec<(EntityId, EntityId)> = self
+            .entities
+            .values()
+            .filter_map(|e| Some((e.id, e.player.as_ref()?.pending_interaction?)))
+            .collect();
+        for (actor_id, target_id) in pending_actors {
+            let outcome = (|| {
+                let actor = self.entities.get(&actor_id)?;
+                let target = self.entities.get(&target_id)?;
+                if !Self::entities_in_visible_range(actor, target) {
+                    return None;
+                }
+                let trig = target.trigger.as_ref()?;
+                if !trig.config.activation.allows_click() {
+                    return None;
+                }
+                let dist = trig.config.horizontal_distance_to_point(
+                    target.transform.pos,
+                    target.transform.yaw,
+                    actor.transform.pos,
+                );
+                Some((
+                    dist <= trig.config.interaction_range.max(0.1),
+                    actor.is_moving(),
+                    target.transform.pos,
+                ))
+            })();
+            match outcome {
+                Some((true, _, target_pos)) => {
+                    self.fire_click_trigger(actor_id, target_id, target_pos);
+                }
+                Some((false, true, _)) => {}
+                Some((false, false, _)) | None => {
+                    if let Some(actor) = self.entities.get_mut(&actor_id) {
+                        if let Some(player) = &mut actor.player {
+                            player.pending_interaction = None;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Evaluate Walk-Into trigger volumes against active players.
+        let player_positions: Vec<(EntityId, EntityLocation, [f32; 3])> = self
+            .entities
+            .values()
+            .filter(|e| e.player.is_some())
+            .map(|e| (e.id, e.location.clone(), e.transform.pos))
+            .collect();
+        let walk_triggers: Vec<EntityId> = self
+            .entities
+            .values()
+            .filter(|e| {
+                self.is_entity_in_active_region(e)
+                    && e.trigger
+                        .as_ref()
+                        .is_some_and(|t| t.config.activation.allows_walk_into())
+            })
+            .map(|e| e.id)
+            .collect();
+
+        for trig_id in walk_triggers {
+            let Some((trig_loc, trig_pos, trig_yaw, trig_cfg)) =
+                self.entities.get(&trig_id).and_then(|e| {
+                    let trig = e.trigger.as_ref()?;
+                    Some((
+                        e.location.clone(),
+                        e.transform.pos,
+                        e.transform.yaw,
+                        trig.config.clone(),
+                    ))
+                })
+            else {
+                continue;
+            };
+
+            let inside_now: BTreeSet<EntityId> = player_positions
+                .iter()
+                .filter(|(pid, ploc, ppos)| {
+                    if *pid == trig_id {
+                        return false;
+                    }
+                    let same_space = match (&trig_loc, ploc) {
+                        (
+                            EntityLocation::Outside { area_id: a },
+                            EntityLocation::Outside { area_id: b },
+                        ) => a == b,
+                        (EntityLocation::Inside(a), EntityLocation::Inside(b)) => a == b,
+                        _ => false,
+                    };
+                    same_space && trig_cfg.contains_point(trig_pos, trig_yaw, *ppos)
+                })
+                .map(|(pid, _, _)| *pid)
+                .collect();
+
+            let mut newly_entered = Vec::new();
+            if let Some(trig_entity) = self.entities.get_mut(&trig_id) {
+                if let Some(trig) = &mut trig_entity.trigger {
+                    trig.occupants.retain(|pid| inside_now.contains(pid));
+                    for pid in inside_now {
+                        if trig.occupants.insert(pid) {
+                            newly_entered.push(pid);
+                        }
+                    }
+                }
+            }
+
+            for actor_entity_id in newly_entered {
+                info!(
+                    "Trigger fired (walk_into): trigger_entity={} actor_entity={}",
+                    trig_id, actor_entity_id
+                );
+                self.recent_events.push(SimEvent::EntityTriggered {
+                    trigger_entity_id: trig_id,
+                    actor_entity_id,
+                    way: TriggerWay::WalkInto,
+                });
+            }
+        }
+
         self.process_commands();
 
         if self.player_entities.is_empty() {
@@ -795,13 +1328,47 @@ fn build_waypoints(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::entity::{EntityCapabilities, PropertyValue};
+    use shared::entity::{
+        ComponentOverride, EntityCapabilities, EntityOverrides, MovementConfig, PropertyBag,
+        PropertyValue, TriggerActivation, TriggerConfig,
+    };
+    use shared::world::InsideVisData;
 
     fn workspace_world_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
             .join("world")
+    }
+
+    fn unique_temp_world(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ff_world_{label}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(dir.join("areas").join("test_room")).unwrap();
+        let meta = AreaMetadata {
+            id: "test_room".to_owned(),
+            name: "Test Room".to_owned(),
+            kind: AreaKind::Inside(InsideKind::Ephemeral),
+            dimensions: Some((20, 20)),
+        };
+        fs::write(
+            dir.join("areas").join("test_room").join("area.bin"),
+            postcard::to_allocvec(&meta).unwrap(),
+        )
+        .unwrap();
+        let vis = InsideVisData::flat_default(20, 20);
+        fs::write(
+            dir.join("areas").join("test_room").join("vis.bin"),
+            postcard::to_allocvec(&vis).unwrap(),
+        )
+        .unwrap();
+        dir
     }
 
     #[test]
@@ -1008,7 +1575,10 @@ mod tests {
         assert_eq!(console_snap.name.as_deref(), Some("Cryo Terminal"));
         assert!(console_snap.capabilities.contains(EntityCapabilities::INTERACTABLE));
         assert!(!console_snap.capabilities.contains(EntityCapabilities::MOVABLE));
-        assert!(matches!(console_snap.visual, EntityVisual::Prop { .. }));
+        assert!(matches!(
+            console_snap.visual,
+            Some(EntityVisual::Prop { .. })
+        ));
 
         let mut latest_p2_entities = Vec::new();
         while let Ok(msg) = rx2.try_recv() {
@@ -1068,5 +1638,191 @@ mod tests {
         let removed = sim.remove_player(555, conn2).expect("removes active connection");
         assert_eq!(removed.entity_id, new_id);
         assert!(sim.entity(new_id).is_none());
+    }
+
+    #[test]
+    fn template_spawning_inherits_live_edits_with_overrides_and_fires_click_and_walk_triggers() {
+        let world_dir = unique_temp_world("templates_and_triggers");
+
+        let mut props = PropertyBag::new();
+        props.set("role", PropertyValue::String("terminal".to_owned()));
+        props.set("charges", PropertyValue::Int(3));
+
+        let mut tpl = EntityTemplate {
+            id: "portal_pad".to_owned(),
+            name: "Portal Pad".to_owned(),
+            properties: props,
+            visual: None,
+            movement: None,
+            trigger: Some(TriggerConfig {
+                size: [2.0, 2.0, 2.0],
+                offset: [0.0, 0.0, 0.0],
+                yaw_deg: 0.0,
+                activation: TriggerActivation::Both,
+                interaction_range: 1.5,
+            }),
+        };
+        fs::create_dir_all(world_dir.join("entities").join("templates")).unwrap();
+        fs::write(
+            world_dir.join("entities/templates/portal_pad.json"),
+            serde_json::to_vec(&tpl).unwrap(),
+        )
+        .unwrap();
+
+        let mut inside_sim = InsideSimData::flat_default(20, 20);
+        // Instance 1: pure inheritance (at [12.0, 0.0, 6.0])
+        inside_sim.entities.push(PlacedEntity {
+            id: 1,
+            template_id: "portal_pad".to_owned(),
+            position: [12.0, 0.0, 6.0],
+            rotation_y: 0.0,
+            overrides: EntityOverrides::default(),
+        });
+        // Instance 2: customized name + property + WalkInto-only trigger (at [8.0, 0.0, 12.0])
+        let mut custom_ov = EntityOverrides::default();
+        custom_ov.name = Some("Custom Pad".to_owned());
+        custom_ov
+            .properties
+            .set("charges", PropertyValue::Int(9));
+        custom_ov.trigger = ComponentOverride::Set(TriggerConfig {
+            size: [2.0, 2.0, 2.0],
+            offset: [0.0, 0.0, 0.0],
+            yaw_deg: 0.0,
+            activation: TriggerActivation::WalkInto,
+            interaction_range: 1.5,
+        });
+        inside_sim.entities.push(PlacedEntity {
+            id: 2,
+            template_id: "portal_pad".to_owned(),
+            position: [8.0, 0.0, 12.0],
+            rotation_y: 0.0,
+            overrides: custom_ov,
+        });
+        fs::write(
+            world_dir.join("areas").join("test_room").join("sim.bin"),
+            postcard::to_allocvec(&inside_sim).unwrap(),
+        )
+        .unwrap();
+
+        let mut sim = SimWorld::new(world_dir.clone());
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let saved = CharacterSaveRecord {
+            account_id: 77,
+            area_id: "test_room".to_owned(),
+            pos: [4.0, 0.0, 6.0],
+            yaw: 0.0,
+            appearance: CharacterDefinition::cryo_awakening_default(),
+        };
+        let (conn_id, enter_msg, snap_msg) = sim.spawn_player(77, Some(saved), tx);
+        let player_eid = match enter_msg {
+            ServerMessage::EnterArea { entity_id, .. } => entity_id,
+            _ => panic!("expected EnterArea"),
+        };
+
+        // Player + Instance 1 (clickable invisible trigger) appear in snapshot; Instance 2 is WalkInto+invisible so not in client snapshot.
+        let snap_entities = match snap_msg {
+            ServerMessage::WorldSnapshot { entities } => entities,
+            _ => panic!("expected WorldSnapshot"),
+        };
+        assert_eq!(snap_entities.len(), 2);
+        let pad1_eid = snap_entities
+            .iter()
+            .find(|e| e.entity_id != player_eid)
+            .unwrap()
+            .entity_id;
+
+        let pad2_eid = sim
+            .entities
+            .values()
+            .find(|e| e.name.as_deref() == Some("Custom Pad"))
+            .expect("custom pad spawned")
+            .id;
+
+        // Edit the template live: name, property, and add MovementComponent!
+        tpl.name = "Updated Pad".to_owned();
+        tpl.properties.set("charges", PropertyValue::Int(5));
+        tpl.movement = Some(MovementConfig { speed: 2.5 });
+        sim.upsert_entity_template(tpl);
+
+        let pad1 = sim.entity(pad1_eid).unwrap();
+        assert_eq!(pad1.name.as_deref(), Some("Updated Pad"));
+        assert_eq!(pad1.properties.get_int("charges"), Some(5));
+        assert_eq!(pad1.movement.as_ref().map(|m| m.speed), Some(2.5));
+
+        // Instance 2 kept its overridden name & charges while inheriting the new MovementComponent!
+        let pad2 = sim.entity(pad2_eid).unwrap();
+        assert_eq!(pad2.name.as_deref(), Some("Custom Pad"));
+        assert_eq!(pad2.properties.get_int("charges"), Some(9));
+        assert_eq!(pad2.movement.as_ref().map(|m| m.speed), Some(2.5));
+
+        // Clicking pad1 from far away walks the player into interaction range and fires Click trigger!
+        sim.interact_player_with(77, pad1_eid);
+        let mut click_fired = false;
+        for _ in 0..30 {
+            sim.tick();
+            if sim.recent_events().iter().any(|ev| {
+                matches!(
+                    ev,
+                    SimEvent::EntityTriggered {
+                        trigger_entity_id,
+                        actor_entity_id,
+                        way: TriggerWay::Click,
+                    } if *trigger_entity_id == pad1_eid && *actor_entity_id == player_eid
+                )
+            }) {
+                click_fired = true;
+            }
+        }
+        assert!(click_fired, "click trigger should fire once player walks into range");
+
+        // Walking through pad2 fires WalkInto trigger once on entry and again only after exit + re-entry!
+        sim.move_player_to(77, 8.0, 12.0);
+        let mut walk_count = 0usize;
+        for _ in 0..25 {
+            sim.tick();
+            walk_count += sim
+                .recent_events()
+                .iter()
+                .filter(|ev| {
+                    matches!(
+                        ev,
+                        SimEvent::EntityTriggered {
+                            trigger_entity_id,
+                            actor_entity_id,
+                            way: TriggerWay::WalkInto,
+                        } if *trigger_entity_id == pad2_eid && *actor_entity_id == player_eid
+                    )
+                })
+                .count();
+        }
+        assert_eq!(walk_count, 1, "walk-into trigger should fire once while standing inside");
+
+        // Walk out, then walk back in -> fires a second time.
+        sim.move_player_to(77, 3.0, 12.0);
+        for _ in 0..20 {
+            sim.tick();
+        }
+        sim.move_player_to(77, 8.0, 12.0);
+        for _ in 0..20 {
+            sim.tick();
+            walk_count += sim
+                .recent_events()
+                .iter()
+                .filter(|ev| {
+                    matches!(
+                        ev,
+                        SimEvent::EntityTriggered {
+                            trigger_entity_id,
+                            actor_entity_id,
+                            way: TriggerWay::WalkInto,
+                        } if *trigger_entity_id == pad2_eid && *actor_entity_id == player_eid
+                    )
+                })
+                .count();
+        }
+        assert_eq!(walk_count, 2, "re-entering walk-into trigger should fire again");
+
+        assert!(sim.remove_player(77, conn_id).is_some());
+        let _ = fs::remove_dir_all(&world_dir);
     }
 }

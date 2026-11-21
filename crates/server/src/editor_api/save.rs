@@ -43,7 +43,7 @@ pub async fn save_outside_tile(
 
     let existing_sim = fs::read(tile_dir.join("sim.bin"))
         .ok()
-        .and_then(|bytes| postcard::from_bytes::<TileSimData>(&bytes).ok());
+        .and_then(|bytes| TileSimData::from_postcard_bytes(&bytes).ok());
     let sim = compute_sim_from_vis(&vis, existing_sim.as_ref());
 
     fs::write(
@@ -100,7 +100,7 @@ pub async fn save_inside_area(
 
     let existing_sim = fs::read(area_dir.join("sim.bin"))
         .ok()
-        .and_then(|bytes| postcard::from_bytes::<InsideSimData>(&bytes).ok());
+        .and_then(|bytes| InsideSimData::from_postcard_bytes(&bytes).ok());
     let sim = compute_inside_sim_from_vis(&vis, existing_sim.as_ref());
 
     fs::write(

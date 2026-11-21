@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use glam::Vec3;
+use shared::character::CharacterDefinition;
+use shared::entity::{EntityTemplate, PlacedEntity, VisualConfig};
 use shared::world::{
     AreaKind, AreaMetadata, AssetCatalog, AssetEntry, InsideVisData, MAX_ROAD_MATERIALS,
     MAX_TERRAIN_MATERIALS, PropPlacement, ROAD_MAT_COBBLESTONE, ROAD_MAT_DIRT, ROAD_MATERIAL_COUNT,
@@ -10,15 +12,17 @@ use shared::world::{
 };
 
 use crate::camera::{Camera, EditorCameraController};
+use crate::character::SkeletonPose;
 use crate::glb_loader::parse_glb;
 use crate::input::InputState;
 use crate::render::{PropMeshGpu, TerrainMeshGpu};
 
 use super::character_studio::{CharacterStudioState, StudioCameraController};
+use super::entity_studio::EntityStudioState;
 use super::gizmo::{GizmoAxis, GizmoDragState};
 use super::types::{
     DecorationSubMode, EditorInsideState, EditorMode, EditorStatusSnapshot, EditorTileState,
-    EditorTool, HeightMode, PendingSave, RoadDraft, RoadSubMode, SelectedPropInfo,
+    EditorTool, EntitySubMode, HeightMode, PendingSave, RoadDraft, RoadSubMode, SelectedPropInfo,
     SelectedRoadInfo, WalkabilityMode,
 };
 
@@ -26,6 +30,11 @@ pub struct EditorState {
     pub mode: EditorMode,
     pub studio_cam: StudioCameraController,
     pub character_studio: CharacterStudioState,
+    pub entity_studio: EntityStudioState,
+    pub entity_templates: HashMap<String, EntityTemplate>,
+    pub character_presets: HashMap<String, CharacterDefinition>,
+    pub entity_poses: HashMap<String, SkeletonPose>,
+    pub entity_anim_time: f32,
 
     pub active_area: AreaMetadata,
     pub outside_tiles: HashMap<(i32, i32), EditorTileState>,
@@ -76,6 +85,13 @@ pub struct EditorState {
     pub gizmo_drag: Option<GizmoDragState>,
     pub next_prop_id: u64,
 
+    pub entity_submode: EntitySubMode,
+    pub active_entity_template_id: String,
+    pub entity_preview_yaw: f32,
+    pub selected_entity_id: Option<u64>,
+    pub dragging_entity: bool,
+    pub next_entity_placement_id: u64,
+
     pub hover_world: Option<Vec3>,
     pub flatten_target_y: Option<f32>,
 
@@ -95,6 +111,11 @@ impl EditorState {
             mode: EditorMode::World,
             studio_cam: StudioCameraController::default(),
             character_studio: CharacterStudioState::new(),
+            entity_studio: EntityStudioState::new(),
+            entity_templates: HashMap::new(),
+            character_presets: HashMap::new(),
+            entity_poses: HashMap::new(),
+            entity_anim_time: 0.0,
             active_area: AreaMetadata {
                 id: String::new(),
                 name: "No Area".to_owned(),
@@ -143,6 +164,12 @@ impl EditorState {
             hovered_gizmo_axis: None,
             gizmo_drag: None,
             next_prop_id: 1000,
+            entity_submode: EntitySubMode::Place,
+            active_entity_template_id: String::new(),
+            entity_preview_yaw: 0.0,
+            selected_entity_id: None,
+            dragging_entity: false,
+            next_entity_placement_id: 1000,
             hover_world: None,
             flatten_target_y: None,
             pending_tile_fetches: Vec::new(),
@@ -211,6 +238,8 @@ impl EditorState {
         self.road_drag_moved = false;
         self.welded_drag_peers.clear();
         self.selected_prop_id = None;
+        self.selected_entity_id = None;
+        self.dragging_entity = false;
         self.hovered_gizmo_axis = None;
         self.gizmo_drag = None;
         self.hovered_rotate_axis = None;
@@ -286,6 +315,147 @@ impl EditorState {
         if next_soft_mask != self.road_soft_edge_mask {
             self.road_soft_edge_mask = next_soft_mask;
             self.rebuild_all_active_road_meshes(gl);
+        }
+        self.ensure_entity_assets_queued();
+    }
+
+    pub fn set_entity_templates(&mut self, templates: Vec<EntityTemplate>) {
+        self.entity_templates.clear();
+        for tpl in templates {
+            self.entity_templates.insert(tpl.id.clone(), tpl);
+        }
+        if !self.active_entity_template_id.is_empty()
+            && !self
+                .entity_templates
+                .contains_key(&self.active_entity_template_id)
+        {
+            self.active_entity_template_id.clear();
+        }
+        if self.active_entity_template_id.is_empty() {
+            if let Some(first_id) = self.entity_templates.keys().min().cloned() {
+                self.active_entity_template_id = first_id;
+            }
+        }
+        self.ensure_entity_assets_queued();
+    }
+
+    pub fn set_character_presets(&mut self, presets: Vec<CharacterDefinition>) {
+        self.character_presets.clear();
+        for def in presets {
+            self.character_presets.insert(def.id.clone(), def);
+        }
+        self.ensure_entity_assets_queued();
+    }
+
+    pub fn set_active_entity_template(&mut self, tpl: Option<EntityTemplate>) {
+        if let Some(ref t) = tpl {
+            self.entity_templates.insert(t.id.clone(), t.clone());
+        }
+        self.entity_studio.set_active_template(tpl);
+        self.ensure_entity_assets_queued();
+    }
+
+    pub fn on_outside_tile_entities_loaded(
+        &mut self,
+        area_id: &str,
+        tx: i32,
+        ty: i32,
+        entities: Vec<PlacedEntity>,
+    ) {
+        if self.active_area.id != area_id || self.active_area.kind != AreaKind::Outside {
+            return;
+        }
+        if let Some(max_id) = entities.iter().map(|e| e.id).max() {
+            self.next_entity_placement_id = self.next_entity_placement_id.max(max_id + 1);
+        }
+        if let Some(tile) = self.outside_tiles.get_mut(&(tx, ty)) {
+            if !tile.entities_dirty {
+                tile.entities = entities;
+            }
+        }
+        self.ensure_entity_assets_queued();
+    }
+
+    pub fn on_inside_entities_loaded(&mut self, area_id: &str, entities: Vec<PlacedEntity>) {
+        if self.active_area.id != area_id || self.active_area.kind == AreaKind::Outside {
+            return;
+        }
+        if let Some(max_id) = entities.iter().map(|e| e.id).max() {
+            self.next_entity_placement_id = self.next_entity_placement_id.max(max_id + 1);
+        }
+        if let Some(inside) = &mut self.inside_area {
+            if !inside.entities_dirty {
+                inside.entities = entities;
+            }
+        }
+        self.ensure_entity_assets_queued();
+    }
+
+    pub(super) fn ensure_asset_id_requested(&mut self, asset_id: &str) {
+        if self.prop_meshes.contains_key(asset_id) || self.requested_assets.contains(asset_id) {
+            return;
+        }
+        if let Some(slug) = local_asset_slug(asset_id) {
+            if !self.active_area.id.is_empty() && self.requested_assets.insert(asset_id.to_owned())
+            {
+                self.pending_asset_fetches.push(AssetEntry {
+                    id: asset_id.to_owned(),
+                    name: prettify_asset_slug(slug),
+                    path: local_asset_http_path(&self.active_area.id, slug),
+                    category: "Area Unique".to_owned(),
+                });
+            }
+        } else if let Some(entry) = self.catalog.iter().find(|e| e.id == asset_id).cloned() {
+            if self.requested_assets.insert(asset_id.to_owned()) {
+                self.pending_asset_fetches.push(entry);
+            }
+        }
+    }
+
+    fn queue_assets_for_visual(&mut self, cfg: &VisualConfig) {
+        match cfg {
+            VisualConfig::Character { preset_id } => {
+                if let Some(def) = self.character_presets.get(preset_id).cloned() {
+                    self.character_studio.queue_glbs_for_definition(&def);
+                }
+            }
+            VisualConfig::Prop { asset_id, .. } => {
+                self.ensure_asset_id_requested(asset_id);
+            }
+        }
+    }
+
+    pub(super) fn ensure_entity_assets_queued(&mut self) {
+        let mut visuals = Vec::new();
+        if let Some(tpl) = &self.entity_studio.active_template {
+            if let Some(vis) = &tpl.visual {
+                visuals.push(vis.clone());
+            }
+        }
+        for tpl in self.entity_templates.values() {
+            if let Some(vis) = &tpl.visual {
+                visuals.push(vis.clone());
+            }
+        }
+        if self.active_area.kind == AreaKind::Outside {
+            for tile in self.outside_tiles.values() {
+                for placed in &tile.entities {
+                    let resolved = placed.resolve(self.entity_templates.get(&placed.template_id));
+                    if let Some(vis) = resolved.visual {
+                        visuals.push(vis);
+                    }
+                }
+            }
+        } else if let Some(inside) = &self.inside_area {
+            for placed in &inside.entities {
+                let resolved = placed.resolve(self.entity_templates.get(&placed.template_id));
+                if let Some(vis) = resolved.visual {
+                    visuals.push(vis);
+                }
+            }
+        }
+        for vis in visuals {
+            self.queue_assets_for_visual(&vis);
         }
     }
 
@@ -428,6 +598,8 @@ impl EditorState {
                     gpu,
                     road_meshes: HashMap::new(),
                     dirty: false,
+                    entities: Vec::new(),
+                    entities_dirty: false,
                 },
             );
             // Re-upload vertices + cross-tile normals for this tile and neighbors
@@ -476,6 +648,8 @@ impl EditorState {
                 gpu,
                 road_meshes: HashMap::new(),
                 dirty: false,
+                entities: Vec::new(),
+                entities_dirty: false,
             };
             self.inside_area = Some(state);
             self.refresh_inside_mesh(gl);
@@ -497,7 +671,20 @@ impl EditorState {
             return;
         }
         if self.mode == EditorMode::Entities {
+            self.entity_studio
+                .update(dt, &self.character_presets, &self.character_studio);
             return;
+        }
+        self.entity_anim_time += dt;
+        for def in self.character_presets.values() {
+            if !self.entity_poses.contains_key(&def.skeleton_id) {
+                self.entity_poses
+                    .insert(def.skeleton_id.clone(), SkeletonPose::default());
+            }
+            if let Some(pose) = self.entity_poses.get_mut(&def.skeleton_id) {
+                self.character_studio
+                    .evaluate_idle_pose(def, self.entity_anim_time, pose);
+            }
         }
 
         // 1. Stream visible tiles around editor camera target
@@ -532,20 +719,26 @@ impl EditorState {
         // 3. Hotkeys for active tool
         if self.tool == EditorTool::Decoration {
             self.handle_decoration_hotkeys(input, dt, now_ms);
+        } else if self.tool == EditorTool::Entities {
+            self.handle_entity_hotkeys(input, dt, now_ms);
         } else if self.tool == EditorTool::Road {
             self.handle_road_hotkeys(gl, input, now_ms);
         }
 
         // 4. Mouse tool interaction (ignore left-click while middle-mouse orbiting)
-        if self.tool != EditorTool::Decoration
-            || self.decoration_submode != DecorationSubMode::FreeMove
-        {
+        let in_free_move = (self.tool == EditorTool::Decoration
+            && self.decoration_submode == DecorationSubMode::FreeMove)
+            || (self.tool == EditorTool::Entities
+                && self.entity_submode == EntitySubMode::FreeMove);
+        if !in_free_move {
             self.hovered_gizmo_axis = None;
             self.gizmo_drag = None;
         }
-        if self.tool != EditorTool::Decoration
-            || self.decoration_submode != DecorationSubMode::Rotate
-        {
+        let in_rotate = (self.tool == EditorTool::Decoration
+            && self.decoration_submode == DecorationSubMode::Rotate)
+            || (self.tool == EditorTool::Entities
+                && self.entity_submode == EntitySubMode::Rotate);
+        if !in_rotate {
             self.hovered_rotate_axis = None;
             self.rotate_drag = None;
         }
@@ -555,6 +748,7 @@ impl EditorState {
                 EditorTool::Texture => self.handle_texture_tool(gl, input, dt, now_ms),
                 EditorTool::Road => self.handle_road_tool(gl, camera, input, now_ms),
                 EditorTool::Decoration => self.handle_decoration_tool(camera, input, now_ms),
+                EditorTool::Entities => self.handle_entity_tool(camera, input, now_ms),
                 EditorTool::Walkability => self.handle_walkability_tool(gl, input, now_ms),
             }
         } else if self.tool == EditorTool::Road {
@@ -567,6 +761,7 @@ impl EditorState {
             }
             self.flatten_target_y = None;
             self.dragging_prop = false;
+            self.dragging_entity = false;
             self.gizmo_drag = None;
             self.rotate_drag = None;
         }
@@ -605,13 +800,36 @@ impl EditorState {
                         self.in_flight_saves += 1;
                     }
                 }
+                if tile.entities_dirty {
+                    if let Ok(bytes) = serde_json::to_vec(&tile.entities) {
+                        self.pending_saves.push(PendingSave::OutsideEntities {
+                            area_id: area_id.clone(),
+                            tx,
+                            ty,
+                            bytes,
+                        });
+                        tile.entities_dirty = false;
+                        self.in_flight_saves += 1;
+                    }
+                }
             }
         } else if let Some(inside) = &mut self.inside_area {
             if inside.dirty {
                 inside.vis.enforce_slope_walkability();
                 if let Ok(bytes) = postcard::to_allocvec(&inside.vis) {
-                    self.pending_saves.push(PendingSave::Inside { area_id, bytes });
+                    self.pending_saves.push(PendingSave::Inside {
+                        area_id: area_id.clone(),
+                        bytes,
+                    });
                     inside.dirty = false;
+                    self.in_flight_saves += 1;
+                }
+            }
+            if inside.entities_dirty {
+                if let Ok(bytes) = serde_json::to_vec(&inside.entities) {
+                    self.pending_saves
+                        .push(PendingSave::InsideEntities { area_id, bytes });
+                    inside.entities_dirty = false;
                     self.in_flight_saves += 1;
                 }
             }
@@ -632,9 +850,16 @@ impl EditorState {
 
     pub fn dirty_count(&self) -> usize {
         if self.active_area.kind == AreaKind::Outside {
-            self.outside_tiles.values().filter(|t| t.dirty).count()
+            self.outside_tiles
+                .values()
+                .filter(|t| t.dirty || t.entities_dirty)
+                .count()
         } else {
-            usize::from(self.inside_area.as_ref().is_some_and(|i| i.dirty))
+            usize::from(
+                self.inside_area
+                    .as_ref()
+                    .is_some_and(|i| i.dirty || i.entities_dirty),
+            )
         }
     }
 
@@ -683,6 +908,7 @@ impl EditorState {
                 EditorTool::Texture => "texture",
                 EditorTool::Road => "road",
                 EditorTool::Decoration => "decoration",
+                EditorTool::Entities => "entities",
                 EditorTool::Walkability => "walkability",
             },
             height_mode: match self.height_mode {
@@ -717,6 +943,16 @@ impl EditorState {
                 .map(|r| r.to_degrees().rem_euclid(360.0)),
             preview_scale: self.preview_scale,
             preview_cast_shadow: self.preview_cast_shadow,
+            entity_submode: match self.entity_submode {
+                EntitySubMode::Place => "place",
+                EntitySubMode::Move => "move",
+                EntitySubMode::FreeMove => "free_move",
+                EntitySubMode::Rotate => "rotate",
+            },
+            active_entity_template_id: self.active_entity_template_id.clone(),
+            entity_preview_yaw_deg: self.entity_preview_yaw.to_degrees().rem_euclid(360.0),
+            selected_entity: self.find_selected_placed_entity().cloned(),
+            entity_studio_turntable: self.entity_studio.turntable,
             walkability_mode: match self.walkability_mode {
                 WalkabilityMode::Block => "block",
                 WalkabilityMode::Walkable => "walkable",

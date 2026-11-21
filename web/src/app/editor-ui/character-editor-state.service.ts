@@ -165,6 +165,7 @@ export class CharacterEditorStateService {
       if (resp.ok) {
         const list = (await resp.json()) as CharacterDefinition[];
         this.presets.set(list);
+        this.engine.setCharacterPresets(list);
       }
     } catch (e) {
       console.error('Failed to load character presets:', e);
@@ -246,6 +247,7 @@ export class CharacterEditorStateService {
       palette: {},
     };
     this.presets.update((list) => [...list, created]);
+    this.engine.setCharacterPresets(this.presets());
     this.applyActiveCharacter(created, true);
   }
 
@@ -261,6 +263,7 @@ export class CharacterEditorStateService {
       palette: { ...cur.palette },
     };
     this.presets.update((list) => [...list, dup]);
+    this.engine.setCharacterPresets(this.presets());
     this.applyActiveCharacter(dup, true);
   }
 
@@ -275,6 +278,7 @@ export class CharacterEditorStateService {
       }
       const nextList = this.presets().filter((p) => p.id !== cur.id);
       this.presets.set(nextList);
+      this.engine.setCharacterPresets(nextList);
       if (nextList.length > 0) {
         this.applyActiveCharacter(nextList[0], false);
       } else {
@@ -609,6 +613,7 @@ export class CharacterEditorStateService {
       return [...list, saved].sort((a, b) => a.id.localeCompare(b.id));
     });
     this.presetDirty.set(false);
+    this.engine.setCharacterPresets(this.presets());
     this.engine.setActiveCharacter(saved);
     return true;
   }

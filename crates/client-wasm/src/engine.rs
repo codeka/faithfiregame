@@ -96,8 +96,9 @@ pub(crate) fn step_frame(inner: &Rc<RefCell<EngineInner>>, time_ms: f64) {
                     renderer.fog_color = [0.11, 0.13, 0.18];
                     renderer.fog_start = 45.0;
                     renderer.fog_end = 110.0;
-                    let turntable =
-                        editor.mode == EditorMode::Characters && editor.character_studio.turntable;
+                    let turntable = (editor.mode == EditorMode::Characters
+                        && editor.character_studio.turntable)
+                        || (editor.mode == EditorMode::Entities && editor.entity_studio.turntable);
                     editor.studio_cam.update(camera, input, dt, turntable);
                 }
                 editor.update(&renderer.gl, camera, editor_cam, input, dt, time_ms);

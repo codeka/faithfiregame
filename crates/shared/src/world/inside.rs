@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+use crate::entity::PlacedEntity;
+
 use super::road::RoadSpline;
 use super::splat::{
     area_seed_from_id, default_splat_ids, default_splat_weights, grass_noise_splat_at,
 };
-use super::types::{EntitySpawn, PropPlacement, TriggerVolume};
+use super::types::PropPlacement;
 use super::walk_mask::MAX_WALKABLE_SLOPE_DELTA;
 
 /// Server-authoritative simulation payload for an arbitrary-size Inside area (`sim.bin`).
@@ -15,8 +17,7 @@ pub struct InsideSimData {
     /// Packed 1m walkability bitmask (`ceil((width * length) / 64)` words, `idx = z * width + x`).
     pub walkable: Vec<u64>,
     pub elevation: Vec<f32>,
-    pub triggers: Vec<TriggerVolume>,
-    pub spawns: Vec<EntitySpawn>,
+    pub entities: Vec<PlacedEntity>,
 }
 
 impl InsideSimData {
@@ -27,9 +28,17 @@ impl InsideSimData {
             length,
             walkable: vec![u64::MAX; cells.div_ceil(64)],
             elevation: vec![0.0; cells],
-            triggers: Vec::new(),
-            spawns: Vec::new(),
+            entities: Vec::new(),
         }
+    }
+
+    pub fn from_postcard_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
+        let sim = super::types::decode_exact::<Self>(bytes)?;
+        let cells = (sim.width as usize).saturating_mul(sim.length as usize);
+        if sim.elevation.len() != cells || sim.walkable.len() != cells.div_ceil(64) {
+            return Err(postcard::Error::SerdeDeCustom);
+        }
+        Ok(sim)
     }
 
     pub fn get_walkable(&self, x: usize, z: usize) -> bool {
@@ -242,7 +251,7 @@ impl InsideVisData {
     }
 }
 
-/// Derives `InsideSimData` from an `InsideVisData`, preserving existing triggers and spawns.
+/// Derives `InsideSimData` from an `InsideVisData`, preserving existing placed entities.
 pub fn compute_inside_sim_from_vis(
     vis: &InsideVisData,
     existing: Option<&InsideSimData>,
@@ -279,8 +288,7 @@ pub fn compute_inside_sim_from_vis(
         length: vis.length,
         walkable,
         elevation,
-        triggers: existing.map(|s| s.triggers.clone()).unwrap_or_default(),
-        spawns: existing.map(|s| s.spawns.clone()).unwrap_or_default(),
+        entities: existing.map(|s| s.entities.clone()).unwrap_or_default(),
     }
 }
 

@@ -28,7 +28,7 @@
         [class.active]="editorMode() === 'entities'"
         (click)="engine.setEditorMode('entities')"
       >
-        Entities
+        Entity Templates
       </button>
     </div>
   </section>
@@ -108,6 +108,14 @@
         (click)="engine.setTool('decoration')"
       >
         Decoration
+      </button>
+      <button
+        type="button"
+        class="btn"
+        [class.active]="state.activeTool() === 'entities'"
+        (click)="engine.setTool('entities')"
+      >
+        Entities
       </button>
       <button
         type="button"
@@ -213,8 +221,86 @@
       <button type="button" class="btn btn-primary" (click)="charState.saveAll()">Save</button>
     </div>
   } @else {
+    <div class="group">
+      <select
+        class="select"
+        aria-label="Entity Template"
+        [ngModel]="entityState.activeTemplate()?.id ?? ''"
+        (ngModelChange)="entityState.selectTemplate($event)"
+        [disabled]="entityState.templates().length === 0"
+      >
+        @if (entityState.templates().length === 0) {
+          <option value="">(No Templates)</option>
+        }
+        @for (tpl of entityState.templates(); track tpl.id) {
+          <option [value]="tpl.id">{{ tpl.name }}</option>
+        }
+      </select>
+      <button
+        type="button"
+        class="btn"
+        (click)="entityState.createNewTemplate()"
+        title="Create a new entity template"
+      >
+        + New
+      </button>
+      <button
+        type="button"
+        class="btn"
+        [disabled]="!entityState.activeTemplate()"
+        (click)="entityState.duplicateTemplate()"
+        title="Duplicate the active entity template"
+      >
+        Duplicate
+      </button>
+      <button
+        type="button"
+        class="btn danger"
+        [disabled]="!entityState.activeTemplate()"
+        (click)="entityState.deleteActiveTemplate()"
+        title="Delete the active entity template"
+      >
+        Delete
+      </button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="group">
+      <button
+        type="button"
+        class="btn"
+        [class.active]="entityStudioTurntable()"
+        (click)="engine.setEntityStudioTurntable(!entityStudioTurntable())"
+        title="Rotate the preview model continuously"
+      >
+        Turntable
+      </button>
+      <button
+        type="button"
+        class="btn"
+        (click)="engine.resetCharacterStudioCamera()"
+        title="Reset the preview camera"
+      >
+        Frame
+      </button>
+    </div>
+
     <div class="group right-group">
-      <span class="hint">Entity templates &amp; spawn definitions — coming soon</span>
+      <span
+        class="save-badge"
+        [class.unsaved]="entityState.dirty()"
+      >
+        {{ entityState.saveState() }}
+      </span>
+      <button
+        type="button"
+        class="btn primary"
+        [disabled]="!entityState.activeTemplate() || !entityState.dirty()"
+        (click)="entityState.saveActiveTemplate()"
+      >
+        Save
+      </button>
     </div>
   }
 </header>

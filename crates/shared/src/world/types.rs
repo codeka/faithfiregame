@@ -23,23 +23,6 @@ pub struct AreaMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TriggerVolume {
-    pub id: String,
-    pub min: [f32; 3],
-    pub max: [f32; 3],
-    pub target_area: String,
-    pub target_pos: [f32; 3],
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EntitySpawn {
-    pub id: u64,
-    pub template_id: String,
-    pub position: [f32; 3],
-    pub leash_radius: f32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PropPlacement {
     pub id: u64,
     pub asset_id: String,

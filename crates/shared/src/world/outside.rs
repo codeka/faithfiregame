@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+use crate::entity::PlacedEntity;
+
 use super::road::RoadSpline;
 use super::splat::{
     area_seed_from_id, default_splat_ids, default_splat_weights, grass_noise_splat_at,
 };
-use super::types::{EntitySpawn, PropPlacement, TriggerVolume};
+use super::types::PropPlacement;
 use super::walk_mask::{MAX_WALKABLE_SLOPE_DELTA, TILE_SIZE, TILE_VERTICES, WalkMask};
 
 /// Server-authoritative simulation payload for one 64m × 64m Outside tile (`sim.bin`).
@@ -13,8 +15,7 @@ pub struct TileSimData {
     pub walkable: WalkMask,
     /// `64 × 64` cell center elevation samples (`z * 64 + x`).
     pub elevation: Vec<f32>,
-    pub triggers: Vec<TriggerVolume>,
-    pub spawns: Vec<EntitySpawn>,
+    pub entities: Vec<PlacedEntity>,
 }
 
 impl TileSimData {
@@ -22,9 +23,16 @@ impl TileSimData {
         Self {
             walkable: WalkMask::all_walkable(),
             elevation: vec![0.0; TILE_SIZE * TILE_SIZE],
-            triggers: Vec::new(),
-            spawns: Vec::new(),
+            entities: Vec::new(),
         }
+    }
+
+    pub fn from_postcard_bytes(bytes: &[u8]) -> Result<Self, postcard::Error> {
+        let sim = super::types::decode_exact::<Self>(bytes)?;
+        if sim.elevation.len() != TILE_SIZE * TILE_SIZE {
+            return Err(postcard::Error::SerdeDeCustom);
+        }
+        Ok(sim)
     }
 
     pub fn elevation_at(&self, lx: f32, lz: f32) -> f32 {
@@ -173,7 +181,7 @@ impl TileVisData {
 }
 
 /// Derives `TileSimData` from a `TileVisData`, computing cell elevations and steep-slope walkability
-/// while preserving existing triggers and spawns.
+/// while preserving existing placed entities.
 pub fn compute_sim_from_vis(vis: &TileVisData, existing: Option<&TileSimData>) -> TileSimData {
     let mut elevation = vec![0.0; TILE_SIZE * TILE_SIZE];
     let mut walkable = vis.walkable;
@@ -199,8 +207,7 @@ pub fn compute_sim_from_vis(vis: &TileVisData, existing: Option<&TileSimData>) -
     TileSimData {
         walkable,
         elevation,
-        triggers: existing.map(|s| s.triggers.clone()).unwrap_or_default(),
-        spawns: existing.map(|s| s.spawns.clone()).unwrap_or_default(),
+        entities: existing.map(|s| s.entities.clone()).unwrap_or_default(),
     }
 }
 

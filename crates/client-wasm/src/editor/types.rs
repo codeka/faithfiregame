@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use serde::Serialize;
+use shared::entity::PlacedEntity;
 use shared::world::{InsideVisData, RoadStyle, TileVisData};
 
 use crate::render::{RoadMeshGpu, TerrainMeshGpu};
@@ -18,6 +19,7 @@ pub enum EditorTool {
     Texture,
     Road,
     Decoration,
+    Entities,
     Walkability,
 }
 
@@ -49,6 +51,14 @@ pub enum DecorationSubMode {
     Rotate,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntitySubMode {
+    Place,
+    Move,
+    FreeMove,
+    Rotate,
+}
+
 pub enum PendingSave {
     Outside {
         area_id: String,
@@ -60,6 +70,16 @@ pub enum PendingSave {
         area_id: String,
         bytes: Vec<u8>,
     },
+    OutsideEntities {
+        area_id: String,
+        tx: i32,
+        ty: i32,
+        bytes: Vec<u8>,
+    },
+    InsideEntities {
+        area_id: String,
+        bytes: Vec<u8>,
+    },
 }
 
 pub struct EditorTileState {
@@ -67,6 +87,8 @@ pub struct EditorTileState {
     pub gpu: TerrainMeshGpu,
     pub road_meshes: HashMap<u64, RoadMeshGpu>,
     pub dirty: bool,
+    pub entities: Vec<PlacedEntity>,
+    pub entities_dirty: bool,
 }
 
 pub struct EditorInsideState {
@@ -74,6 +96,8 @@ pub struct EditorInsideState {
     pub gpu: TerrainMeshGpu,
     pub road_meshes: HashMap<u64, RoadMeshGpu>,
     pub dirty: bool,
+    pub entities: Vec<PlacedEntity>,
+    pub entities_dirty: bool,
 }
 
 pub struct RoadDraft {
@@ -151,6 +175,11 @@ pub struct EditorStatusSnapshot {
     pub preview_rotation_deg: [f32; 3],
     pub preview_scale: f32,
     pub preview_cast_shadow: bool,
+    pub entity_submode: &'static str,
+    pub active_entity_template_id: String,
+    pub entity_preview_yaw_deg: f32,
+    pub selected_entity: Option<PlacedEntity>,
+    pub entity_studio_turntable: bool,
     pub walkability_mode: &'static str,
     pub character_studio: CharacterStudioStatusSnapshot,
 }

@@ -1,14 +1,18 @@
 use std::collections::HashMap;
 
-use glam::{Vec3, Vec4};
+use glam::{Mat4, Quat, Vec3, Vec4};
+use shared::entity::{PlacedEntity, VisualConfig};
 use shared::world::{AreaKind, PropPlacement, RoadSpline, TILE_SIZE};
 
 use crate::camera::Camera;
+use crate::character::SkeletonPose;
 use crate::render::{BrushOverlay, Renderer, RoadMeshGpu};
 
-use super::gizmo::gizmo_scale;
+use super::gizmo::{GizmoAxis, gizmo_scale};
 use super::state::EditorState;
-use super::types::{DecorationSubMode, EditorMode, EditorTool, RoadSubMode, WalkabilityMode};
+use super::types::{
+    DecorationSubMode, EditorMode, EditorTool, EntitySubMode, RoadSubMode, WalkabilityMode,
+};
 
 impl EditorState {
     pub fn render_shadows(&self, renderer: &mut Renderer, camera: &Camera) {
@@ -18,7 +22,13 @@ impl EditorState {
                 return;
             }
             EditorMode::Entities => {
-                renderer.begin_shadow_pass_with_min_extent(camera, 8.0);
+                self.entity_studio.render_shadows(
+                    renderer,
+                    camera,
+                    &self.character_presets,
+                    &self.character_studio,
+                    &self.prop_meshes,
+                );
                 return;
             }
             EditorMode::World => {}
@@ -31,10 +41,12 @@ impl EditorState {
             }
             for tile in self.outside_tiles.values() {
                 self.draw_prop_shadows(renderer, &tile.vis.props);
+                self.draw_placed_entity_shadows(renderer, &tile.entities);
             }
         } else if let Some(inside) = &self.inside_area {
             renderer.draw_terrain_shadow(&inside.gpu);
             self.draw_prop_shadows(renderer, &inside.vis.props);
+            self.draw_placed_entity_shadows(renderer, &inside.entities);
         }
     }
 
@@ -45,7 +57,13 @@ impl EditorState {
                 return;
             }
             EditorMode::Entities => {
-                renderer.draw_studio_stage(camera, false);
+                self.entity_studio.render(
+                    renderer,
+                    camera,
+                    &self.character_presets,
+                    &self.character_studio,
+                    &self.prop_meshes,
+                );
                 return;
             }
             EditorMode::World => {}
@@ -75,7 +93,7 @@ impl EditorState {
                     _ => [0.86, 0.44, 0.32],
                 },
                 EditorTool::Road => [0.95, 0.76, 0.30],
-                EditorTool::Decoration => [1.0, 1.0, 1.0],
+                EditorTool::Decoration | EditorTool::Entities => [1.0, 1.0, 1.0],
                 EditorTool::Walkability => match self.walkability_mode {
                     WalkabilityMode::Block => [0.96, 0.30, 0.28],
                     WalkabilityMode::Walkable => [0.28, 0.92, 0.52],
@@ -106,6 +124,7 @@ impl EditorState {
             }
             for tile in self.outside_tiles.values() {
                 self.draw_prop_list(renderer, camera, &tile.vis.props);
+                self.draw_placed_entity_list(renderer, camera, &tile.entities);
             }
             for tile in self.outside_tiles.values() {
                 self.draw_road_list(
@@ -128,6 +147,7 @@ impl EditorState {
                 &brush,
             );
             self.draw_prop_list(renderer, camera, &inside.vis.props);
+            self.draw_placed_entity_list(renderer, camera, &inside.entities);
             self.draw_road_list(
                 renderer,
                 camera,
@@ -164,7 +184,29 @@ impl EditorState {
             }
         }
 
-        // 3-axis gizmos in Free Move / Rotate submodes (drawn last after depth clear)
+        // Ghost preview when placing an entity
+        if self.tool == EditorTool::Entities && self.entity_submode == EntitySubMode::Place {
+            if let (Some(hit), Some(tpl)) = (
+                self.hover_world,
+                self.entity_templates.get(&self.active_entity_template_id),
+            ) {
+                self.draw_resolved_visual(
+                    renderer,
+                    camera,
+                    tpl.visual.as_ref(),
+                    hit,
+                    self.entity_preview_yaw,
+                    Vec4::new(0.65, 1.0, 0.78, 0.65),
+                    true,
+                );
+                if let Some(trig) = &tpl.trigger {
+                    let segs = trig.wireframe_segments(hit.to_array(), self.entity_preview_yaw);
+                    renderer.draw_line_segments(camera, &segs, [0.45, 1.0, 0.78, 0.85], true);
+                }
+            }
+        }
+
+        // 3-axis gizmos for selected Decoration in Free Move / Rotate submodes
         if self.tool == EditorTool::Decoration {
             if let Some(prop) = self.find_selected_prop() {
                 let origin = Vec3::from(prop.position);
@@ -190,6 +232,169 @@ impl EditorState {
                     DecorationSubMode::Place | DecorationSubMode::Move => {}
                 }
             }
+        }
+
+        // 3-axis gizmos for selected Entity in Free Move / Rotate submodes
+        if self.tool == EditorTool::Entities {
+            if let Some(entity) = self.find_selected_placed_entity() {
+                let origin = Vec3::from(entity.position);
+                let scale = gizmo_scale(camera, origin);
+                match self.entity_submode {
+                    EntitySubMode::FreeMove => {
+                        let active = self
+                            .gizmo_drag
+                            .map(|d| d.axis)
+                            .or(self.hovered_gizmo_axis)
+                            .map(|a| a.index());
+                        let ground_y = self.terrain_height_at(origin.x, origin.z);
+                        renderer.draw_translate_gizmo(camera, origin, scale, active, ground_y);
+                    }
+                    EntitySubMode::Rotate => {
+                        let active = self
+                            .rotate_drag
+                            .map(|d| d.axis)
+                            .or(self.hovered_rotate_axis)
+                            .map(|_| GizmoAxis::Y.index());
+                        renderer.draw_rotate_gizmo(camera, origin, scale, active);
+                    }
+                    EntitySubMode::Place | EntitySubMode::Move => {}
+                }
+            }
+        }
+    }
+
+    fn draw_placed_entity_shadows(&self, renderer: &Renderer, entities: &[PlacedEntity]) {
+        for placed in entities {
+            let resolved = placed.resolve(self.entity_templates.get(&placed.template_id));
+            let Some(vis) = resolved.visual else {
+                continue;
+            };
+            let model = Mat4::from_rotation_translation(
+                Quat::from_rotation_y(placed.rotation_y),
+                Vec3::from(placed.position),
+            );
+            match vis {
+                VisualConfig::Character { preset_id } => {
+                    if let Some(def) = self.character_presets.get(&preset_id) {
+                        if let Some(pose) = self.entity_poses.get(&def.skeleton_id) {
+                            self.character_studio
+                                .draw_definition_shadow(renderer, def, &model, pose);
+                        }
+                    }
+                }
+                VisualConfig::Prop {
+                    asset_id,
+                    scale,
+                    cast_shadow,
+                } => {
+                    if cast_shadow {
+                        if let Some(mesh) = self.prop_meshes.get(&asset_id) {
+                            let m = model * Mat4::from_scale(Vec3::from(scale));
+                            renderer.draw_mesh_shadow(mesh, &m);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn draw_placed_entity_list(
+        &self,
+        renderer: &Renderer,
+        camera: &Camera,
+        entities: &[PlacedEntity],
+    ) {
+        for placed in entities {
+            let resolved = placed.resolve(self.entity_templates.get(&placed.template_id));
+            let selected = self.tool == EditorTool::Entities
+                && self.entity_submode != EntitySubMode::Place
+                && self.selected_entity_id == Some(placed.id);
+            let tint = if selected {
+                Vec4::new(1.30, 1.18, 0.72, 1.0)
+            } else {
+                Vec4::ONE
+            };
+            let pos = Vec3::from(placed.position);
+            self.draw_resolved_visual(
+                renderer,
+                camera,
+                resolved.visual.as_ref(),
+                pos,
+                placed.rotation_y,
+                tint,
+                self.tool == EditorTool::Entities || selected,
+            );
+
+            if self.tool == EditorTool::Entities {
+                if let Some(trig) = &resolved.trigger {
+                    let color = if selected {
+                        [1.0, 0.88, 0.25, 1.0]
+                    } else {
+                        [0.25, 0.90, 1.0, 0.90]
+                    };
+                    let segs = trig.wireframe_segments(placed.position, placed.rotation_y);
+                    renderer.draw_line_segments(camera, &segs, color, selected);
+                }
+                if selected {
+                    renderer.draw_node_ring(
+                        camera,
+                        pos + Vec3::Y * 0.08,
+                        0.85,
+                        [1.0, 0.88, 0.25, 1.0],
+                        true,
+                    );
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_resolved_visual(
+        &self,
+        renderer: &Renderer,
+        camera: &Camera,
+        visual: Option<&VisualConfig>,
+        pos: Vec3,
+        yaw_rad: f32,
+        tint: Vec4,
+        show_marker_if_unrendered: bool,
+    ) {
+        let model = Mat4::from_rotation_translation(Quat::from_rotation_y(yaw_rad), pos);
+        match visual {
+            Some(VisualConfig::Character { preset_id }) => {
+                if let Some(def) = self.character_presets.get(preset_id) {
+                    let pose = self
+                        .entity_poses
+                        .get(&def.skeleton_id)
+                        .cloned()
+                        .unwrap_or_else(SkeletonPose::default);
+                    if !pose.world_matrices.is_empty() {
+                        self.character_studio
+                            .draw_definition(renderer, camera, def, &model, &pose, tint);
+                        return;
+                    }
+                }
+            }
+            Some(VisualConfig::Prop {
+                asset_id, scale, ..
+            }) => {
+                if let Some(mesh) = self.prop_meshes.get(asset_id) {
+                    let m = model * Mat4::from_scale(Vec3::from(*scale));
+                    renderer.draw_mesh(camera, mesh, &m, tint);
+                    return;
+                }
+            }
+            None => {}
+        }
+
+        if show_marker_if_unrendered {
+            renderer.draw_node_ring(
+                camera,
+                pos + Vec3::Y * 0.06,
+                0.55,
+                [0.42, 0.86, 1.0, 0.85],
+                false,
+            );
         }
     }
 

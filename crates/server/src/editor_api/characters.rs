@@ -101,6 +101,11 @@ pub async fn save_character_catalog(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     fs::write(chars_dir.join("catalog.json"), bytes)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    state
+        .sim
+        .write()
+        .await
+        .reload_character_catalog(catalog.clone());
     info!(
         "saved character catalog ({} skeletons, {} parts)",
         catalog.skeletons.len(),
@@ -157,6 +162,7 @@ pub async fn save_character_preset(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     fs::write(presets_dir.join(format!("{preset_id}.json")), bytes)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    state.sim.write().await.upsert_character_preset(def.clone());
     info!("saved character preset '{}'", def.id);
     Ok(Json(def))
 }
@@ -180,6 +186,7 @@ pub async fn delete_character_preset(
         fs::remove_file(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         info!("deleted character preset '{}'", preset_id);
     }
+    state.sim.write().await.remove_character_preset(&preset_id);
     Ok(StatusCode::NO_CONTENT)
 }
 

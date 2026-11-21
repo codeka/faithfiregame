@@ -148,6 +148,9 @@ async fn handle_ws_socket(mut socket: WebSocket, state: AppState) {
                             Ok(ClientMessage::MoveTo { x, z }) => {
                                 state.sim.write().await.move_player_to(player_id, x, z);
                             }
+                            Ok(ClientMessage::Interact { entity_id }) => {
+                                state.sim.write().await.interact_player_with(player_id, entity_id);
+                            }
                             Ok(msg) => {
                                 debug!("recv message from player {player_id}: {:?}", msg);
                             }

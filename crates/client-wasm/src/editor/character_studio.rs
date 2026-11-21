@@ -155,12 +155,16 @@ impl CharacterStudioState {
         self.sync_active_clip_choice();
     }
 
-    fn active_skeleton_def(&self) -> Option<&SkeletonDef> {
+    fn skeleton_for(&self, skeleton_id: &str) -> Option<&SkeletonDef> {
         self.catalog
             .skeletons
             .iter()
-            .find(|s| s.id == self.active_character.skeleton_id)
+            .find(|s| s.id == skeleton_id)
             .or_else(|| self.catalog.skeletons.first())
+    }
+
+    fn active_skeleton_def(&self) -> Option<&SkeletonDef> {
+        self.skeleton_for(&self.active_character.skeleton_id)
     }
 
     fn find_part_def(&self, part_id: &str) -> Option<&CharacterPartDef> {
@@ -177,7 +181,12 @@ impl CharacterStudioState {
     }
 
     pub fn queue_needed_glbs(&mut self) {
-        let Some(skel) = self.active_skeleton_def().cloned() else {
+        let def = self.active_character.clone();
+        self.queue_glbs_for_definition(&def);
+    }
+
+    pub fn queue_glbs_for_definition(&mut self, def: &CharacterDefinition) {
+        let Some(skel) = self.skeleton_for(&def.skeleton_id).cloned() else {
             return;
         };
         let rig_loaded = self.rigs.contains_key(&skel.rig_path);
@@ -187,11 +196,10 @@ impl CharacterStudioState {
             self.request_glb_if_missing(anim_url, loaded);
         }
 
-        let part_ids: Vec<String> = self
-            .active_character
+        let part_ids: Vec<String> = def
             .skinned_parts
             .values()
-            .chain(self.active_character.socket_parts.values())
+            .chain(def.socket_parts.values())
             .cloned()
             .collect();
         for part_id in part_ids {
@@ -374,32 +382,83 @@ impl CharacterStudioState {
         }
     }
 
-    pub fn render_shadows(&self, renderer: &mut Renderer, camera: &Camera) {
-        renderer.begin_shadow_pass_with_min_extent(camera, 4.0);
-        let Some(skel) = self.active_skeleton_def() else {
+    pub fn evaluate_idle_pose(
+        &self,
+        def: &CharacterDefinition,
+        time_s: f32,
+        out_pose: &mut SkeletonPose,
+    ) -> bool {
+        let Some(skel) = self.skeleton_for(&def.skeleton_id) else {
+            return false;
+        };
+        let Some(rig) = self.rigs.get(&skel.rig_path) else {
+            return false;
+        };
+        let mut idle_clip: Option<&AnimationClip> = None;
+        for anim_url in &skel.animation_paths {
+            if let Some(clips) = self.extra_anims.get(anim_url) {
+                if let Some(found) = clips.iter().find(|c| c.name.eq_ignore_ascii_case("Idle")) {
+                    idle_clip = Some(found);
+                    break;
+                }
+            }
+        }
+        if idle_clip.is_none() {
+            idle_clip = rig
+                .animations
+                .iter()
+                .find(|c| c.name.eq_ignore_ascii_case("Idle"))
+                .or_else(|| rig.animations.first())
+                .or_else(|| {
+                    skel.animation_paths
+                        .iter()
+                        .filter_map(|u| self.extra_anims.get(u))
+                        .flatten()
+                        .next()
+                });
+        }
+        let t = idle_clip
+            .filter(|c| c.duration > 1e-6)
+            .map(|c| time_s.rem_euclid(c.duration))
+            .unwrap_or(0.0);
+        evaluate_pose(rig, idle_clip, t, true, out_pose);
+        true
+    }
+
+    pub fn draw_definition_shadow(
+        &self,
+        renderer: &Renderer,
+        def: &CharacterDefinition,
+        model: &Mat4,
+        pose: &SkeletonPose,
+    ) {
+        let Some(skel) = self.skeleton_for(&def.skeleton_id) else {
             return;
         };
         let Some(rig) = self.rigs.get(&skel.rig_path) else {
             return;
         };
+        if pose.world_matrices.len() != rig.bones.len() {
+            return;
+        }
 
-        if skel.render_base_mesh && self.active_character.show_base_mesh {
+        if skel.render_base_mesh && def.show_base_mesh {
             if let Some(base_gpu) = self.base_meshes.get(&skel.rig_path) {
-                let palette = base_gpu.remapped_skin_palette(rig, &self.pose);
-                renderer.draw_character_shadow(base_gpu, &Mat4::IDENTITY, Some(&palette));
+                let palette = base_gpu.remapped_skin_palette(rig, pose);
+                renderer.draw_character_shadow(base_gpu, model, Some(&palette));
             }
         }
 
-        for part_id in self.active_character.skinned_parts.values() {
+        for part_id in def.skinned_parts.values() {
             if let Some(part) = self.find_part_def(part_id) {
                 if let Some(mesh) = self.part_meshes.get(&part.path) {
-                    let palette = mesh.is_skinned.then(|| mesh.remapped_skin_palette(rig, &self.pose));
-                    renderer.draw_character_shadow(mesh, &Mat4::IDENTITY, palette.as_ref());
+                    let palette = mesh.is_skinned.then(|| mesh.remapped_skin_palette(rig, pose));
+                    renderer.draw_character_shadow(mesh, model, palette.as_ref());
                 }
             }
         }
 
-        for (socket_id, part_id) in &self.active_character.socket_parts {
+        for (socket_id, part_id) in &def.socket_parts {
             let Some(sock) = skel.sockets.iter().find(|s| s.id == *socket_id) else {
                 continue;
             };
@@ -409,55 +468,64 @@ impl CharacterStudioState {
             let Some(mesh) = self.part_meshes.get(&part.path) else {
                 continue;
             };
-            let world = self.pose.socket_world_matrix(rig, sock) * Self::part_local_matrix(part);
+            let world = *model * pose.socket_world_matrix(rig, sock) * Self::part_local_matrix(part);
             renderer.draw_character_shadow(mesh, &world, None);
         }
     }
 
-    pub fn render(&self, renderer: &Renderer, camera: &Camera) {
-        renderer.draw_studio_stage(camera, true);
-
-        let Some(skel) = self.active_skeleton_def() else {
+    pub fn draw_definition(
+        &self,
+        renderer: &Renderer,
+        camera: &Camera,
+        def: &CharacterDefinition,
+        model: &Mat4,
+        pose: &SkeletonPose,
+        tint: Vec4,
+    ) {
+        let Some(skel) = self.skeleton_for(&def.skeleton_id) else {
             return;
         };
         let Some(rig) = self.rigs.get(&skel.rig_path) else {
             return;
         };
-        let char_palette = &self.active_character.palette;
+        if pose.world_matrices.len() != rig.bones.len() {
+            return;
+        }
+        let char_palette = &def.palette;
 
-        if skel.render_base_mesh && self.active_character.show_base_mesh {
+        if skel.render_base_mesh && def.show_base_mesh {
             if let Some(base_gpu) = self.base_meshes.get(&skel.rig_path) {
-                let skin_mats = base_gpu.remapped_skin_palette(rig, &self.pose);
+                let skin_mats = base_gpu.remapped_skin_palette(rig, pose);
                 renderer.draw_character_mesh(
                     camera,
                     base_gpu,
-                    &Mat4::IDENTITY,
+                    model,
                     Some(&skin_mats),
                     Some(char_palette),
-                    Vec4::ONE,
+                    tint,
                 );
             }
         }
 
-        for part_id in self.active_character.skinned_parts.values() {
+        for part_id in def.skinned_parts.values() {
             if let Some(part) = self.find_part_def(part_id) {
                 if let Some(mesh) = self.part_meshes.get(&part.path) {
                     let skin_mats = mesh
                         .is_skinned
-                        .then(|| mesh.remapped_skin_palette(rig, &self.pose));
+                        .then(|| mesh.remapped_skin_palette(rig, pose));
                     renderer.draw_character_mesh(
                         camera,
                         mesh,
-                        &Mat4::IDENTITY,
+                        model,
                         skin_mats.as_ref(),
                         Some(char_palette),
-                        Vec4::ONE,
+                        tint,
                     );
                 }
             }
         }
 
-        for (socket_id, part_id) in &self.active_character.socket_parts {
+        for (socket_id, part_id) in &def.socket_parts {
             let Some(sock) = skel.sockets.iter().find(|s| s.id == *socket_id) else {
                 continue;
             };
@@ -467,19 +535,42 @@ impl CharacterStudioState {
             let Some(mesh) = self.part_meshes.get(&part.path) else {
                 continue;
             };
-            let world = self.pose.socket_world_matrix(rig, sock) * Self::part_local_matrix(part);
+            let world = *model * pose.socket_world_matrix(rig, sock) * Self::part_local_matrix(part);
             renderer.draw_character_mesh(
                 camera,
                 mesh,
                 &world,
                 None,
                 Some(char_palette),
-                Vec4::ONE,
+                tint,
             );
         }
+    }
+
+    pub fn render_shadows(&self, renderer: &mut Renderer, camera: &Camera) {
+        renderer.begin_shadow_pass_with_min_extent(camera, 4.0);
+        self.draw_definition_shadow(renderer, &self.active_character, &Mat4::IDENTITY, &self.pose);
+    }
+
+    pub fn render(&self, renderer: &Renderer, camera: &Camera) {
+        renderer.draw_studio_stage(camera, true);
+        self.draw_definition(
+            renderer,
+            camera,
+            &self.active_character,
+            &Mat4::IDENTITY,
+            &self.pose,
+            Vec4::ONE,
+        );
 
         if self.show_skeleton_debug {
-            self.render_skeleton_debug(renderer, camera, skel, rig);
+            if let (Some(skel), Some(rig)) = (
+                self.active_skeleton_def(),
+                self.active_skeleton_def()
+                    .and_then(|s| self.rigs.get(&s.rig_path)),
+            ) {
+                self.render_skeleton_debug(renderer, camera, skel, rig);
+            }
         }
     }
 

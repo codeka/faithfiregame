@@ -184,6 +184,58 @@ export interface SelectedRoadInfo {
   selectedNode: number | null;
 }
 
+export type TriggerActivation = 'click' | 'walk_into' | 'both';
+
+export interface TriggerConfig {
+  size: [number, number, number];
+  offset: [number, number, number];
+  yaw_deg: number;
+  activation: TriggerActivation;
+  interaction_range: number;
+}
+
+export type VisualConfig =
+  | { character: { preset_id: string } }
+  | { prop: { asset_id: string; scale: [number, number, number]; cast_shadow: boolean } };
+
+export interface MovementConfig {
+  speed: number;
+}
+
+export type PropertyValue =
+  | { Bool: boolean }
+  | { Int: number }
+  | { Float: number }
+  | { String: string };
+
+export interface EntityTemplate {
+  id: string;
+  name: string;
+  properties: Record<string, PropertyValue>;
+  visual: VisualConfig | null;
+  movement: MovementConfig | null;
+  trigger: TriggerConfig | null;
+}
+
+export type ComponentOverride<T> = 'inherit' | { set: T } | 'remove';
+
+export interface EntityOverrides {
+  name: string | null;
+  properties: Record<string, PropertyValue>;
+  removed_properties: string[];
+  visual: ComponentOverride<VisualConfig>;
+  movement: ComponentOverride<MovementConfig>;
+  trigger: ComponentOverride<TriggerConfig>;
+}
+
+export interface PlacedEntity {
+  id: number;
+  template_id: string;
+  position: [number, number, number];
+  rotation_y: number;
+  overrides: EntityOverrides;
+}
+
 export interface EditorStatus {
   editorMode: EditorMode;
   areaId: string;
@@ -194,7 +246,7 @@ export interface EditorStatus {
   cursorPos: [number, number, number] | null;
   dirtyCount: number;
   saveState: string;
-  tool: 'heightmap' | 'texture' | 'road' | 'decoration' | 'walkability';
+  tool: 'heightmap' | 'texture' | 'road' | 'decoration' | 'entities' | 'walkability';
   heightMode: 'raise' | 'lower' | 'smooth' | 'flatten';
   textureLayer: number;
   roadSubmode: 'place' | 'edit';
@@ -209,6 +261,11 @@ export interface EditorStatus {
   previewRotationDeg: [number, number, number];
   previewScale: number;
   previewCastShadow: boolean;
+  entitySubmode: 'place' | 'move' | 'free_move' | 'rotate';
+  activeEntityTemplateId: string;
+  entityPreviewYawDeg: number;
+  selectedEntity: PlacedEntity | null;
+  entityStudioTurntable: boolean;
   walkabilityMode: 'block' | 'walkable';
   characterStudio: CharacterStudioStatus;
 }
@@ -234,6 +291,10 @@ export class EditorEngineService implements OnDestroy {
   private pendingArea: AreaMetadata | null = null;
   private pendingCharacterCatalog: CharacterCatalog | null = null;
   private pendingActiveCharacter: CharacterDefinition | null = null;
+  private pendingEntityTemplates: EntityTemplate[] | null = null;
+  private pendingCharacterPresets: CharacterDefinition[] | null = null;
+  private pendingActiveEntityTemplate: EntityTemplate | null | undefined = undefined;
+  private pendingPlacementEntityTemplate: string | null = null;
 
   readonly ready = this.core.ready;
   readonly initError = this.core.initError;
@@ -266,6 +327,22 @@ export class EditorEngineService implements OnDestroy {
       if (h && this.pendingActiveCharacter) {
         h.set_active_character_json(JSON.stringify(this.pendingActiveCharacter));
         this.pendingActiveCharacter = null;
+      }
+      if (h && this.pendingCharacterPresets) {
+        h.set_character_presets_json(JSON.stringify(this.pendingCharacterPresets));
+        this.pendingCharacterPresets = null;
+      }
+      if (h && this.pendingEntityTemplates) {
+        h.set_entity_templates_json(JSON.stringify(this.pendingEntityTemplates));
+        this.pendingEntityTemplates = null;
+      }
+      if (h && this.pendingActiveEntityTemplate !== undefined) {
+        h.set_active_entity_template_json(JSON.stringify(this.pendingActiveEntityTemplate));
+        this.pendingActiveEntityTemplate = undefined;
+      }
+      if (h && this.pendingPlacementEntityTemplate !== null) {
+        h.set_placement_entity_template(this.pendingPlacementEntityTemplate);
+        this.pendingPlacementEntityTemplate = null;
       }
       this.refreshStatus();
       if (this.pollTimer === null) {
@@ -308,7 +385,7 @@ export class EditorEngineService implements OnDestroy {
     this.refreshStatus();
   }
 
-  setTool(tool: 'heightmap' | 'texture' | 'road' | 'decoration' | 'walkability'): void {
+  setTool(tool: 'heightmap' | 'texture' | 'road' | 'decoration' | 'entities' | 'walkability'): void {
     this.ensureHandle()?.set_editor_tool(tool);
     this.refreshStatus();
   }
@@ -527,6 +604,76 @@ export class EditorEngineService implements OnDestroy {
 
   resetCharacterStudioCamera(): void {
     this.ensureHandle()?.reset_character_studio_camera();
+  }
+
+  setEntityTemplates(templates: EntityTemplate[]): void {
+    const h = this.ensureHandle();
+    if (!h) {
+      this.pendingEntityTemplates = templates;
+      return;
+    }
+    h.set_entity_templates_json(JSON.stringify(templates));
+    this.refreshStatus();
+  }
+
+  setCharacterPresets(presets: CharacterDefinition[]): void {
+    const h = this.ensureHandle();
+    if (!h) {
+      this.pendingCharacterPresets = presets;
+      return;
+    }
+    h.set_character_presets_json(JSON.stringify(presets));
+    this.refreshStatus();
+  }
+
+  setActiveEntityTemplate(template: EntityTemplate | null): void {
+    const h = this.ensureHandle();
+    if (!h) {
+      this.pendingActiveEntityTemplate = template;
+      return;
+    }
+    h.set_active_entity_template_json(JSON.stringify(template));
+    this.refreshStatus();
+  }
+
+  setEntityStudioTurntable(enabled: boolean): void {
+    this.ensureHandle()?.set_entity_studio_turntable(enabled);
+    this.refreshStatus();
+  }
+
+  setEntitySubmode(submode: 'place' | 'move' | 'free_move' | 'rotate'): void {
+    this.ensureHandle()?.set_entity_submode(submode);
+    this.refreshStatus();
+  }
+
+  setPlacementEntityTemplate(templateId: string): void {
+    const h = this.ensureHandle();
+    if (!h) {
+      this.pendingPlacementEntityTemplate = templateId;
+      return;
+    }
+    h.set_placement_entity_template(templateId);
+    this.refreshStatus();
+  }
+
+  updateSelectedPlacedEntity(entity: PlacedEntity): void {
+    this.ensureHandle()?.update_selected_placed_entity_json(JSON.stringify(entity));
+    this.refreshStatus();
+  }
+
+  snapSelectedEntityToTerrain(): void {
+    this.ensureHandle()?.snap_selected_entity_to_terrain();
+    this.refreshStatus();
+  }
+
+  duplicateSelectedEntity(): void {
+    this.ensureHandle()?.duplicate_selected_entity();
+    this.refreshStatus();
+  }
+
+  deleteSelectedEntity(): void {
+    this.ensureHandle()?.delete_selected_entity();
+    this.refreshStatus();
   }
 
   ngOnDestroy(): void {

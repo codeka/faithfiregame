@@ -129,6 +129,22 @@ async fn main() -> anyhow::Result<()> {
             "/api/editor/characters/assets/{slug}",
             put(editor_api::upload_character_asset).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
         )
+        .route(
+            "/api/editor/entities/templates",
+            get(editor_api::list_entity_templates),
+        )
+        .route(
+            "/api/editor/entities/templates/{template_id}",
+            put(editor_api::save_entity_template).delete(editor_api::delete_entity_template),
+        )
+        .route(
+            "/api/editor/areas/{area_id}/tiles/{tile_coord}/entities",
+            get(editor_api::get_outside_tile_entities).put(editor_api::save_outside_tile_entities),
+        )
+        .route(
+            "/api/editor/areas/{area_id}/inside/entities",
+            get(editor_api::get_inside_area_entities).put(editor_api::save_inside_area_entities),
+        )
     };
 
     let app = app.layer(CorsLayer::permissive()).with_state(state);

@@ -3,7 +3,8 @@ use shared::entity::{EntityCapabilities, EntityId, PropertyBag, PropertyValue};
 use shared::protocol::EntitySnapshot;
 
 use super::components::{
-    EntityLocation, MovementComponent, PlayerComponent, TransformComponent, VisualComponent,
+    EntityLocation, MovementComponent, PlayerComponent, SpawnOrigin, TransformComponent,
+    TriggerComponent, VisualComponent,
 };
 
 /// Composable simulation entity composed of spatial state, properties, and optional components.
@@ -15,8 +16,10 @@ pub struct Entity {
     pub transform: TransformComponent,
     pub properties: PropertyBag,
     pub extra_capabilities: EntityCapabilities,
+    pub spawn_origin: Option<SpawnOrigin>,
     pub visual: Option<VisualComponent>,
     pub movement: Option<MovementComponent>,
+    pub trigger: Option<TriggerComponent>,
     pub player: Option<PlayerComponent>,
 }
 
@@ -29,13 +32,14 @@ impl Entity {
             transform: TransformComponent { pos, yaw },
             properties: PropertyBag::new(),
             extra_capabilities: EntityCapabilities::NONE,
+            spawn_origin: None,
             visual: None,
             movement: None,
+            trigger: None,
             player: None,
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -53,6 +57,11 @@ impl Entity {
         self
     }
 
+    pub fn with_spawn_origin(mut self, origin: SpawnOrigin) -> Self {
+        self.spawn_origin = Some(origin);
+        self
+    }
+
     pub fn with_visual(mut self, visual: VisualComponent) -> Self {
         self.visual = Some(visual);
         self
@@ -60,6 +69,12 @@ impl Entity {
 
     pub fn with_movement(mut self, movement: MovementComponent) -> Self {
         self.movement = Some(movement);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_trigger(mut self, trigger: TriggerComponent) -> Self {
+        self.trigger = Some(trigger);
         self
     }
 
@@ -76,6 +91,12 @@ impl Entity {
         if self.movement.is_some() {
             caps.insert(EntityCapabilities::MOVABLE);
         }
+        if let Some(trig) = &self.trigger {
+            caps.insert(EntityCapabilities::TRIGGER);
+            if trig.config.activation.allows_click() {
+                caps.insert(EntityCapabilities::INTERACTABLE);
+            }
+        }
         caps
     }
 
@@ -85,7 +106,13 @@ impl Entity {
     }
 
     pub fn to_snapshot(&self) -> Option<EntitySnapshot> {
-        let visual = self.visual.as_ref()?;
+        let has_clickable_trigger = self
+            .trigger
+            .as_ref()
+            .is_some_and(|t| t.config.activation.allows_click());
+        if self.visual.is_none() && !has_clickable_trigger {
+            return None;
+        }
         Some(EntitySnapshot {
             entity_id: self.id,
             name: self.name.clone(),
@@ -93,7 +120,8 @@ impl Entity {
             yaw: self.transform.yaw,
             moving: self.is_moving(),
             capabilities: self.capabilities(),
-            visual: visual.to_wire(),
+            visual: self.visual.as_ref().map(|v| v.to_wire()),
+            trigger: self.trigger.as_ref().map(|t| t.config.clone()),
         })
     }
 }

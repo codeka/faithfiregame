@@ -1,7 +1,7 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 use shared::character::{CharacterDefinition, CompactCharacterAppearance};
-use shared::entity::EntityVisual;
+use shared::entity::{EntityId, EntityVisual, TriggerConfig};
 use shared::protocol::ServerMessage;
 use tokio::sync::mpsc;
 
@@ -57,10 +57,34 @@ impl EntityLocation {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn inside_instance(&self) -> Option<&InsideInstanceId> {
         match self {
             Self::Outside { .. } => None,
             Self::Inside(inst) => Some(inst),
+        }
+    }
+}
+
+/// Records the authored world-file placement that spawned a non-player entity so hot reloads stay synced.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SpawnOrigin {
+    OutsideTile {
+        area_id: String,
+        tx: i32,
+        ty: i32,
+        placed_id: u64,
+    },
+    InsideArea {
+        instance: InsideInstanceId,
+        placed_id: u64,
+    },
+}
+
+impl SpawnOrigin {
+    pub fn placed_id(&self) -> u64 {
+        match self {
+            Self::OutsideTile { placed_id, .. } | Self::InsideArea { placed_id, .. } => *placed_id,
         }
     }
 }
@@ -79,7 +103,6 @@ pub enum VisualComponent {
         definition: CharacterDefinition,
         compact: CompactCharacterAppearance,
     },
-    #[allow(dead_code)]
     Prop {
         asset_id: String,
         scale: [f32; 3],
@@ -124,9 +147,24 @@ impl MovementComponent {
         !self.waypoints.is_empty()
     }
 
-    #[allow(dead_code)]
     pub fn clear_path(&mut self) {
         self.waypoints.clear();
+    }
+}
+
+/// Oriented box volume that detects player click interactions and/or walk-into entry events.
+#[derive(Debug, Clone)]
+pub struct TriggerComponent {
+    pub config: TriggerConfig,
+    pub occupants: BTreeSet<EntityId>,
+}
+
+impl TriggerComponent {
+    pub fn new(config: TriggerConfig) -> Self {
+        Self {
+            config,
+            occupants: BTreeSet::new(),
+        }
     }
 }
 
@@ -136,4 +174,5 @@ pub struct PlayerComponent {
     pub account_id: u64,
     pub conn_id: u64,
     pub tx_out: mpsc::UnboundedSender<ServerMessage>,
+    pub pending_interaction: Option<EntityId>,
 }
