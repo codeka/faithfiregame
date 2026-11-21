@@ -483,13 +483,16 @@ impl EditorState {
                             closest_t = Some(t);
                         }
                     }
-                    Some(VisualConfig::Character { .. }) => {
-                        if let Some(t) = intersect_local_aabb(
-                            lo,
-                            ld,
-                            Vec3::new(-0.45, 0.0, -0.45),
-                            Vec3::new(0.45, 1.85, 0.45),
-                        ) {
+                    Some(VisualConfig::Character { pose_clip, .. }) => {
+                        let is_posed = pose_clip
+                            .as_deref()
+                            .is_some_and(|s| !s.trim().is_empty());
+                        let (bmin, bmax) = if is_posed {
+                            (Vec3::new(-0.85, 0.0, -0.85), Vec3::new(0.85, 1.0, 0.85))
+                        } else {
+                            (Vec3::new(-0.45, 0.0, -0.45), Vec3::new(0.45, 1.85, 0.45))
+                        };
+                        if let Some(t) = intersect_local_aabb(lo, ld, bmin, bmax) {
                             closest_t = Some(t);
                         }
                     }
@@ -549,6 +552,8 @@ mod tests {
             movement: None,
             trigger: Some(TriggerConfig::default()),
             script: None,
+            inventory: None,
+            lootable: None,
         }
     }
 

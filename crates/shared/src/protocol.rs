@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::entity::{EntityCapabilities, EntityId, EntityVisual, TriggerConfig};
 use crate::world::AreaKind;
 
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -12,6 +12,16 @@ pub enum PopupTone {
     Success,
     Warning,
     Danger,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LootItemEntry {
+    pub item_id: String,
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    pub count: u32,
+    pub equipped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -26,6 +36,13 @@ pub enum ClientMessage {
         z: f32,
     },
     Interact {
+        entity_id: EntityId,
+    },
+    LootTake {
+        entity_id: EntityId,
+        item_id: String,
+    },
+    LootTakeAll {
         entity_id: EntityId,
     },
 }
@@ -78,6 +95,12 @@ pub enum ServerMessage {
         title: String,
         body: String,
         tone: PopupTone,
+    },
+    LootWindow {
+        entity_id: EntityId,
+        title: String,
+        description: String,
+        items: Vec<LootItemEntry>,
     },
 }
 
@@ -150,6 +173,7 @@ mod tests {
             skinned_part_indices: vec![(0, 0)],
             socket_part_indices: vec![(0, 7)],
             palette: CharacterPalette::default(),
+            pose_clip: Some("DeadSlumped".to_owned()),
         };
         let char_visual = EntityVisual::Character(appearance);
         let enter = ServerMessage::EnterArea {
@@ -210,5 +234,34 @@ mod tests {
         };
         let pbytes = encode_server_msg(&popup).unwrap();
         assert_eq!(decode_server_msg(&pbytes).unwrap(), popup);
+
+        let loot_take = ClientMessage::LootTake {
+            entity_id: EntityId::new(1001),
+            item_id: "guard_rifle".to_owned(),
+        };
+        let lt_bytes = encode_client_msg(&loot_take).unwrap();
+        assert_eq!(decode_client_msg(&lt_bytes).unwrap(), loot_take);
+
+        let loot_all = ClientMessage::LootTakeAll {
+            entity_id: EntityId::new(1001),
+        };
+        let la_bytes = encode_client_msg(&loot_all).unwrap();
+        assert_eq!(decode_client_msg(&la_bytes).unwrap(), loot_all);
+
+        let loot_win = ServerMessage::LootWindow {
+            entity_id: EntityId::new(1001),
+            title: "Fallen Security Guard".to_owned(),
+            description: "Still gripping a security carbine.".to_owned(),
+            items: vec![LootItemEntry {
+                item_id: "guard_rifle".to_owned(),
+                name: "Guard Carbine".to_owned(),
+                description: "Compact security carbine.".to_owned(),
+                category: "Weapon".to_owned(),
+                count: 1,
+                equipped: true,
+            }],
+        };
+        let lw_bytes = encode_server_msg(&loot_win).unwrap();
+        assert_eq!(decode_server_msg(&lw_bytes).unwrap(), loot_win);
     }
 }

@@ -5,6 +5,9 @@ import {
   ComponentOverride,
   EditorEngineService,
   EntityOverrides,
+  InventoryConfig,
+  InventoryEntry,
+  LootableConfig,
   MovementConfig,
   PlacedEntity,
   PropertyValue,
@@ -15,12 +18,15 @@ import {
 } from '../../editor-engine.service';
 import { EditorStateService } from '../../editor-state.service';
 import {
+  defaultInventoryConfig,
+  defaultLootableConfig,
   defaultMovementConfig,
   defaultPropertyValue,
   defaultTriggerConfig,
   defaultVisualConfig,
   EntityEditorStateService,
   isOverridesEmpty,
+  POSE_CLIP_OPTIONS,
   PropertyKind,
   propertyTypeOf,
   resolvePlacedEntity,
@@ -68,6 +74,15 @@ export class EntityToolComponent {
     const sel = this.selectedEntity();
     if (!sel) return null;
     return resolvePlacedEntity(sel, this.linkedTemplate());
+  });
+  readonly poseOptions = computed<readonly string[]>(() => {
+    const extra = this.engine.status()?.characterStudio?.availableClips ?? [];
+    const cur = this.resolved()?.visual;
+    const currentPose = cur && this.isCharacterVisual(cur) ? cur.character.pose_clip : null;
+    const set = new Set<string>(POSE_CLIP_OPTIONS);
+    for (const c of extra) set.add(c);
+    if (currentPose) set.add(currentPose);
+    return Array.from(set);
   });
   readonly hasAnyOverrides = computed(() => {
     const sel = this.selectedEntity();
@@ -121,6 +136,8 @@ export class EntityToolComponent {
       movement: structuredClone(sel.overrides.movement ?? 'inherit'),
       trigger: structuredClone(sel.overrides.trigger ?? 'inherit'),
       script: structuredClone(sel.overrides.script ?? 'inherit'),
+      inventory: structuredClone(sel.overrides.inventory ?? 'inherit'),
+      lootable: structuredClone(sel.overrides.lootable ?? 'inherit'),
     };
   }
 
@@ -146,6 +163,8 @@ export class EntityToolComponent {
         movement: 'inherit',
         trigger: 'inherit',
         script: 'inherit',
+        inventory: 'inherit',
+        lootable: 'inherit',
       },
     });
   }
@@ -275,7 +294,9 @@ export class EntityToolComponent {
     this.setVisualOverride(tplHas ? 'remove' : 'inherit');
   }
 
-  isCharacterVisual(vis: VisualConfig): vis is { character: { preset_id: string } } {
+  isCharacterVisual(
+    vis: VisualConfig,
+  ): vis is { character: { preset_id: string; pose_clip?: string | null } } {
     return 'character' in vis;
   }
 
@@ -292,7 +313,23 @@ export class EntityToolComponent {
   }
 
   setCharacterPreset(presetId: string): void {
-    this.setVisualOverride({ set: { character: { preset_id: presetId } } });
+    const cur = this.resolved()?.visual;
+    const pose_clip = cur && this.isCharacterVisual(cur) ? (cur.character.pose_clip ?? null) : null;
+    this.setVisualOverride({ set: { character: { preset_id: presetId, pose_clip } } });
+  }
+
+  setCharacterPoseClip(poseClip: string): void {
+    const cur = this.resolved()?.visual;
+    if (!cur || !this.isCharacterVisual(cur)) return;
+    const trimmed = poseClip.trim();
+    this.setVisualOverride({
+      set: {
+        character: {
+          preset_id: cur.character.preset_id,
+          pose_clip: trimmed ? trimmed : null,
+        },
+      },
+    });
   }
 
   setPropAsset(assetId: string): void {
@@ -432,5 +469,92 @@ export class EntityToolComponent {
 
   scriptPreview(source: string): string {
     return source.trim().split(/\r?\n/).slice(0, 4).join('\n');
+  }
+
+  setInventoryOverride(ovVal: ComponentOverride<InventoryConfig>): void {
+    const sel = this.selectedEntity();
+    if (!sel) return;
+    const ov = this.cloneOverrides(sel);
+    ov.inventory = ovVal;
+    this.pushUpdated({ ...sel, overrides: ov });
+  }
+
+  addOrRestoreInventory(): void {
+    const sel = this.selectedEntity();
+    if (!sel) return;
+    if (sel.overrides.inventory === 'remove' && this.linkedTemplate()?.inventory) {
+      this.setInventoryOverride('inherit');
+      return;
+    }
+    this.setInventoryOverride({ set: defaultInventoryConfig() });
+  }
+
+  removeInventory(): void {
+    const tplHas = Boolean(this.linkedTemplate()?.inventory);
+    this.setInventoryOverride(tplHas ? 'remove' : 'inherit');
+  }
+
+  hasKnownItem(itemId: string): boolean {
+    return this.entityState.items().some((i) => i.id === itemId);
+  }
+
+  addInventoryItem(): void {
+    const cur = this.resolved()?.inventory ?? defaultInventoryConfig();
+    const firstItem = this.entityState.items()[0]?.id ?? 'cryo_jumpsuit';
+    this.setInventoryOverride({
+      set: {
+        items: [...cur.items, { item_id: firstItem, count: 1, equipped: false }],
+      },
+    });
+  }
+
+  patchInventoryItem(idx: number, patch: Partial<InventoryEntry>): void {
+    const cur = this.resolved()?.inventory;
+    if (!cur) return;
+    const items = cur.items.map((item, i) => (i === idx ? { ...item, ...patch } : item));
+    this.setInventoryOverride({ set: { items } });
+  }
+
+  setInventoryItemCount(idx: number, val: number): void {
+    if (!Number.isFinite(val)) return;
+    this.patchInventoryItem(idx, { count: Math.max(1, Math.round(val)) });
+  }
+
+  onInventoryEquippedChange(idx: number, ev: Event): void {
+    this.patchInventoryItem(idx, { equipped: (ev.target as HTMLInputElement).checked });
+  }
+
+  removeInventoryItem(idx: number): void {
+    const cur = this.resolved()?.inventory;
+    if (!cur) return;
+    this.setInventoryOverride({ set: { items: cur.items.filter((_, i) => i !== idx) } });
+  }
+
+  setLootableOverride(ovVal: ComponentOverride<LootableConfig>): void {
+    const sel = this.selectedEntity();
+    if (!sel) return;
+    const ov = this.cloneOverrides(sel);
+    ov.lootable = ovVal;
+    this.pushUpdated({ ...sel, overrides: ov });
+  }
+
+  addOrRestoreLootable(): void {
+    const sel = this.selectedEntity();
+    if (!sel) return;
+    if (sel.overrides.lootable === 'remove' && this.linkedTemplate()?.lootable) {
+      this.setLootableOverride('inherit');
+      return;
+    }
+    this.setLootableOverride({ set: defaultLootableConfig() });
+  }
+
+  removeLootable(): void {
+    const tplHas = Boolean(this.linkedTemplate()?.lootable);
+    this.setLootableOverride(tplHas ? 'remove' : 'inherit');
+  }
+
+  patchLootable(patch: Partial<LootableConfig>): void {
+    const cur = this.resolved()?.lootable ?? defaultLootableConfig();
+    this.setLootableOverride({ set: { ...cur, ...patch } });
   }
 }

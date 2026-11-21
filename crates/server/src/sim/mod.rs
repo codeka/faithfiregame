@@ -6,9 +6,9 @@ mod world;
 
 #[allow(unused_imports)]
 pub use components::{
-    CRYO_PRISON_AREA_ID, EntityLocation, InsideInstanceId, MovementComponent, PlayerComponent,
-    ScriptComponent, SpawnOrigin, TransformComponent, TriggerComponent, VisualComponent,
-    inside_instance_for,
+    CRYO_PRISON_AREA_ID, EntityLocation, InsideInstanceId, InventoryComponent, LootableComponent,
+    MovementComponent, PlayerComponent, ScriptComponent, SpawnOrigin, TransformComponent,
+    TriggerComponent, VisualComponent, inside_instance_for,
 };
 #[allow(unused_imports)]
 pub use entity::{Entity, RemovedPlayer};

@@ -127,6 +127,7 @@ h1 {
 }
 
 
+
 /* In-Game HUD */
 .hud-viewport {
   position: fixed;
@@ -135,11 +136,13 @@ h1 {
   pointer-events: none;
 }
 
+
 .hud-slot-top-left {
   position: absolute;
   top: 14px;
   left: 14px;
 }
+
 
 .hud-slot-top-right {
   position: absolute;
@@ -217,4 +220,107 @@ h1 {
   display: flex;
   justify-content: flex-end;
   padding-top: 4px;
+}
+
+.hud-loot-frame {
+  width: min(460px, calc(100vw - 32px));
+  --hud-frame-padding: 18px 20px;
+}
+
+.hud-loot-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hud-loot-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hud-loot-desc {
+  margin: 0;
+  color: var(--hud-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hud-loot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.hud-loot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 11px;
+  border: 1px solid rgba(0, 229, 255, 0.24);
+  background: rgba(4, 24, 42, 0.56);
+  border-radius: 4px;
+}
+
+.hud-loot-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.hud-loot-item-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud-loot-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--hud-text-primary);
+}
+
+.hud-loot-tag {
+  font-size: 10px;
+  font-family: var(--hud-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(0, 229, 255, 0.14);
+  color: var(--hud-cyan-bright);
+  border: 1px solid rgba(0, 229, 255, 0.28);
+}
+
+.hud-loot-tag.equipped {
+  background: rgba(16, 245, 160, 0.14);
+  color: var(--hud-mint-bright);
+  border-color: rgba(16, 245, 160, 0.34);
+}
+
+.hud-loot-item-desc {
+  font-size: 11px;
+  color: var(--hud-text-muted);
+  line-height: 1.35;
+}
+
+.hud-loot-empty {
+  padding: 16px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--hud-text-muted);
+  border: 1px dashed rgba(0, 229, 255, 0.22);
+  border-radius: 4px;
+}
+
+.hud-loot-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
 }

@@ -151,6 +151,20 @@ async fn handle_ws_socket(mut socket: WebSocket, state: AppState) {
                             Ok(ClientMessage::Interact { entity_id }) => {
                                 state.sim.write().await.interact_player_with(player_id, entity_id);
                             }
+                            Ok(ClientMessage::LootTake { entity_id, item_id }) => {
+                                state
+                                    .sim
+                                    .write()
+                                    .await
+                                    .loot_take_player_from(player_id, entity_id, item_id);
+                            }
+                            Ok(ClientMessage::LootTakeAll { entity_id }) => {
+                                state
+                                    .sim
+                                    .write()
+                                    .await
+                                    .loot_take_all_player_from(player_id, entity_id);
+                            }
                             Ok(msg) => {
                                 debug!("recv message from player {player_id}: {:?}", msg);
                             }
@@ -192,6 +206,7 @@ async fn handle_ws_socket(mut socket: WebSocket, state: AppState) {
                 pos: removed.pos,
                 yaw: removed.yaw,
                 appearance: removed.appearance_def,
+                inventory: removed.inventory,
             };
             if let Err(err) = state.storage.save_character_state(&record).await {
                 warn!("failed to save character state for player {player_id}: {err}");

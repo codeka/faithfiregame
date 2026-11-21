@@ -388,12 +388,40 @@ impl CharacterStudioState {
         time_s: f32,
         out_pose: &mut SkeletonPose,
     ) -> bool {
+        self.evaluate_pose_or_idle(def, None, time_s, out_pose)
+    }
+
+    pub fn evaluate_pose_or_idle(
+        &self,
+        def: &CharacterDefinition,
+        pose_clip: Option<&str>,
+        time_s: f32,
+        out_pose: &mut SkeletonPose,
+    ) -> bool {
         let Some(skel) = self.skeleton_for(&def.skeleton_id) else {
             return false;
         };
         let Some(rig) = self.rigs.get(&skel.rig_path) else {
             return false;
         };
+        if let Some(clip_name) = pose_clip.map(str::trim).filter(|s| !s.is_empty()) {
+            let found = skel
+                .animation_paths
+                .iter()
+                .filter_map(|u| self.extra_anims.get(u))
+                .flatten()
+                .find(|c| c.name.eq_ignore_ascii_case(clip_name))
+                .or_else(|| {
+                    rig.animations
+                        .iter()
+                        .find(|c| c.name.eq_ignore_ascii_case(clip_name))
+                });
+            let Some(clip) = found else {
+                return false;
+            };
+            evaluate_pose(rig, Some(clip), clip.duration, false, out_pose);
+            return true;
+        }
         let mut idle_clip: Option<&AnimationClip> = None;
         for anim_url in &skel.animation_paths {
             if let Some(clips) = self.extra_anims.get(anim_url) {

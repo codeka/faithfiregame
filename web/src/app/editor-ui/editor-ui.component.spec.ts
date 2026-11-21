@@ -241,6 +241,25 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
       let body = '[]';
       if (url.includes('/world/assets/catalog.json')) {
         body = JSON.stringify({ decorations: [], terrain_textures: [], road_textures: [] });
+      } else if (url.includes('/api/editor/items/catalog')) {
+        body = JSON.stringify({
+          items: [
+            {
+              id: 'cryo_jumpsuit',
+              name: 'Cryo Jumpsuit',
+              description: 'Thermal suit',
+              category: 'Apparel',
+              max_stack: 1,
+            },
+            {
+              id: 'guard_rifle',
+              name: 'Guard Carbine',
+              description: 'Security carbine',
+              category: 'Weapon',
+              max_stack: 1,
+            },
+          ],
+        });
       } else if (url.includes('/api/editor/characters/catalog')) {
         body = JSON.stringify(MOCK_CHARACTER_CATALOG);
       } else if (url.includes('/api/editor/characters/presets')) {
@@ -257,7 +276,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
               id: 'guard_npc',
               name: 'Guard NPC',
               properties: { level: { Int: 5 } },
-              visual: { character: { preset_id: 'preset_a' } },
+              visual: { character: { preset_id: 'preset_a', pose_clip: null } },
               movement: { speed: 3.5 },
               trigger: {
                 size: [1.5, 2.0, 1.5],
@@ -267,6 +286,8 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
                 interaction_range: 2.5,
               },
               script: null,
+              inventory: null,
+              lootable: null,
             },
           ]);
         }
@@ -1164,6 +1185,8 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
                 movement: 'inherit',
                 trigger: 'inherit',
                 script: 'inherit',
+                inventory: 'inherit',
+                lootable: 'inherit',
               },
             },
           }
@@ -1198,6 +1221,8 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
       movement: 'inherit',
       trigger: 'inherit',
       script: 'inherit',
+      inventory: 'inherit',
+      lootable: 'inherit',
     });
   });
 
@@ -1288,6 +1313,8 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
           movement: 'inherit',
           trigger: 'inherit',
           script: 'inherit',
+          inventory: 'inherit',
+          lootable: 'inherit',
         },
       },
     });
@@ -1335,6 +1362,128 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     fixture.detectChanges();
 
     expect(statusSig()?.selectedEntity?.overrides.script).toBe('inherit');
+  });
+
+  it('authors character pose_clip, Inventory, and Lootable on Entity Templates and overrides them on PlacedEntity instances', async () => {
+    statusSig.set({ ...baseStatus('decoration'), editorMode: 'entities' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const poseSelect = root.querySelector(
+      'select[name="templateCharacterPose"]',
+    ) as HTMLSelectElement;
+    expect(poseSelect).not.toBeNull();
+    poseSelect.value = 'DeadSlumped';
+    poseSelect.dispatchEvent(new Event('change'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    (root.querySelector('.add-inventory-btn') as HTMLButtonElement).click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    (root.querySelector('.add-inv-item-btn') as HTMLButtonElement).click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const eqCheckbox = root.querySelector('input[name="tpl_inv_eq_0"]') as HTMLInputElement;
+    expect(eqCheckbox).not.toBeNull();
+    eqCheckbox.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    (root.querySelector('.add-lootable-btn') as HTMLButtonElement).click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const lootTitleInput = root.querySelector(
+      'input[name="templateLootTitle"]',
+    ) as HTMLInputElement;
+    expect(lootTitleInput).not.toBeNull();
+    lootTitleInput.value = 'Fallen Security Guard';
+    lootTitleInput.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const saveBtn = root.querySelector('.toolbar .btn.primary') as HTMLButtonElement;
+    saveBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const putCall = savedEntityTemplates.find((c) =>
+      c.url.includes('/api/editor/entities/templates/guard_npc'),
+    );
+    expect(putCall).toBeDefined();
+    expect(
+      (putCall!.body['visual'] as { character: { pose_clip: string | null } }).character
+        .pose_clip,
+    ).toBe('DeadSlumped');
+    expect(putCall!.body['inventory']).toEqual({
+      items: [{ item_id: 'cryo_jumpsuit', count: 1, equipped: true }],
+    });
+    expect(putCall!.body['lootable']).toEqual({
+      title: 'Fallen Security Guard',
+      description: null,
+    });
+
+    // Switch to World mode -> Entities tool and test instance overrides & resets for Inventory / Lootable.
+    statusSig.set({
+      ...baseStatus('entities'),
+      editorMode: 'world',
+      entitySubmode: 'move',
+      selectedEntity: {
+        id: 101,
+        template_id: 'guard_npc',
+        position: [12, 0, 14],
+        rotation_y: 0,
+        overrides: {
+          name: null,
+          properties: {},
+          removed_properties: [],
+          visual: 'inherit',
+          movement: 'inherit',
+          trigger: 'inherit',
+          script: 'inherit',
+          inventory: 'inherit',
+          lootable: 'inherit',
+        },
+      },
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    (root.querySelector('.add-inst-inv-item-btn') as HTMLButtonElement).click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(statusSig()?.selectedEntity?.overrides.inventory).toEqual({
+      set: {
+        items: [
+          { item_id: 'cryo_jumpsuit', count: 1, equipped: true },
+          { item_id: 'cryo_jumpsuit', count: 1, equipped: false },
+        ],
+      },
+    });
+
+    const instLootTitle = root.querySelector('input[name="instLootTitle"]') as HTMLInputElement;
+    expect(instLootTitle).not.toBeNull();
+    instLootTitle.value = 'Corpse Guard';
+    instLootTitle.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(statusSig()?.selectedEntity?.overrides.lootable).toEqual({
+      set: { title: 'Corpse Guard', description: null },
+    });
+
+    (root.querySelector('.reset-inventory-btn') as HTMLButtonElement).click();
+    (root.querySelector('.reset-lootable-btn') as HTMLButtonElement).click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(statusSig()?.selectedEntity?.overrides.inventory).toBe('inherit');
+    expect(statusSig()?.selectedEntity?.overrides.lootable).toBe('inherit');
   });
 
   it('switches top-level modes between World, Characters, and Entities and gates World hotkeys', () => {

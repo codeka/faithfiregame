@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use shared::entity::{EntityTemplate, PlacedEntity};
+use shared::item::ItemCatalog;
 use shared::world::{
     AreaMetadata, InsideSimData, InsideVisData, TileSimData, TileVisData,
     compute_inside_sim_from_vis, compute_sim_from_vis, is_valid_asset_slug, prettify_asset_slug,
@@ -11,6 +12,19 @@ use shared::world::{
 use tracing::info;
 
 use crate::net::{AppState, is_valid_area_id, parse_tile_coord};
+
+pub async fn get_item_catalog(
+    State(state): State<AppState>,
+) -> Result<Json<ItemCatalog>, (StatusCode, String)> {
+    let path = state.world_dir.join("items").join("catalog.json");
+    if !path.exists() {
+        return Ok(Json(ItemCatalog::default()));
+    }
+    let bytes = fs::read(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let catalog: ItemCatalog =
+        serde_json::from_slice(&bytes).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(catalog))
+}
 
 pub async fn list_entity_templates(
     State(state): State<AppState>,
@@ -260,6 +274,7 @@ mod tests {
     #[test]
     fn axum_routes_for_entity_editor_compile_without_conflict() {
         let _router: Router<AppState> = Router::new()
+            .route("/api/editor/items/catalog", get(get_item_catalog))
             .route("/api/editor/entities/templates", get(list_entity_templates))
             .route(
                 "/api/editor/entities/templates/{template_id}",
@@ -301,6 +316,8 @@ mod tests {
             movement: Some(MovementConfig { speed: 2.0 }),
             trigger: Some(TriggerConfig::default()),
             script: None,
+            inventory: None,
+            lootable: None,
         };
 
         let Json(saved_tpl) = save_entity_template(

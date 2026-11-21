@@ -49,9 +49,18 @@ impl EntityStudioState {
         let Some(tpl) = &self.active_template else {
             return;
         };
-        if let Some(VisualConfig::Character { preset_id }) = &tpl.visual {
+        if let Some(VisualConfig::Character {
+            preset_id,
+            pose_clip,
+        }) = &tpl.visual
+        {
             if let Some(def) = character_presets.get(preset_id) {
-                char_studio.evaluate_idle_pose(def, self.anim_time, &mut self.pose);
+                char_studio.evaluate_pose_or_idle(
+                    def,
+                    pose_clip.as_deref(),
+                    self.anim_time,
+                    &mut self.pose,
+                );
             }
         }
     }
@@ -69,7 +78,7 @@ impl EntityStudioState {
             return;
         };
         match &tpl.visual {
-            Some(VisualConfig::Character { preset_id }) => {
+            Some(VisualConfig::Character { preset_id, .. }) => {
                 if let Some(def) = character_presets.get(preset_id) {
                     char_studio.draw_definition_shadow(renderer, def, &Mat4::IDENTITY, &self.pose);
                 }
@@ -104,7 +113,7 @@ impl EntityStudioState {
         };
 
         match &tpl.visual {
-            Some(VisualConfig::Character { preset_id }) => {
+            Some(VisualConfig::Character { preset_id, .. }) => {
                 if let Some(def) = character_presets.get(preset_id) {
                     char_studio.draw_definition(
                         renderer,

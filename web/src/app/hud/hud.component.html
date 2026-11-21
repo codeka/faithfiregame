@@ -61,6 +61,62 @@
       </app-hud-frame>
     </div>
     }
+
+    @if (status.loot; as loot) {
+    <div class="hud-popup-backdrop" role="dialog" aria-modal="true" aria-labelledby="hud-loot-title">
+      <app-hud-frame class="hud-loot-frame" variant="console" tone="cyan" [topFlare]="true" [topDots]="true"
+        [bottomDots]="true">
+        <div class="hud-loot-wrap">
+          <div class="hud-loot-head">
+            <h2 id="hud-loot-title" class="hud-popup-title">{{ loot.title }}</h2>
+            @if (loot.description) {
+              <p class="hud-loot-desc">{{ loot.description }}</p>
+            }
+          </div>
+          <div class="hud-loot-list">
+            @for (item of loot.items; track item.itemId) {
+              <div class="hud-loot-row">
+                <div class="hud-loot-item-info">
+                  <div class="hud-loot-item-top">
+                    <span class="hud-loot-item-name">{{ item.name }}</span>
+                    @if (item.count > 1) {
+                      <span class="hud-loot-tag">×{{ item.count }}</span>
+                    }
+                    @if (item.category) {
+                      <span class="hud-loot-tag">{{ item.category }}</span>
+                    }
+                    @if (item.equipped) {
+                      <span class="hud-loot-tag equipped">Equipped</span>
+                    }
+                  </div>
+                  @if (item.description) {
+                    <div class="hud-loot-item-desc">{{ item.description }}</div>
+                  }
+                </div>
+                <button type="button" appHudButton tone="mint" class="loot-take-btn"
+                  (click)="engine.takeLootItem(loot.entityId, item.itemId)">
+                  Take
+                </button>
+              </div>
+            } @empty {
+              <div class="hud-loot-empty">Nothing left to take.</div>
+            }
+          </div>
+          <div class="hud-loot-actions">
+            @if (loot.items.length > 0) {
+              <button type="button" appHudButton tone="mint" class="loot-take-all-btn"
+                (click)="engine.takeAllLoot(loot.entityId)">
+                Take All
+              </button>
+            }
+            <button type="button" appHudButton tone="cyan" class="loot-close-btn" (click)="engine.dismissLoot()">
+              Close
+            </button>
+          </div>
+        </div>
+      </app-hud-frame>
+    </div>
+    }
   </div>
   }
   }

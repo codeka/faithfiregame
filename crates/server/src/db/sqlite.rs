@@ -4,6 +4,7 @@ use anyhow::{Context, bail};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use shared::character::CharacterDefinition;
+use shared::entity::InventoryConfig;
 use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use uuid::Uuid;
@@ -155,11 +156,26 @@ impl SqliteStorage {
                 pos_z REAL NOT NULL,
                 yaw REAL NOT NULL,
                 appearance_json TEXT NOT NULL,
+                inventory_json TEXT NOT NULL DEFAULT '{\"items\":[]}',
                 updated_at INTEGER NOT NULL DEFAULT (unixepoch())
             );",
         )
         .execute(&pool)
         .await?;
+
+        let has_inventory_col = sqlx::query(
+            "SELECT 1 FROM pragma_table_info('character_saves') WHERE name = 'inventory_json';",
+        )
+        .fetch_optional(&pool)
+        .await?
+        .is_some();
+        if !has_inventory_col {
+            sqlx::query(
+                "ALTER TABLE character_saves ADD COLUMN inventory_json TEXT NOT NULL DEFAULT '{\"items\":[]}';",
+            )
+            .execute(&pool)
+            .await?;
+        }
 
         Ok(Self { pool })
     }
@@ -257,7 +273,7 @@ impl Storage for SqliteStorage {
 
     async fn load_character_save(&self, account_id: u64) -> anyhow::Result<Option<CharacterSaveRecord>> {
         let row = sqlx::query(
-            "SELECT area_id, pos_x, pos_y, pos_z, yaw, appearance_json FROM character_saves WHERE account_id = ?;",
+            "SELECT area_id, pos_x, pos_y, pos_z, yaw, appearance_json, inventory_json FROM character_saves WHERE account_id = ?;",
         )
         .bind(account_id as i64)
         .fetch_optional(&self.pool)
@@ -273,20 +289,25 @@ impl Storage for SqliteStorage {
         let appearance_json: String = row.try_get("appearance_json")?;
         let appearance: CharacterDefinition = serde_json::from_str(&appearance_json)
             .context("invalid appearance_json in character_saves")?;
+        let inventory_json: String = row.try_get("inventory_json")?;
+        let inventory: InventoryConfig = serde_json::from_str(&inventory_json)
+            .context("invalid inventory_json in character_saves")?;
         Ok(Some(CharacterSaveRecord {
             account_id,
             area_id,
             pos: [pos_x as f32, pos_y as f32, pos_z as f32],
             yaw: yaw as f32,
             appearance,
+            inventory,
         }))
     }
 
     async fn save_character_state(&self, save: &CharacterSaveRecord) -> anyhow::Result<()> {
         let appearance_json = serde_json::to_string(&save.appearance)?;
+        let inventory_json = serde_json::to_string(&save.inventory)?;
         sqlx::query(
-            "INSERT INTO character_saves (account_id, area_id, pos_x, pos_y, pos_z, yaw, appearance_json, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())
+            "INSERT INTO character_saves (account_id, area_id, pos_x, pos_y, pos_z, yaw, appearance_json, inventory_json, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
              ON CONFLICT(account_id) DO UPDATE SET
                  area_id = excluded.area_id,
                  pos_x = excluded.pos_x,
@@ -294,6 +315,7 @@ impl Storage for SqliteStorage {
                  pos_z = excluded.pos_z,
                  yaw = excluded.yaw,
                  appearance_json = excluded.appearance_json,
+                 inventory_json = excluded.inventory_json,
                  updated_at = unixepoch();",
         )
         .bind(save.account_id as i64)
@@ -303,6 +325,7 @@ impl Storage for SqliteStorage {
         .bind(save.pos[2] as f64)
         .bind(save.yaw as f64)
         .bind(appearance_json)
+        .bind(inventory_json)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -359,6 +382,13 @@ mod tests {
             pos: [32.5, 0.25, 31.0],
             yaw: 1.25,
             appearance: CharacterDefinition::cryo_awakening_default(),
+            inventory: InventoryConfig {
+                items: vec![shared::entity::InventoryEntry {
+                    item_id: "guard_rifle".to_owned(),
+                    count: 1,
+                    equipped: true,
+                }],
+            },
         };
         db.save_character_state(&save).await.unwrap();
         let loaded = db
@@ -370,6 +400,7 @@ mod tests {
         assert_eq!(loaded.pos, [32.5, 0.25, 31.0]);
         assert!((loaded.yaw - 1.25).abs() < 1e-6);
         assert_eq!(loaded.appearance, save.appearance);
+        assert_eq!(loaded.inventory, save.inventory);
 
         drop(db);
         let _ = std::fs::remove_file(&path);

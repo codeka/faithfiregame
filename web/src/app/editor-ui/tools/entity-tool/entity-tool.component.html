@@ -293,6 +293,20 @@
                   }
                 </select>
               </label>
+              <label class="field-row">
+                <span class="field-name">Pose / Clip</span>
+                <select
+                  class="select"
+                  name="instCharacterPose"
+                  [ngModel]="vis.character.pose_clip ?? ''"
+                  (ngModelChange)="setCharacterPoseClip($event)"
+                >
+                  <option value="">Default (Idle / Walk)</option>
+                  @for (clip of poseOptions(); track clip) {
+                    <option [value]="clip">{{ clip }}</option>
+                  }
+                </select>
+              </label>
             } @else if (isPropVisual(vis)) {
               <label class="field-row">
                 <span class="field-name">Asset</span>
@@ -548,6 +562,136 @@
           } @else {
             <button type="button" class="btn btn-sm add-inst-script-btn" (click)="addOrRestoreScript()">
               {{ sel.overrides.script === 'remove' ? 'Restore Template Script' : '+ Add Script' }}
+            </button>
+          }
+        </div>
+
+        <!-- Inventory Component Override -->
+        <div class="comp-card">
+          <div class="section-head">
+            <span class="comp-title">Inventory</span>
+            <div class="override-meta">
+              <span class="badge" [class.overridden]="sel.overrides.inventory !== 'inherit'">
+                {{ overrideStatusLabel(sel.overrides.inventory, !!linkedTemplate()?.inventory) }}
+              </span>
+              @if (sel.overrides.inventory !== 'inherit') {
+                <button
+                  type="button"
+                  class="btn btn-sm btn-mini reset-inventory-btn"
+                  (click)="setInventoryOverride('inherit')"
+                >
+                  Reset
+                </button>
+              }
+            </div>
+          </div>
+          @if (res.inventory; as inv) {
+            @for (item of inv.items; track $index) {
+              <div class="inv-row">
+                <select
+                  class="select inv-select"
+                  [attr.name]="'inst_inv_item_' + $index"
+                  [ngModel]="item.item_id"
+                  (ngModelChange)="patchInventoryItem($index, { item_id: $event })"
+                >
+                  @if (!hasKnownItem(item.item_id)) {
+                    <option [value]="item.item_id">{{ item.item_id }}</option>
+                  }
+                  @for (def of entityState.items(); track def.id) {
+                    <option [value]="def.id">{{ def.name }}</option>
+                  }
+                </select>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  class="text-input inv-count"
+                  [attr.name]="'inst_inv_count_' + $index"
+                  [ngModel]="item.count"
+                  (ngModelChange)="setInventoryItemCount($index, +$event)"
+                />
+                <label class="inv-eq" title="Equipped">
+                  <input
+                    type="checkbox"
+                    [attr.name]="'inst_inv_eq_' + $index"
+                    [checked]="item.equipped"
+                    (change)="onInventoryEquippedChange($index, $event)"
+                  />
+                  <span>Eq</span>
+                </label>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-mini"
+                  title="Remove item"
+                  (click)="removeInventoryItem($index)"
+                >
+                  ×
+                </button>
+              </div>
+            } @empty {
+              <div class="empty-hint">Empty inventory</div>
+            }
+            <button type="button" class="btn btn-sm add-inst-inv-item-btn" (click)="addInventoryItem()">
+              + Add Item
+            </button>
+            <button type="button" class="btn btn-sm btn-danger remove-inventory-btn" (click)="removeInventory()">
+              Remove Inventory
+            </button>
+          } @else {
+            <button type="button" class="btn btn-sm add-inst-inventory-btn" (click)="addOrRestoreInventory()">
+              {{ sel.overrides.inventory === 'remove' ? 'Restore Template Inventory' : '+ Add Inventory' }}
+            </button>
+          }
+        </div>
+
+        <!-- Lootable Component Override -->
+        <div class="comp-card">
+          <div class="section-head">
+            <span class="comp-title">Lootable</span>
+            <div class="override-meta">
+              <span class="badge" [class.overridden]="sel.overrides.lootable !== 'inherit'">
+                {{ overrideStatusLabel(sel.overrides.lootable, !!linkedTemplate()?.lootable) }}
+              </span>
+              @if (sel.overrides.lootable !== 'inherit') {
+                <button
+                  type="button"
+                  class="btn btn-sm btn-mini reset-lootable-btn"
+                  (click)="setLootableOverride('inherit')"
+                >
+                  Reset
+                </button>
+              }
+            </div>
+          </div>
+          @if (res.lootable; as loot) {
+            <label class="field-row">
+              <span class="field-name">Title</span>
+              <input
+                type="text"
+                name="instLootTitle"
+                class="text-input"
+                placeholder="Use entity name"
+                [ngModel]="loot.title ?? ''"
+                (ngModelChange)="patchLootable({ title: $event.trim() ? $event : null })"
+              />
+            </label>
+            <label class="field-row">
+              <span class="field-name">Desc</span>
+              <input
+                type="text"
+                name="instLootDesc"
+                class="text-input"
+                placeholder="Optional flavor text"
+                [ngModel]="loot.description ?? ''"
+                (ngModelChange)="patchLootable({ description: $event.trim() ? $event : null })"
+              />
+            </label>
+            <button type="button" class="btn btn-sm btn-danger remove-lootable-btn" (click)="removeLootable()">
+              Remove Lootable
+            </button>
+          } @else {
+            <button type="button" class="btn btn-sm add-inst-lootable-btn" (click)="addOrRestoreLootable()">
+              {{ sel.overrides.lootable === 'remove' ? 'Restore Template Lootable' : '+ Add Lootable' }}
             </button>
           }
         </div>

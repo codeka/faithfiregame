@@ -274,9 +274,18 @@ impl EditorState {
                 Vec3::from(placed.position),
             );
             match vis {
-                VisualConfig::Character { preset_id } => {
+                VisualConfig::Character {
+                    preset_id,
+                    pose_clip,
+                } => {
                     if let Some(def) = self.character_presets.get(&preset_id) {
-                        if let Some(pose) = self.entity_poses.get(&def.skeleton_id) {
+                        let norm_pose = pose_clip
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(ToOwned::to_owned);
+                        if let Some(pose) = self.entity_poses.get(&(def.skeleton_id.clone(), norm_pose))
+                        {
                             self.character_studio
                                 .draw_definition_shadow(renderer, def, &model, pose);
                         }
@@ -361,11 +370,19 @@ impl EditorState {
     ) {
         let model = Mat4::from_rotation_translation(Quat::from_rotation_y(yaw_rad), pos);
         match visual {
-            Some(VisualConfig::Character { preset_id }) => {
+            Some(VisualConfig::Character {
+                preset_id,
+                pose_clip,
+            }) => {
                 if let Some(def) = self.character_presets.get(preset_id) {
+                    let norm_pose = pose_clip
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(ToOwned::to_owned);
                     let pose = self
                         .entity_poses
-                        .get(&def.skeleton_id)
+                        .get(&(def.skeleton_id.clone(), norm_pose))
                         .cloned()
                         .unwrap_or_else(SkeletonPose::default);
                     if !pose.world_matrices.is_empty() {

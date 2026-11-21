@@ -153,6 +153,15 @@ impl CharacterDefinition {
 
     /// Encodes this definition into a compact index-based representation using `catalog`.
     pub fn to_compact(&self, catalog: &CharacterCatalog) -> Option<CompactCharacterAppearance> {
+        self.to_compact_with_pose(catalog, None)
+    }
+
+    /// Encodes this definition into a compact representation with an optional static pose clip override.
+    pub fn to_compact_with_pose(
+        &self,
+        catalog: &CharacterCatalog,
+        pose_clip: Option<String>,
+    ) -> Option<CompactCharacterAppearance> {
         let skel_pos = catalog
             .skeletons
             .iter()
@@ -177,12 +186,18 @@ impl CharacterDefinition {
             socket_part_indices.push((u8::try_from(sock_pos).ok()?, u16::try_from(part_pos).ok()?));
         }
 
+        let pose_clip = pose_clip.and_then(|s| {
+            let trimmed = s.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_owned())
+        });
+
         Some(CompactCharacterAppearance {
             skeleton_idx,
             show_base_mesh: self.show_base_mesh,
             skinned_part_indices,
             socket_part_indices,
             palette: self.palette.clone(),
+            pose_clip,
         })
     }
 }
@@ -195,6 +210,8 @@ pub struct CompactCharacterAppearance {
     pub skinned_part_indices: Vec<(u8, u16)>,
     pub socket_part_indices: Vec<(u8, u16)>,
     pub palette: CharacterPalette,
+    #[serde(default)]
+    pub pose_clip: Option<String>,
 }
 
 impl CompactCharacterAppearance {

@@ -175,3 +175,29 @@
   max-height: 76px;
   overflow: hidden;
 }
+
+.inv-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inv-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.inv-count {
+  width: 46px;
+  flex: 0 0 auto;
+  padding: 3px 5px;
+}
+
+.inv-eq {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  color: #cbd5e0;
+  cursor: pointer;
+}

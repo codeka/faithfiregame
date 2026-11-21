@@ -17,6 +17,9 @@ describe('HudComponent & LoginComponent entry flow', () => {
   let landingCalls: number;
   let stopPollingCalls: number;
   let dismissPopupCalls: number;
+  let lootTakeCalls: { entityId: number; itemId: string }[];
+  let lootTakeAllCalls: number[];
+  let dismissLootCalls: number;
   let origFetch: typeof globalThis.fetch;
 
   function configureTestBed(): void {
@@ -39,6 +42,16 @@ describe('HudComponent & LoginComponent entry flow', () => {
       dismissPopup: () => {
         dismissPopupCalls++;
         gameStatusSig.update((s) => (s ? { ...s, popup: null } : s));
+      },
+      takeLootItem: (entityId: number, itemId: string) => {
+        lootTakeCalls.push({ entityId, itemId });
+      },
+      takeAllLoot: (entityId: number) => {
+        lootTakeAllCalls.push(entityId);
+      },
+      dismissLoot: () => {
+        dismissLootCalls++;
+        gameStatusSig.update((s) => (s ? { ...s, loot: null } : s));
       },
       stopGamePolling: () => {
         stopPollingCalls++;
@@ -67,6 +80,9 @@ describe('HudComponent & LoginComponent entry flow', () => {
     landingCalls = 0;
     stopPollingCalls = 0;
     dismissPopupCalls = 0;
+    lootTakeCalls = [];
+    lootTakeAllCalls = [];
+    dismissLootCalls = 0;
   });
 
   afterEach(() => {
@@ -383,5 +399,89 @@ describe('HudComponent & LoginComponent entry flow', () => {
 
     expect(dismissPopupCalls).toBe(1);
     expect(host.querySelector('.hud-popup-backdrop')).toBeNull();
+  });
+
+  it('renders loot dialog items, dispatches Take / Take All / Close, and shows empty message when looted', async () => {
+    document.cookie = `${SESSION_COOKIE}=play-tok-loot; Path=/`;
+    configureTestBed();
+    const fixture = TestBed.createComponent(HudComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    gameStatusSig.set({
+      phase: 'playing',
+      playerId: 4,
+      areaId: 'cryo_prison',
+      areaName: 'Cryo Prison',
+      playerPos: [18, 0, 12],
+      freshCryoWake: false,
+      wakeReady: true,
+      loot: {
+        entityId: 1001,
+        title: 'Fallen Security Guard',
+        description: 'Still clutching his carbine.',
+        items: [
+          {
+            itemId: 'guard_rifle',
+            name: 'Guard Carbine',
+            description: 'Security carbine.',
+            category: 'Weapon',
+            count: 1,
+            equipped: true,
+          },
+        ],
+      },
+      error: null,
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('.hud-loot-frame')).not.toBeNull();
+    expect(host.querySelector('#hud-loot-title')?.textContent?.trim()).toBe(
+      'Fallen Security Guard',
+    );
+    expect(host.querySelector('.hud-loot-item-name')?.textContent?.trim()).toBe('Guard Carbine');
+    expect(host.querySelector('.hud-loot-tag.equipped')?.textContent?.trim()).toBe('Equipped');
+
+    const takeBtn = host.querySelector('.loot-take-btn') as HTMLButtonElement | null;
+    const takeAllBtn = host.querySelector('.loot-take-all-btn') as HTMLButtonElement | null;
+    expect(takeBtn).not.toBeNull();
+    expect(takeAllBtn).not.toBeNull();
+
+    takeBtn!.click();
+    takeAllBtn!.click();
+    expect(lootTakeCalls).toEqual([{ entityId: 1001, itemId: 'guard_rifle' }]);
+    expect(lootTakeAllCalls).toEqual([1001]);
+
+    gameStatusSig.update((s) =>
+      s
+        ? {
+            ...s,
+            loot: {
+              entityId: 1001,
+              title: 'Fallen Security Guard',
+              description: 'Still clutching his carbine.',
+              items: [],
+            },
+          }
+        : s,
+    );
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(host.querySelector('.loot-take-all-btn')).toBeNull();
+    expect(host.querySelector('.hud-loot-empty')?.textContent?.trim()).toBe(
+      'Nothing left to take.',
+    );
+
+    const closeBtn = host.querySelector('.loot-close-btn') as HTMLButtonElement | null;
+    expect(closeBtn).not.toBeNull();
+    closeBtn!.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(dismissLootCalls).toBe(1);
+    expect(host.querySelector('.hud-loot-frame')).toBeNull();
   });
 });

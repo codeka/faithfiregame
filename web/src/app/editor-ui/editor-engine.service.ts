@@ -195,7 +195,7 @@ export interface TriggerConfig {
 }
 
 export type VisualConfig =
-  | { character: { preset_id: string } }
+  | { character: { preset_id: string; pose_clip?: string | null } }
   | { prop: { asset_id: string; scale: [number, number, number]; cast_shadow: boolean } };
 
 export interface MovementConfig {
@@ -205,6 +205,38 @@ export interface MovementConfig {
 export interface ScriptConfig {
   source: string;
   compiled_js: string;
+}
+
+export type ItemEquipBinding =
+  | { kind: 'skinned'; slot: string; part_id: string }
+  | { kind: 'socket'; socket_id: string; part_id: string };
+
+export interface ItemDef {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  max_stack: number;
+  equip?: ItemEquipBinding | null;
+}
+
+export interface ItemCatalog {
+  items: ItemDef[];
+}
+
+export interface InventoryEntry {
+  item_id: string;
+  count: number;
+  equipped: boolean;
+}
+
+export interface InventoryConfig {
+  items: InventoryEntry[];
+}
+
+export interface LootableConfig {
+  title: string | null;
+  description: string | null;
 }
 
 export type PropertyValue =
@@ -221,6 +253,8 @@ export interface EntityTemplate {
   movement: MovementConfig | null;
   trigger: TriggerConfig | null;
   script: ScriptConfig | null;
+  inventory: InventoryConfig | null;
+  lootable: LootableConfig | null;
 }
 
 export type ComponentOverride<T> = 'inherit' | { set: T } | 'remove';
@@ -233,6 +267,8 @@ export interface EntityOverrides {
   movement: ComponentOverride<MovementConfig>;
   trigger: ComponentOverride<TriggerConfig>;
   script: ComponentOverride<ScriptConfig>;
+  inventory: ComponentOverride<InventoryConfig>;
+  lootable: ComponentOverride<LootableConfig>;
 }
 
 export interface PlacedEntity {

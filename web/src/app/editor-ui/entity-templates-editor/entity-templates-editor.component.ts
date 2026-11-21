@@ -2,6 +2,10 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CharacterEditorStateService } from '../character-editor-state.service';
 import {
+  EditorEngineService,
+  InventoryConfig,
+  InventoryEntry,
+  LootableConfig,
   PropertyValue,
   TriggerActivation,
   TriggerConfig,
@@ -9,11 +13,14 @@ import {
 } from '../editor-engine.service';
 import { EditorStateService } from '../editor-state.service';
 import {
+  defaultInventoryConfig,
+  defaultLootableConfig,
   defaultMovementConfig,
   defaultPropertyValue,
   defaultTriggerConfig,
   defaultVisualConfig,
   EntityEditorStateService,
+  POSE_CLIP_OPTIONS,
   PropertyKind,
   propertyTypeOf,
 } from '../entity-editor-state.service';
@@ -27,6 +34,7 @@ import { defaultScriptConfig } from '../script-compiler';
   styleUrls: ['../editor-controls.css', './entity-templates-editor.component.css'],
 })
 export class EntityTemplatesEditorComponent {
+  readonly engine = inject(EditorEngineService);
   readonly entityState = inject(EntityEditorStateService);
   readonly charState = inject(CharacterEditorStateService);
   readonly worldState = inject(EditorStateService);
@@ -35,6 +43,15 @@ export class EntityTemplatesEditorComponent {
   readonly newPropType = signal<PropertyKind>('String');
 
   readonly template = computed(() => this.entityState.activeTemplate());
+  readonly poseOptions = computed<readonly string[]>(() => {
+    const extra = this.engine.status()?.characterStudio?.availableClips ?? [];
+    const cur = this.template()?.visual;
+    const currentPose = cur && this.isCharacterVisual(cur) ? cur.character.pose_clip : null;
+    const set = new Set<string>(POSE_CLIP_OPTIONS);
+    for (const c of extra) set.add(c);
+    if (currentPose) set.add(currentPose);
+    return Array.from(set);
+  });
   readonly propertyEntries = computed(() => {
     const tpl = this.template();
     if (!tpl) return [];
@@ -99,7 +116,9 @@ export class EntityTemplatesEditorComponent {
     this.entityState.setVisual(defaultVisualConfig(kind, firstPreset, firstAsset));
   }
 
-  isCharacterVisual(vis: VisualConfig): vis is { character: { preset_id: string } } {
+  isCharacterVisual(
+    vis: VisualConfig,
+  ): vis is { character: { preset_id: string; pose_clip?: string | null } } {
     return 'character' in vis;
   }
 
@@ -110,7 +129,21 @@ export class EntityTemplatesEditorComponent {
   }
 
   setCharacterPreset(presetId: string): void {
-    this.entityState.setVisual({ character: { preset_id: presetId } });
+    const cur = this.template()?.visual;
+    const pose_clip = cur && this.isCharacterVisual(cur) ? (cur.character.pose_clip ?? null) : null;
+    this.entityState.setVisual({ character: { preset_id: presetId, pose_clip } });
+  }
+
+  setCharacterPoseClip(poseClip: string): void {
+    const cur = this.template()?.visual;
+    if (!cur || !this.isCharacterVisual(cur)) return;
+    const trimmed = poseClip.trim();
+    this.entityState.setVisual({
+      character: {
+        preset_id: cur.character.preset_id,
+        pose_clip: trimmed ? trimmed : null,
+      },
+    });
   }
 
   setPropAsset(assetId: string): void {
@@ -189,5 +222,53 @@ export class EntityTemplatesEditorComponent {
 
   scriptPreview(source: string): string {
     return source.trim().split(/\r?\n/).slice(0, 4).join('\n');
+  }
+
+  addInventoryComponent(): void {
+    this.entityState.setInventory(defaultInventoryConfig());
+  }
+
+  hasKnownItem(itemId: string): boolean {
+    return this.entityState.items().some((i) => i.id === itemId);
+  }
+
+  addInventoryItem(): void {
+    const cur = this.template()?.inventory ?? defaultInventoryConfig();
+    const firstItem = this.entityState.items()[0]?.id ?? 'cryo_jumpsuit';
+    const next: InventoryConfig = {
+      items: [...cur.items, { item_id: firstItem, count: 1, equipped: false }],
+    };
+    this.entityState.setInventory(next);
+  }
+
+  patchInventoryItem(idx: number, patch: Partial<InventoryEntry>): void {
+    const cur = this.template()?.inventory;
+    if (!cur) return;
+    const items = cur.items.map((item, i) => (i === idx ? { ...item, ...patch } : item));
+    this.entityState.setInventory({ items });
+  }
+
+  setInventoryItemCount(idx: number, val: number): void {
+    if (!Number.isFinite(val)) return;
+    this.patchInventoryItem(idx, { count: Math.max(1, Math.round(val)) });
+  }
+
+  onInventoryEquippedChange(idx: number, ev: Event): void {
+    this.patchInventoryItem(idx, { equipped: (ev.target as HTMLInputElement).checked });
+  }
+
+  removeInventoryItem(idx: number): void {
+    const cur = this.template()?.inventory;
+    if (!cur) return;
+    this.entityState.setInventory({ items: cur.items.filter((_, i) => i !== idx) });
+  }
+
+  addLootableComponent(): void {
+    this.entityState.setLootable(defaultLootableConfig());
+  }
+
+  patchLootable(patch: Partial<LootableConfig>): void {
+    const cur = this.template()?.lootable ?? defaultLootableConfig();
+    this.entityState.setLootable({ ...cur, ...patch });
   }
 }

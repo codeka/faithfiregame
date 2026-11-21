@@ -526,4 +526,48 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn parses_and_evaluates_human_death_poses_above_ground() {
+        let (Some(rig_bytes), Some(poses_bytes)) = (
+            world_character_asset("human_base_body.glb"),
+            world_character_asset("human_poses.glb"),
+        ) else {
+            return;
+        };
+        let rig = parse_skeleton_glb(&rig_bytes).unwrap();
+        let clips = crate::character::parse_glb_animations(&poses_bytes).unwrap();
+        let mut pose = SkeletonPose::from_rig(&rig);
+        let hand_sock = SocketDef {
+            id: "socket_hand_r".to_owned(),
+            name: "Right Hand".to_owned(),
+            parent_bone: "hand_r".to_owned(),
+            offset: [0.0, -0.06, 0.04],
+            rotation_deg: [0.0, 0.0, 0.0],
+            scale: 1.0,
+        };
+
+        for clip_name in ["DeadSlumped", "DeadSupine", "DeadProne"] {
+            let clip = clips
+                .iter()
+                .find(|c| c.name == clip_name)
+                .unwrap_or_else(|| panic!("missing {clip_name} in human_poses.glb"));
+            evaluate_pose(&rig, Some(clip), clip.duration, false, &mut pose);
+            for (idx, bone) in rig.bones.iter().enumerate() {
+                if bone.name == "root" {
+                    continue;
+                }
+                let y = pose.world_matrices[idx].w_axis.y;
+                assert!(
+                    (0.01..0.95).contains(&y),
+                    "{clip_name} joint '{}' world y={y} out of floor/slump range",
+                    bone.name
+                );
+            }
+            if clip_name == "DeadSlumped" {
+                let sock_y = pose.socket_world_matrix(&rig, &hand_sock).w_axis.y;
+                assert!(sock_y >= 0.03, "DeadSlumped socket_hand_r y={sock_y} too low");
+            }
+        }
+    }
 }

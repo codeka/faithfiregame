@@ -3,18 +3,26 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use shared::character::{CharacterCatalog, CharacterDefinition};
-use shared::entity::{EntityId, EntityTemplate, EntityVisual, PlacedEntity, VisualConfig};
+use shared::entity::{
+    EntityId, EntityTemplate, EntityVisual, InventoryConfig, InventoryEntry, PlacedEntity,
+    VisualConfig,
+};
+use shared::item::{ItemCatalog, ItemDef, ItemEquipBinding};
 use shared::pathfinding::{WalkGrid, find_path, smooth_path};
-use shared::protocol::{EntitySnapshot, ServerMessage};
-use shared::world::{AreaKind, AreaMetadata, InsideKind, InsideSimData, TILE_SIZE, TileSimData};
+use shared::protocol::{EntitySnapshot, LootItemEntry, ServerMessage};
+use shared::world::{
+    AreaKind, AreaMetadata, InsideKind, InsideSimData, TILE_SIZE, TileSimData,
+    prettify_asset_slug,
+};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::db::CharacterSaveRecord;
 
 use super::components::{
-    CRYO_PRISON_AREA_ID, EntityLocation, InsideInstanceId, MovementComponent, PlayerComponent,
-    ScriptComponent, SpawnOrigin, TriggerComponent, VisualComponent, inside_instance_for,
+    CRYO_PRISON_AREA_ID, EntityLocation, InsideInstanceId, InventoryComponent, LootableComponent,
+    MovementComponent, PlayerComponent, ScriptComponent, SpawnOrigin, TriggerComponent,
+    VisualComponent, inside_instance_for,
 };
 use super::entity::{Entity, RemovedPlayer};
 use super::glue::{SimCommand, SimEvent, TriggerWay};
@@ -133,10 +141,19 @@ fn load_entity_templates(world_dir: &Path) -> HashMap<String, EntityTemplate> {
     map
 }
 
+fn load_item_catalog(world_dir: &Path) -> ItemCatalog {
+    let path = world_dir.join("items").join("catalog.json");
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<ItemCatalog>(&bytes).ok())
+        .unwrap_or_default()
+}
+
 pub struct SimWorld {
     world_dir: PathBuf,
     character_catalog: CharacterCatalog,
     character_presets: HashMap<String, CharacterDefinition>,
+    item_catalog: ItemCatalog,
     entity_templates: HashMap<String, EntityTemplate>,
     next_conn_id: u64,
     next_entity_id: u64,
@@ -152,11 +169,13 @@ impl SimWorld {
     pub fn new(world_dir: PathBuf) -> Self {
         let character_catalog = load_character_catalog(&world_dir);
         let character_presets = load_character_presets(&world_dir);
+        let item_catalog = load_item_catalog(&world_dir);
         let entity_templates = load_entity_templates(&world_dir);
         Self {
             world_dir,
             character_catalog,
             character_presets,
+            item_catalog,
             entity_templates,
             next_conn_id: 0,
             next_entity_id: 0,
@@ -252,9 +271,12 @@ impl SimWorld {
             if let Some(VisualComponent::Character {
                 definition,
                 compact,
+                pose_clip,
             }) = &mut entity.visual
             {
-                *compact = definition.to_compact(catalog_ref).unwrap_or_default();
+                *compact = definition
+                    .to_compact_with_pose(catalog_ref, pose_clip.clone())
+                    .unwrap_or_default();
             }
         }
         self.refresh_entities_for_template(None);
@@ -345,6 +367,12 @@ impl SimWorld {
                 trig
             });
             entity.script = resolved.script.map(ScriptComponent::new);
+            entity.inventory = resolved
+                .inventory
+                .as_ref()
+                .map(InventoryComponent::from_config);
+            entity.lootable = resolved.lootable.map(LootableComponent::new);
+            apply_equipped_inventory_to_visual(entity, &self.item_catalog, &self.character_catalog);
         }
     }
 
@@ -413,18 +441,22 @@ impl SimWorld {
 
     fn build_visual_component(&self, cfg: &VisualConfig) -> VisualComponent {
         match cfg {
-            VisualConfig::Character { preset_id } => {
+            VisualConfig::Character {
+                preset_id,
+                pose_clip,
+            } => {
                 let definition = self
                     .character_presets
                     .get(preset_id)
                     .cloned()
                     .unwrap_or_else(CharacterDefinition::cryo_awakening_default);
                 let compact = definition
-                    .to_compact(&self.character_catalog)
+                    .to_compact_with_pose(&self.character_catalog, pose_clip.clone())
                     .unwrap_or_default();
                 VisualComponent::Character {
                     definition,
                     compact,
+                    pose_clip: pose_clip.clone(),
                 }
             }
             VisualConfig::Prop {
@@ -463,6 +495,13 @@ impl SimWorld {
         if let Some(script) = resolved.script {
             entity.script = Some(ScriptComponent::new(script));
         }
+        if let Some(inv) = &resolved.inventory {
+            entity.inventory = Some(InventoryComponent::from_config(inv));
+        }
+        if let Some(loot) = resolved.lootable {
+            entity.lootable = Some(LootableComponent::new(loot));
+        }
+        apply_equipped_inventory_to_visual(&mut entity, &self.item_catalog, &self.character_catalog);
         self.spawn_entity(entity)
     }
 
@@ -739,7 +778,89 @@ impl SimWorld {
             actor_entity_id: actor_id,
             way: TriggerWay::Click,
         });
+        if self
+            .entities
+            .get(&target_id)
+            .is_some_and(|t| t.lootable.is_some())
+        {
+            self.send_loot_window_to_player(actor_id, target_id);
+        }
         self.run_trigger_script(target_id, actor_id, TriggerWay::Click);
+    }
+
+    fn send_loot_window_to_player(&self, actor_id: EntityId, target_id: EntityId) {
+        let Some(tx_out) = self
+            .entities
+            .get(&actor_id)
+            .and_then(|a| a.player.as_ref().map(|p| p.tx_out.clone()))
+        else {
+            return;
+        };
+        let Some(target) = self.entities.get(&target_id) else {
+            return;
+        };
+        let Some(lootable) = &target.lootable else {
+            return;
+        };
+        let title = lootable
+            .config
+            .title
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| target.name.clone())
+            .unwrap_or_else(|| "Loot".to_owned());
+        let description = lootable
+            .config
+            .description
+            .clone()
+            .unwrap_or_default();
+        let items: Vec<LootItemEntry> = target
+            .inventory
+            .as_ref()
+            .map(|inv| {
+                inv.items
+                    .iter()
+                    .filter(|e| e.count > 0)
+                    .map(|entry| {
+                        let def = self.item_catalog.get(&entry.item_id);
+                        LootItemEntry {
+                            item_id: entry.item_id.clone(),
+                            name: def
+                                .map(|d| d.name.clone())
+                                .unwrap_or_else(|| prettify_asset_slug(&entry.item_id)),
+                            description: def.map(|d| d.description.clone()).unwrap_or_default(),
+                            category: def.map(|d| d.category.clone()).unwrap_or_default(),
+                            count: entry.count,
+                            equipped: entry.equipped,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let _ = tx_out.send(ServerMessage::LootWindow {
+            entity_id: target_id,
+            title,
+            description,
+            items,
+        });
+    }
+
+    fn broadcast_snapshots_for_entity_change(&self, changed_id: EntityId) {
+        let Some(changed) = self.entities.get(&changed_id) else {
+            return;
+        };
+        for observer in self.entities.values() {
+            let Some(player) = observer.player.as_ref() else {
+                continue;
+            };
+            if Self::entities_in_visible_range(observer, changed) {
+                let _ = player.tx_out.send(ServerMessage::WorldSnapshot {
+                    entities: self.visible_entities_for(observer),
+                });
+            }
+        }
     }
 
     fn run_trigger_script(&mut self, trigger_id: EntityId, actor_id: EntityId, way: TriggerWay) {
@@ -839,11 +960,8 @@ impl SimWorld {
                             if !Self::entities_in_visible_range(actor, t) {
                                 return None;
                             }
-                            let trig = t.trigger.as_ref()?;
-                            trig.config
-                                .activation
-                                .allows_click()
-                                .then(|| (t.transform.pos, t.transform.yaw, trig.config.clone()))
+                            let trig_cfg = t.effective_click_trigger()?;
+                            Some((t.transform.pos, t.transform.yaw, trig_cfg))
                         })
                     else {
                         continue;
@@ -876,6 +994,19 @@ impl SimWorld {
                             }
                         }
                     }
+                }
+                SimCommand::LootTake {
+                    actor_id,
+                    target_id,
+                    item_id,
+                } => {
+                    self.execute_loot_take(actor_id, target_id, Some(&item_id));
+                }
+                SimCommand::LootTakeAll {
+                    actor_id,
+                    target_id,
+                } => {
+                    self.execute_loot_take(actor_id, target_id, None);
                 }
                 SimCommand::StopMovement { entity_id } => {
                     if let Some(entity) = self.entities.get_mut(&entity_id) {
@@ -1073,12 +1204,13 @@ impl SimWorld {
         self.next_conn_id += 1;
         let conn_id = self.next_conn_id;
 
-        let (area_id, pos, yaw, appearance_def, fresh_cryo_wake) = match saved {
+        let (area_id, pos, yaw, appearance_def, inventory_cfg, fresh_cryo_wake) = match saved {
             Some(record) if record.area_id != CRYO_PRISON_AREA_ID => (
                 record.area_id,
                 record.pos,
                 record.yaw,
                 record.appearance,
+                record.inventory,
                 false,
             ),
             _ => (
@@ -1086,6 +1218,7 @@ impl SimWorld {
                 CRYO_PRISON_SPAWN_POS,
                 CRYO_PRISON_SPAWN_YAW,
                 CharacterDefinition::cryo_awakening_default(),
+                InventoryConfig::default(),
                 true,
             ),
         };
@@ -1099,23 +1232,31 @@ impl SimWorld {
             EntityLocation::Inside(inside_instance_for(&area_id, account_id))
         };
 
-        let appearance = appearance_def
+        let compact = appearance_def
             .to_compact(&self.character_catalog)
             .unwrap_or_default();
 
         let entity_id = self.alloc_entity_id();
-        let entity = Entity::new(entity_id, location, pos, yaw)
+        let mut entity = Entity::new(entity_id, location, pos, yaw)
             .with_visual(VisualComponent::Character {
                 definition: appearance_def,
-                compact: appearance.clone(),
+                compact,
+                pose_clip: None,
             })
             .with_movement(MovementComponent::new(PLAYER_MOVE_SPEED))
+            .with_inventory(InventoryComponent::from_config(&inventory_cfg))
             .with_player(PlayerComponent {
                 account_id,
                 conn_id,
                 tx_out,
                 pending_interaction: None,
             });
+        apply_equipped_inventory_to_visual(&mut entity, &self.item_catalog, &self.character_catalog);
+        let wire_visual = entity
+            .visual
+            .as_ref()
+            .map(VisualComponent::to_wire)
+            .unwrap_or_else(|| EntityVisual::Character(Default::default()));
         self.spawn_entity(entity);
 
         let snapped_pos = self
@@ -1132,7 +1273,7 @@ impl SimWorld {
             dimensions: meta.dimensions,
             pos: snapped_pos,
             yaw,
-            visual: EntityVisual::Character(appearance),
+            visual: wire_visual,
             fresh_cryo_wake,
         };
         let snap_entities = self
@@ -1162,6 +1303,11 @@ impl SimWorld {
             Some(VisualComponent::Character { definition, .. }) => definition,
             _ => CharacterDefinition::cryo_awakening_default(),
         };
+        let inventory = removed
+            .inventory
+            .as_ref()
+            .map(InventoryComponent::to_config)
+            .unwrap_or_default();
         Some(RemovedPlayer {
             entity_id: removed.id,
             account_id,
@@ -1169,6 +1315,7 @@ impl SimWorld {
             pos: removed.transform.pos,
             yaw: removed.transform.yaw,
             appearance_def,
+            inventory,
         })
     }
 
@@ -1191,6 +1338,109 @@ impl SimWorld {
             });
             self.process_commands();
         }
+    }
+
+    pub fn loot_take_player_from(&mut self, account_id: u64, target_id: EntityId, item_id: String) {
+        if let Some(actor_id) = self.player_entities.get(&account_id).copied() {
+            self.enqueue_command(SimCommand::LootTake {
+                actor_id,
+                target_id,
+                item_id,
+            });
+            self.process_commands();
+        }
+    }
+
+    pub fn loot_take_all_player_from(&mut self, account_id: u64, target_id: EntityId) {
+        if let Some(actor_id) = self.player_entities.get(&account_id).copied() {
+            self.enqueue_command(SimCommand::LootTakeAll {
+                actor_id,
+                target_id,
+            });
+            self.process_commands();
+        }
+    }
+
+    fn execute_loot_take(
+        &mut self,
+        actor_id: EntityId,
+        target_id: EntityId,
+        single_item_id: Option<&str>,
+    ) {
+        if actor_id == target_id {
+            return;
+        }
+        let valid = (|| {
+            let actor = self.entities.get(&actor_id)?;
+            let target = self.entities.get(&target_id)?;
+            if actor.player.is_none() || actor.inventory.is_none() {
+                return None;
+            }
+            if target.lootable.is_none() || target.inventory.is_none() {
+                return None;
+            }
+            if !Self::entities_in_visible_range(actor, target) {
+                return None;
+            }
+            let trig_cfg = target.effective_click_trigger()?;
+            let dist = trig_cfg.horizontal_distance_to_point(
+                target.transform.pos,
+                target.transform.yaw,
+                actor.transform.pos,
+            );
+            (dist <= trig_cfg.interaction_range.max(0.1) + 0.75).then_some(())
+        })()
+        .is_some();
+        if !valid {
+            return;
+        }
+
+        let taken: Vec<InventoryEntry> = {
+            let Some(target) = self.entities.get_mut(&target_id) else {
+                return;
+            };
+            let Some(inv) = &mut target.inventory else {
+                return;
+            };
+            let list = match single_item_id {
+                Some(id) => inv.take_item(id).into_iter().collect(),
+                None => inv.take_all(),
+            };
+            for entry in &list {
+                if entry.equipped {
+                    unequip_removed_item_from_visual(
+                        target,
+                        entry,
+                        &self.item_catalog,
+                        &self.character_catalog,
+                    );
+                }
+            }
+            list
+        };
+
+        if !taken.is_empty() {
+            if let Some(actor) = self.entities.get_mut(&actor_id) {
+                for entry in taken {
+                    let item_def = self.item_catalog.get(&entry.item_id);
+                    let max_stack = item_def.map(|d| d.max_stack).unwrap_or(1);
+                    let equip_now = can_auto_equip_item(actor, item_def);
+                    if let Some(inv) = &mut actor.inventory {
+                        inv.give_item(&entry.item_id, entry.count, max_stack, equip_now);
+                    }
+                    if equip_now {
+                        apply_equipped_inventory_to_visual(
+                            actor,
+                            &self.item_catalog,
+                            &self.character_catalog,
+                        );
+                    }
+                }
+            }
+            self.broadcast_snapshots_for_entity_change(target_id);
+        }
+
+        self.send_loot_window_to_player(actor_id, target_id);
     }
 
     pub fn tick(&mut self) {
@@ -1355,17 +1605,14 @@ impl SimWorld {
                 if !Self::entities_in_visible_range(actor, target) {
                     return None;
                 }
-                let trig = target.trigger.as_ref()?;
-                if !trig.config.activation.allows_click() {
-                    return None;
-                }
-                let dist = trig.config.horizontal_distance_to_point(
+                let trig_cfg = target.effective_click_trigger()?;
+                let dist = trig_cfg.horizontal_distance_to_point(
                     target.transform.pos,
                     target.transform.yaw,
                     actor.transform.pos,
                 );
                 Some((
-                    dist <= trig.config.interaction_range.max(0.1),
+                    dist <= trig_cfg.interaction_range.max(0.1),
                     actor.is_moving(),
                     target.transform.pos,
                 ))
@@ -1481,6 +1728,148 @@ impl SimWorld {
 
         for (tx_out, entities) in outbound {
             let _ = tx_out.send(ServerMessage::WorldSnapshot { entities });
+        }
+    }
+}
+
+fn apply_equipped_inventory_to_visual(
+    entity: &mut Entity,
+    item_catalog: &ItemCatalog,
+    char_catalog: &CharacterCatalog,
+) {
+    let Some(inv) = &entity.inventory else {
+        return;
+    };
+    let Some(VisualComponent::Character {
+        definition,
+        compact,
+        pose_clip,
+    }) = &mut entity.visual
+    else {
+        return;
+    };
+    let mut changed = false;
+    for entry in &inv.items {
+        if !entry.equipped || entry.count == 0 {
+            continue;
+        }
+        let Some(def) = item_catalog.get(&entry.item_id) else {
+            continue;
+        };
+        let Some(binding) = &def.equip else {
+            continue;
+        };
+        match binding {
+            ItemEquipBinding::Skinned { slot, part_id } => {
+                if definition.skinned_parts.get(slot) != Some(part_id) {
+                    definition
+                        .skinned_parts
+                        .insert(slot.clone(), part_id.clone());
+                    changed = true;
+                }
+            }
+            ItemEquipBinding::Socket { socket_id, part_id } => {
+                if definition.socket_parts.get(socket_id) != Some(part_id) {
+                    definition
+                        .socket_parts
+                        .insert(socket_id.clone(), part_id.clone());
+                    changed = true;
+                }
+            }
+        }
+    }
+    if changed {
+        *compact = definition
+            .to_compact_with_pose(char_catalog, pose_clip.clone())
+            .unwrap_or_default();
+    }
+}
+
+fn unequip_removed_item_from_visual(
+    entity: &mut Entity,
+    removed: &InventoryEntry,
+    item_catalog: &ItemCatalog,
+    char_catalog: &CharacterCatalog,
+) {
+    if !removed.equipped {
+        return;
+    }
+    let Some(binding) = item_catalog
+        .get(&removed.item_id)
+        .and_then(|d| d.equip.as_ref())
+    else {
+        return;
+    };
+    let still_occupied = entity.inventory.as_ref().is_some_and(|inv| {
+        inv.items.iter().any(|other| {
+            if !other.equipped || other.count == 0 {
+                return false;
+            }
+            match (
+                binding,
+                item_catalog
+                    .get(&other.item_id)
+                    .and_then(|d| d.equip.as_ref()),
+            ) {
+                (
+                    ItemEquipBinding::Skinned { slot: s1, .. },
+                    Some(ItemEquipBinding::Skinned { slot: s2, .. }),
+                ) => s1 == s2,
+                (
+                    ItemEquipBinding::Socket { socket_id: s1, .. },
+                    Some(ItemEquipBinding::Socket { socket_id: s2, .. }),
+                ) => s1 == s2,
+                _ => false,
+            }
+        })
+    });
+    if still_occupied {
+        return;
+    }
+    let Some(VisualComponent::Character {
+        definition,
+        compact,
+        pose_clip,
+    }) = &mut entity.visual
+    else {
+        return;
+    };
+    let changed = match binding {
+        ItemEquipBinding::Skinned { slot, part_id } => {
+            if definition.skinned_parts.get(slot) == Some(part_id) {
+                definition.skinned_parts.remove(slot);
+                true
+            } else {
+                false
+            }
+        }
+        ItemEquipBinding::Socket { socket_id, part_id } => {
+            if definition.socket_parts.get(socket_id) == Some(part_id) {
+                definition.socket_parts.remove(socket_id);
+                true
+            } else {
+                false
+            }
+        }
+    };
+    if changed {
+        *compact = definition
+            .to_compact_with_pose(char_catalog, pose_clip.clone())
+            .unwrap_or_default();
+    }
+}
+
+fn can_auto_equip_item(entity: &Entity, item_def: Option<&ItemDef>) -> bool {
+    let Some(binding) = item_def.and_then(|d| d.equip.as_ref()) else {
+        return false;
+    };
+    let Some(VisualComponent::Character { definition, .. }) = &entity.visual else {
+        return false;
+    };
+    match binding {
+        ItemEquipBinding::Skinned { slot, .. } => !definition.skinned_parts.contains_key(slot),
+        ItemEquipBinding::Socket { socket_id, .. } => {
+            !definition.socket_parts.contains_key(socket_id)
         }
     }
 }
@@ -1730,6 +2119,7 @@ mod tests {
             .with_visual(VisualComponent::Character {
                 definition: CharacterDefinition::cryo_awakening_default(),
                 compact: Default::default(),
+                pose_clip: None,
             })
             .with_movement(MovementComponent::new(4.0));
         sim.spawn_entity(drone);
@@ -1880,6 +2270,8 @@ mod tests {
                 interaction_range: 1.5,
             }),
             script: None,
+            inventory: None,
+            lootable: None,
         };
         fs::create_dir_all(world_dir.join("entities").join("templates")).unwrap();
         fs::write(
@@ -1931,6 +2323,7 @@ mod tests {
             pos: [4.0, 0.0, 6.0],
             yaw: 0.0,
             appearance: CharacterDefinition::cryo_awakening_default(),
+            inventory: InventoryConfig::default(),
         };
         let (conn_id, enter_msg, snap_msg) = sim.spawn_player(77, Some(saved), tx);
         let player_eid = match enter_msg {
@@ -2096,6 +2489,8 @@ mod tests {
                 "#
                 .to_owned(),
             }),
+            inventory: None,
+            lootable: None,
         };
         fs::write(
             world_dir.join("entities/templates/portal_script.json"),
@@ -2137,6 +2532,7 @@ mod tests {
             pos: [5.0, 0.0, 5.0],
             yaw: 0.0,
             appearance: CharacterDefinition::cryo_awakening_default(),
+            inventory: InventoryConfig::default(),
         };
         let (conn_id, enter_msg, snap_msg) = sim.spawn_player(88, Some(saved), tx);
         let player_eid = match enter_msg {
@@ -2206,5 +2602,182 @@ mod tests {
 
         assert!(sim.remove_player(88, conn_id).is_some());
         let _ = fs::remove_dir_all(&world_dir);
+    }
+
+    #[test]
+    fn cryo_prison_corpses_spawn_posed_and_loot_transfers_equip_and_strip_parts() {
+        let world_dir = workspace_world_dir();
+        if !world_dir.join("areas").join("cryo_prison").join("sim.bin").exists() {
+            return;
+        }
+
+        let mut sim = SimWorld::new(world_dir);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (conn_id, enter_msg, snap_msg) = sim.spawn_player(901, None, tx);
+        let player_eid = match enter_msg {
+            ServerMessage::EnterArea { entity_id, .. } => entity_id,
+            _ => panic!("expected EnterArea"),
+        };
+
+        let entities = match snap_msg {
+            ServerMessage::WorldSnapshot { entities } => entities,
+            _ => panic!("expected WorldSnapshot"),
+        };
+        let guard_snap = entities
+            .iter()
+            .find(|e| e.name.as_deref() == Some("Fallen Security Guard"))
+            .expect("Fallen Security Guard spawned in cryo_prison");
+        let prisoner_snap = entities
+            .iter()
+            .find(|e| e.name.as_deref() == Some("Fallen Prisoner"))
+            .expect("Fallen Prisoner spawned in cryo_prison");
+
+        assert!(guard_snap.capabilities.contains(EntityCapabilities::LOOTABLE));
+        assert!(guard_snap.capabilities.contains(EntityCapabilities::INTERACTABLE));
+        assert!(prisoner_snap.capabilities.contains(EntityCapabilities::LOOTABLE));
+
+        match &guard_snap.visual {
+            Some(EntityVisual::Character(app)) => {
+                assert_eq!(app.pose_clip.as_deref(), Some("DeadSlumped"));
+                assert!(!app.socket_part_indices.is_empty(), "guard has rifle equipped");
+            }
+            other => panic!("expected guard Character visual, got {other:?}"),
+        }
+        match &prisoner_snap.visual {
+            Some(EntityVisual::Character(app)) => {
+                assert_eq!(app.pose_clip.as_deref(), Some("DeadSupine"));
+                assert!(app.skinned_part_indices.len() >= 3, "prisoner wears head, torso, legs");
+            }
+            other => panic!("expected prisoner Character visual, got {other:?}"),
+        }
+
+        let guard_eid = guard_snap.entity_id;
+        let prisoner_eid = prisoner_snap.entity_id;
+
+        // Player starts in cryo_awakening (bare torso/legs, no rifle) and out of range -> LootTake rejected.
+        sim.loot_take_player_from(901, prisoner_eid, "cryo_jumpsuit".to_owned());
+        assert!(
+            sim.entity(player_eid)
+                .unwrap()
+                .inventory
+                .as_ref()
+                .unwrap()
+                .items
+                .is_empty(),
+            "out-of-range loot take must be rejected"
+        );
+
+        // Click prisoner from afar -> walks into range and opens LootWindow!
+        sim.interact_player_with(901, prisoner_eid);
+        for _ in 0..80 {
+            sim.tick();
+        }
+        let mut prisoner_loot_items = None;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMessage::LootWindow {
+                entity_id,
+                title,
+                items,
+                ..
+            } = msg
+            {
+                if entity_id == prisoner_eid {
+                    assert_eq!(title, "Fallen Prisoner");
+                    prisoner_loot_items = Some(items);
+                }
+            }
+        }
+        let prisoner_items = prisoner_loot_items.expect("clicking prisoner opens LootWindow upon arrival");
+        assert_eq!(prisoner_items.len(), 2);
+
+        // Take jumpsuit & pants individually -> prisoner stripped, player auto-equips both!
+        sim.loot_take_player_from(901, prisoner_eid, "cryo_jumpsuit".to_owned());
+        sim.loot_take_player_from(901, prisoner_eid, "cargo_pants".to_owned());
+
+        let player_ent = sim.entity(player_eid).unwrap();
+        assert_eq!(player_ent.inventory.as_ref().unwrap().items.len(), 2);
+        assert!(player_ent.inventory.as_ref().unwrap().items.iter().all(|i| i.equipped));
+        match &player_ent.visual {
+            Some(VisualComponent::Character { definition, .. }) => {
+                assert_eq!(
+                    definition.skinned_parts.get("torso").map(String::as_str),
+                    Some("torso_cryo_jumpsuit")
+                );
+                assert_eq!(
+                    definition.skinned_parts.get("legs").map(String::as_str),
+                    Some("legs_cargo_pants")
+                );
+            }
+            _ => panic!("expected player character visual"),
+        }
+        let prisoner_ent = sim.entity(prisoner_eid).unwrap();
+        assert!(prisoner_ent.inventory.as_ref().unwrap().items.is_empty());
+        match &prisoner_ent.visual {
+            Some(VisualComponent::Character {
+                definition,
+                compact,
+                ..
+            }) => {
+                assert!(!definition.skinned_parts.contains_key("torso"));
+                assert!(!definition.skinned_parts.contains_key("legs"));
+                assert_eq!(compact.pose_clip.as_deref(), Some("DeadSupine"));
+            }
+            _ => panic!("expected prisoner character visual"),
+        }
+
+        // Now interact with Fallen Security Guard and Take All -> rifle moves to player's socket_hand_r,
+        // guard loses socket_hand_r while keeping visor & armor!
+        sim.interact_player_with(901, guard_eid);
+        for _ in 0..40 {
+            sim.tick();
+        }
+        sim.loot_take_all_player_from(901, guard_eid);
+
+        let player_ent = sim.entity(player_eid).unwrap();
+        match &player_ent.visual {
+            Some(VisualComponent::Character { definition, .. }) => {
+                assert_eq!(
+                    definition.socket_parts.get("socket_hand_r").map(String::as_str),
+                    Some("weapon_guard_rifle")
+                );
+            }
+            _ => panic!("expected player character visual"),
+        }
+        let guard_ent = sim.entity(guard_eid).unwrap();
+        assert!(guard_ent.inventory.as_ref().unwrap().items.is_empty());
+        match &guard_ent.visual {
+            Some(VisualComponent::Character {
+                definition,
+                compact,
+                ..
+            }) => {
+                assert!(!definition.socket_parts.contains_key("socket_hand_r"));
+                assert_eq!(
+                    definition.skinned_parts.get("head").map(String::as_str),
+                    Some("head_aug_visor")
+                );
+                assert_eq!(
+                    definition.skinned_parts.get("torso").map(String::as_str),
+                    Some("torso_fire_rig")
+                );
+                assert_eq!(compact.pose_clip.as_deref(), Some("DeadSlumped"));
+            }
+            _ => panic!("expected guard character visual"),
+        }
+
+        let mut saw_empty_guard_window = false;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMessage::LootWindow {
+                entity_id, items, ..
+            } = msg
+            {
+                if entity_id == guard_eid && items.is_empty() {
+                    saw_empty_guard_window = true;
+                }
+            }
+        }
+        assert!(saw_empty_guard_window, "LootTakeAll sends updated empty LootWindow");
+
+        assert!(sim.remove_player(901, conn_id).is_some());
     }
 }

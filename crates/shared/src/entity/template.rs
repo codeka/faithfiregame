@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::world::prettify_asset_slug;
 
-use super::types::{PropertyBag, TriggerConfig};
+use super::types::{InventoryConfig, LootableConfig, PropertyBag, TriggerConfig};
 
 /// Authored visual model configuration on an entity template or instance override.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -12,6 +12,8 @@ use super::types::{PropertyBag, TriggerConfig};
 pub enum VisualConfig {
     Character {
         preset_id: String,
+        #[serde(default)]
+        pose_clip: Option<String>,
     },
     Prop {
         asset_id: String,
@@ -76,6 +78,10 @@ pub struct EntityTemplate {
     pub trigger: Option<TriggerConfig>,
     #[serde(default)]
     pub script: Option<ScriptConfig>,
+    #[serde(default)]
+    pub inventory: Option<InventoryConfig>,
+    #[serde(default)]
+    pub lootable: Option<LootableConfig>,
 }
 
 /// Per-instance override state for an optional component derived from an [`EntityTemplate`].
@@ -115,6 +121,10 @@ pub struct EntityOverrides {
     pub trigger: ComponentOverride<TriggerConfig>,
     #[serde(default)]
     pub script: ComponentOverride<ScriptConfig>,
+    #[serde(default)]
+    pub inventory: ComponentOverride<InventoryConfig>,
+    #[serde(default)]
+    pub lootable: ComponentOverride<LootableConfig>,
 }
 
 impl EntityOverrides {
@@ -126,6 +136,8 @@ impl EntityOverrides {
             && matches!(self.movement, ComponentOverride::Inherit)
             && matches!(self.trigger, ComponentOverride::Inherit)
             && matches!(self.script, ComponentOverride::Inherit)
+            && matches!(self.inventory, ComponentOverride::Inherit)
+            && matches!(self.lootable, ComponentOverride::Inherit)
     }
 }
 
@@ -149,6 +161,8 @@ pub struct ResolvedEntityData {
     pub movement: Option<MovementConfig>,
     pub trigger: Option<TriggerConfig>,
     pub script: Option<ScriptConfig>,
+    pub inventory: Option<InventoryConfig>,
+    pub lootable: Option<LootableConfig>,
 }
 
 impl PlacedEntity {
@@ -188,6 +202,16 @@ impl PlacedEntity {
             .script
             .resolve(template.and_then(|t| t.script.as_ref()))
             .cloned();
+        let inventory = self
+            .overrides
+            .inventory
+            .resolve(template.and_then(|t| t.inventory.as_ref()))
+            .cloned();
+        let lootable = self
+            .overrides
+            .lootable
+            .resolve(template.and_then(|t| t.lootable.as_ref()))
+            .cloned();
 
         ResolvedEntityData {
             name,
@@ -196,6 +220,8 @@ impl PlacedEntity {
             movement,
             trigger,
             script,
+            inventory,
+            lootable,
         }
     }
 }
@@ -203,7 +229,7 @@ impl PlacedEntity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entity::types::{PropertyValue, TriggerActivation};
+    use crate::entity::types::{InventoryEntry, PropertyValue, TriggerActivation};
 
     fn sample_template() -> EntityTemplate {
         let mut properties = PropertyBag::new();
@@ -217,6 +243,7 @@ mod tests {
             properties,
             visual: Some(VisualConfig::Character {
                 preset_id: "faith_villager".to_owned(),
+                pose_clip: None,
             }),
             movement: Some(MovementConfig { speed: 3.5 }),
             trigger: Some(TriggerConfig {
@@ -227,6 +254,17 @@ mod tests {
                 interaction_range: 2.5,
             }),
             script: Some(ScriptConfig::default()),
+            inventory: Some(InventoryConfig {
+                items: vec![InventoryEntry {
+                    item_id: "guard_rifle".to_owned(),
+                    count: 1,
+                    equipped: true,
+                }],
+            }),
+            lootable: Some(LootableConfig {
+                title: Some("Guard Gear".to_owned()),
+                description: None,
+            }),
         }
     }
 

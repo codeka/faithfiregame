@@ -43,6 +43,7 @@ impl EntityCapabilities {
     pub const VENDOR: Self = Self(1 << 5);
     pub const TRIGGER: Self = Self(1 << 6);
     pub const SCRIPTED: Self = Self(1 << 7);
+    pub const LOOTABLE: Self = Self(1 << 8);
 
     #[inline]
     pub const fn contains(self, flag: Self) -> bool {
@@ -79,6 +80,36 @@ impl BitOrAssign for EntityCapabilities {
     fn bitor_assign(&mut self, rhs: Self) {
         self.0 |= rhs.0;
     }
+}
+
+/// Single item stack or equipped entry stored inside an entity's inventory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InventoryEntry {
+    pub item_id: String,
+    #[serde(default = "default_one_u32")]
+    pub count: u32,
+    #[serde(default)]
+    pub equipped: bool,
+}
+
+fn default_one_u32() -> u32 {
+    1
+}
+
+/// Authored inventory configuration on an entity template, instance override, or player save.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InventoryConfig {
+    #[serde(default)]
+    pub items: Vec<InventoryEntry>,
+}
+
+/// Authored loot-container metadata enabling click-to-loot interaction against an entity's inventory.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LootableConfig {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// Client-renderable representation attached to a replicated entity.
@@ -489,6 +520,7 @@ mod tests {
             skinned_part_indices: vec![(0, 1)],
             socket_part_indices: vec![(1, 2)],
             palette: CharacterPalette::default(),
+            pose_clip: None,
         });
         let char_bytes = postcard::to_allocvec(&char_vis).unwrap();
         assert_eq!(postcard::from_bytes::<EntityVisual>(&char_bytes).unwrap(), char_vis);

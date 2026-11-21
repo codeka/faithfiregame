@@ -86,6 +86,15 @@ async fn main() -> anyhow::Result<()> {
                     header::CACHE_CONTROL,
                     HeaderValue::from_static("no-cache"),
                 )),
+        )
+        .nest_service(
+            "/world/items",
+            Router::new()
+                .fallback_service(ServeDir::new(world_dir.join("items")))
+                .layer(SetResponseHeaderLayer::if_not_present(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("no-cache"),
+                )),
         );
 
     #[cfg(feature = "editor")]
@@ -136,6 +145,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/editor/entities/templates/{template_id}",
             put(editor_api::save_entity_template).delete(editor_api::delete_entity_template),
+        )
+        .route(
+            "/api/editor/items/catalog",
+            get(editor_api::get_item_catalog),
         )
         .route(
             "/api/editor/areas/{area_id}/tiles/{tile_coord}/entities",

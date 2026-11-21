@@ -16,6 +16,22 @@ export interface GamePopup {
   tone: 'cyan' | 'mint' | 'amber' | 'crimson';
 }
 
+export interface LootItemView {
+  itemId: string;
+  name: string;
+  description: string;
+  category: string;
+  count: number;
+  equipped: boolean;
+}
+
+export interface GameLootWindow {
+  entityId: number;
+  title: string;
+  description: string;
+  items: LootItemView[];
+}
+
 export interface GameStatus {
   phase: GamePhase;
   playerId: number | null;
@@ -25,6 +41,7 @@ export interface GameStatus {
   freshCryoWake: boolean;
   wakeReady: boolean;
   popup?: GamePopup | null;
+  loot?: GameLootWindow | null;
   error: string | null;
 }
 
@@ -102,6 +119,21 @@ export class EngineService implements OnDestroy {
 
   dismissPopup(): void {
     this.handle?.dismiss_game_popup();
+    this.refreshGameStatus();
+  }
+
+  takeLootItem(entityId: number, itemId: string): void {
+    this.handle?.loot_take_item(entityId, itemId);
+    this.refreshGameStatus();
+  }
+
+  takeAllLoot(entityId: number): void {
+    this.handle?.loot_take_all(entityId);
+    this.refreshGameStatus();
+  }
+
+  dismissLoot(): void {
+    this.handle?.dismiss_loot_window();
     this.refreshGameStatus();
   }
 

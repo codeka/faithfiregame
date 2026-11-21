@@ -4,6 +4,10 @@ import {
   EditorEngineService,
   EntityOverrides,
   EntityTemplate,
+  InventoryConfig,
+  ItemCatalog,
+  ItemDef,
+  LootableConfig,
   MovementConfig,
   PlacedEntity,
   PropertyValue,
@@ -30,13 +34,15 @@ function prettifySlug(slug: string): string {
     .join(' ');
 }
 
+export const POSE_CLIP_OPTIONS: readonly string[] = ['DeadSlumped', 'DeadSupine', 'DeadProne'];
+
 export function defaultVisualConfig(
   kind: 'character' | 'prop',
   defaultPresetId: string,
   defaultAssetId: string,
 ): VisualConfig {
   if (kind === 'character') {
-    return { character: { preset_id: defaultPresetId || 'cryo_prisoner' } };
+    return { character: { preset_id: defaultPresetId || 'cryo_prisoner', pose_clip: null } };
   }
   return {
     prop: {
@@ -59,6 +65,14 @@ export function defaultTriggerConfig(): TriggerConfig {
     activation: 'click',
     interaction_range: 2.5,
   };
+}
+
+export function defaultInventoryConfig(): InventoryConfig {
+  return { items: [] };
+}
+
+export function defaultLootableConfig(): LootableConfig {
+  return { title: null, description: null };
 }
 
 export type PropertyKind = 'Bool' | 'Int' | 'Float' | 'String';
@@ -91,7 +105,9 @@ export function isOverridesEmpty(ov: EntityOverrides): boolean {
     ov.visual === 'inherit' &&
     ov.movement === 'inherit' &&
     ov.trigger === 'inherit' &&
-    ov.script === 'inherit'
+    ov.script === 'inherit' &&
+    (ov.inventory ?? 'inherit') === 'inherit' &&
+    (ov.lootable ?? 'inherit') === 'inherit'
   );
 }
 
@@ -111,6 +127,8 @@ export interface ResolvedPlacedEntityView {
   movement: MovementConfig | null;
   trigger: TriggerConfig | null;
   script: ScriptConfig | null;
+  inventory: InventoryConfig | null;
+  lootable: LootableConfig | null;
 }
 
 export function resolvePlacedEntity(
@@ -135,6 +153,8 @@ export function resolvePlacedEntity(
     movement: resolveComponentOverride(placed.overrides.movement, template?.movement),
     trigger: resolveComponentOverride(placed.overrides.trigger, template?.trigger),
     script: resolveComponentOverride(placed.overrides.script, template?.script),
+    inventory: resolveComponentOverride(placed.overrides.inventory ?? 'inherit', template?.inventory),
+    lootable: resolveComponentOverride(placed.overrides.lootable ?? 'inherit', template?.lootable),
   };
 }
 
@@ -145,6 +165,7 @@ export class EntityEditorStateService {
   private readonly engine = inject(EditorEngineService);
 
   readonly templates = signal<EntityTemplate[]>([]);
+  readonly items = signal<ItemDef[]>([]);
   readonly activeTemplate = signal<EntityTemplate | null>(null);
   readonly dirty = signal<boolean>(false);
   readonly saveState = signal<string>('Saved');
@@ -163,11 +184,23 @@ export class EntityEditorStateService {
   });
 
   async initData(): Promise<void> {
-    await this.loadTemplates();
+    await Promise.all([this.loadTemplates(), this.loadItemCatalog()]);
     const list = this.templates();
     if (list.length > 0 && !this.activeTemplate()) {
       this.applyActiveTemplate(list[0], false);
       this.engine.setPlacementEntityTemplate(list[0].id);
+    }
+  }
+
+  async loadItemCatalog(): Promise<void> {
+    try {
+      const resp = await fetch('/api/editor/items/catalog', { cache: 'no-cache' });
+      if (resp.ok) {
+        const cat = (await resp.json()) as ItemCatalog;
+        this.items.set(cat.items ?? []);
+      }
+    } catch (e) {
+      console.error('Failed to load item catalog:', e);
     }
   }
 
@@ -193,6 +226,10 @@ export class EntityEditorStateService {
       movement: tpl.movement ? structuredClone(tpl.movement) : null,
       trigger: tpl.trigger ? structuredClone(tpl.trigger) : null,
       script: tpl.script ? structuredClone(tpl.script) : null,
+      inventory: tpl.inventory
+        ? { items: structuredClone(tpl.inventory.items ?? []) }
+        : null,
+      lootable: tpl.lootable ? structuredClone(tpl.lootable) : null,
     };
   }
 
@@ -232,6 +269,8 @@ export class EntityEditorStateService {
       movement: null,
       trigger: null,
       script: null,
+      inventory: null,
+      lootable: null,
     };
     const nextList = [...this.templates(), created];
     this.templates.set(nextList);
@@ -330,6 +369,14 @@ export class EntityEditorStateService {
 
   setScript(script: ScriptConfig | null): void {
     this.mutateActive((t) => ({ ...t, script }));
+  }
+
+  setInventory(inventory: InventoryConfig | null): void {
+    this.mutateActive((t) => ({ ...t, inventory }));
+  }
+
+  setLootable(lootable: LootableConfig | null): void {
+    this.mutateActive((t) => ({ ...t, lootable }));
   }
 
   openTemplateScriptModal(): void {

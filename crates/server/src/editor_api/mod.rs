@@ -11,8 +11,8 @@ pub use characters::{
     save_character_catalog, save_character_preset, upload_character_asset,
 };
 pub use entities::{
-    delete_entity_template, get_inside_area_entities, get_outside_tile_entities,
-    list_entity_templates, save_entity_template, save_inside_area_entities,
-    save_outside_tile_entities,
+    delete_entity_template, get_inside_area_entities, get_item_catalog,
+    get_outside_tile_entities, list_entity_templates, save_entity_template,
+    save_inside_area_entities, save_outside_tile_entities,
 };
 pub use save::{save_inside_area, save_outside_tile};

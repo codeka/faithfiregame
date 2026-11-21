@@ -28,8 +28,8 @@ use crate::render::{
 
 use super::cursor::resolve_game_cursor;
 use super::state::{
-    ClientEntityRenderState, ClientEntityVisualState, ClientPopupMessage, GameClientState,
-    GameInsideState, GamePhase, GameTileState,
+    ClientEntityRenderState, ClientEntityVisualState, ClientLootItemView, ClientLootWindow,
+    ClientPopupMessage, GameClientState, GameInsideState, GamePhase, GameTileState,
 };
 
 impl GameClientState {
@@ -116,6 +116,8 @@ impl GameClientState {
                     self.area_enter_elapsed_s = 0.0;
                     self.move_target_marker = None;
                     self.active_popup = None;
+                    self.active_loot = None;
+                    self.loot_action_pending = false;
                     self.phase = GamePhase::LoadingArea;
 
                     self.ensure_entity_visual_requested(&area_id, &visual);
@@ -237,6 +239,34 @@ impl GameClientState {
                         body,
                         tone: tone_str,
                     });
+                }
+                ServerMessage::LootWindow {
+                    entity_id,
+                    title,
+                    description,
+                    items,
+                } => {
+                    if items.is_empty() && self.loot_action_pending {
+                        self.active_loot = None;
+                    } else {
+                        self.active_loot = Some(ClientLootWindow {
+                            entity_id: entity_id.raw(),
+                            title,
+                            description,
+                            items: items
+                                .into_iter()
+                                .map(|i| ClientLootItemView {
+                                    item_id: i.item_id,
+                                    name: i.name,
+                                    description: i.description,
+                                    category: i.category,
+                                    count: i.count,
+                                    equipped: i.equipped,
+                                })
+                                .collect(),
+                        });
+                    }
+                    self.loot_action_pending = false;
                 }
                 ServerMessage::Pong(_) => {}
             }
@@ -520,6 +550,8 @@ impl GameClientState {
             if let Some(target_id) = clicked_entity {
                 self.hover_walkable = None;
                 if input.left_just_pressed {
+                    self.active_loot = None;
+                    self.loot_action_pending = false;
                     if let Some(net) = net {
                         net.send(&shared::protocol::ClientMessage::Interact {
                             entity_id: target_id,
@@ -530,6 +562,8 @@ impl GameClientState {
             } else {
                 self.hover_walkable = terrain_hit.and_then(|p| self.is_point_walkable(p.x, p.z));
                 if input.left_just_pressed {
+                    self.active_loot = None;
+                    self.loot_action_pending = false;
                     if let Some(hit_pos) = terrain_hit {
                         if let Some(net) = net {
                             net.send(&shared::protocol::ClientMessage::MoveTo {
@@ -673,24 +707,29 @@ impl GameClientState {
             true
         };
 
-        let char_ready = self.local_entity().is_some_and(|e| match &e.visual {
-            Some(ClientEntityVisualState::Character { appearance, .. }) => {
-                let Some(catalog) = &self.character_catalog else {
-                    return false;
-                };
-                let Some(skel) = catalog.skeletons.get(appearance.skeleton_idx as usize) else {
-                    return false;
-                };
-                self.rigs.contains_key(&skel.rig_path)
-                    && (!skel.render_base_mesh
-                        || !appearance.show_base_mesh
-                        || self.base_meshes.contains_key(&skel.rig_path))
-            }
-            Some(ClientEntityVisualState::Prop { asset_id, .. }) => {
-                self.prop_meshes.contains_key(asset_id)
-            }
-            None => true,
-        });
+        let char_ready = self.local_entity().is_some()
+            && self.entities.values().all(|e| match &e.visual {
+                Some(ClientEntityVisualState::Character { appearance, .. }) => {
+                    let Some(catalog) = &self.character_catalog else {
+                        return false;
+                    };
+                    let Some(skel) = catalog.skeletons.get(appearance.skeleton_idx as usize) else {
+                        return false;
+                    };
+                    self.rigs.contains_key(&skel.rig_path)
+                        && (!skel.render_base_mesh
+                            || !appearance.show_base_mesh
+                            || self.base_meshes.contains_key(&skel.rig_path))
+                        && skel
+                            .animation_paths
+                            .iter()
+                            .all(|anim_path| self.extra_anims.contains_key(anim_path))
+                }
+                Some(ClientEntityVisualState::Prop { asset_id, .. }) => {
+                    self.prop_meshes.contains_key(asset_id)
+                }
+                None => true,
+            });
 
         props_ready && char_ready
     }
@@ -745,6 +784,18 @@ impl GameClientState {
             let Some(rig) = self.rigs.get(&skel.rig_path) else {
                 continue;
             };
+
+            if let Some(pose_clip) = appearance
+                .pose_clip
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if let Some(clip) = find_clip(rig, skel, &self.extra_anims, pose_clip) {
+                    evaluate_pose(rig, Some(clip), clip.duration, false, pose);
+                }
+                continue;
+            }
 
             let preferred = if is_moving { "Walk" } else { "Idle" };
             let clip = find_clip(rig, skel, &self.extra_anims, preferred)

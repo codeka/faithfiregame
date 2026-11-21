@@ -666,8 +666,6 @@ mod tests {
             "cryo_rack_bay",
             "hero_cryo_pod",
             "cage_elevator",
-            "fallen_guard",
-            "fallen_prisoner",
             "emergency_locker",
             "cave_wall_seg",
             "cave_pipes",

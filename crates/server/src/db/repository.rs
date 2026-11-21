@@ -1,4 +1,5 @@
 use shared::character::CharacterDefinition;
+use shared::entity::InventoryConfig;
 
 #[derive(Debug, Clone)]
 pub struct CharacterSaveRecord {
@@ -7,6 +8,7 @@ pub struct CharacterSaveRecord {
     pub pos: [f32; 3],
     pub yaw: f32,
     pub appearance: CharacterDefinition,
+    pub inventory: InventoryConfig,
 }
 
 pub trait Storage: Send + Sync {

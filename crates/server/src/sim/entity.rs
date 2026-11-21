@@ -1,10 +1,12 @@
 use shared::character::CharacterDefinition;
-use shared::entity::{EntityCapabilities, EntityId, PropertyBag, PropertyValue};
+use shared::entity::{
+    EntityCapabilities, EntityId, InventoryConfig, PropertyBag, PropertyValue, TriggerConfig,
+};
 use shared::protocol::EntitySnapshot;
 
 use super::components::{
-    EntityLocation, MovementComponent, PlayerComponent, ScriptComponent, SpawnOrigin,
-    TransformComponent, TriggerComponent, VisualComponent,
+    EntityLocation, InventoryComponent, LootableComponent, MovementComponent, PlayerComponent,
+    ScriptComponent, SpawnOrigin, TransformComponent, TriggerComponent, VisualComponent,
 };
 
 /// Composable simulation entity composed of spatial state, properties, and optional components.
@@ -21,6 +23,8 @@ pub struct Entity {
     pub movement: Option<MovementComponent>,
     pub trigger: Option<TriggerComponent>,
     pub script: Option<ScriptComponent>,
+    pub inventory: Option<InventoryComponent>,
+    pub lootable: Option<LootableComponent>,
     pub player: Option<PlayerComponent>,
 }
 
@@ -38,6 +42,8 @@ impl Entity {
             movement: None,
             trigger: None,
             script: None,
+            inventory: None,
+            lootable: None,
             player: None,
         }
     }
@@ -86,9 +92,28 @@ impl Entity {
         self
     }
 
+    pub fn with_inventory(mut self, inventory: InventoryComponent) -> Self {
+        self.inventory = Some(inventory);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_lootable(mut self, lootable: LootableComponent) -> Self {
+        self.lootable = Some(lootable);
+        self
+    }
+
     pub fn with_player(mut self, player: PlayerComponent) -> Self {
         self.player = Some(player);
         self
+    }
+
+    pub fn effective_click_trigger(&self) -> Option<TriggerConfig> {
+        self.trigger
+            .as_ref()
+            .filter(|t| t.config.activation.allows_click())
+            .map(|t| t.config.clone())
+            .or_else(|| self.lootable.as_ref().map(|_| TriggerConfig::default()))
     }
 
     pub fn capabilities(&self) -> EntityCapabilities {
@@ -108,6 +133,10 @@ impl Entity {
         if self.script.is_some() {
             caps.insert(EntityCapabilities::SCRIPTED);
         }
+        if self.lootable.is_some() {
+            caps.insert(EntityCapabilities::LOOTABLE);
+            caps.insert(EntityCapabilities::INTERACTABLE);
+        }
         caps
     }
 
@@ -117,11 +146,8 @@ impl Entity {
     }
 
     pub fn to_snapshot(&self) -> Option<EntitySnapshot> {
-        let has_clickable_trigger = self
-            .trigger
-            .as_ref()
-            .is_some_and(|t| t.config.activation.allows_click());
-        if self.visual.is_none() && !has_clickable_trigger {
+        let click_trigger = self.effective_click_trigger();
+        if self.visual.is_none() && click_trigger.is_none() {
             return None;
         }
         Some(EntitySnapshot {
@@ -132,7 +158,7 @@ impl Entity {
             moving: self.is_moving(),
             capabilities: self.capabilities(),
             visual: self.visual.as_ref().map(|v| v.to_wire()),
-            trigger: self.trigger.as_ref().map(|t| t.config.clone()),
+            trigger: click_trigger.or_else(|| self.trigger.as_ref().map(|t| t.config.clone())),
         })
     }
 }
@@ -147,4 +173,5 @@ pub struct RemovedPlayer {
     pub pos: [f32; 3],
     pub yaw: f32,
     pub appearance_def: CharacterDefinition,
+    pub inventory: InventoryConfig,
 }

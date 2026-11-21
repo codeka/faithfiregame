@@ -214,6 +214,39 @@ impl EngineHandle {
         self.inner.borrow_mut().game.active_popup = None;
     }
 
+    pub fn dismiss_loot_window(&self) {
+        let mut st = self.inner.borrow_mut();
+        st.game.active_loot = None;
+        st.game.loot_action_pending = false;
+    }
+
+    pub fn loot_take_item(&self, entity_id: f64, item_id: &str) {
+        if !entity_id.is_finite() || entity_id < 0.0 || item_id.trim().is_empty() {
+            return;
+        }
+        let mut st = self.inner.borrow_mut();
+        st.game.loot_action_pending = true;
+        if let Some(net) = &st.net {
+            net.send(&shared::protocol::ClientMessage::LootTake {
+                entity_id: shared::entity::EntityId::new(entity_id as u64),
+                item_id: item_id.to_owned(),
+            });
+        }
+    }
+
+    pub fn loot_take_all(&self, entity_id: f64) {
+        if !entity_id.is_finite() || entity_id < 0.0 {
+            return;
+        }
+        let mut st = self.inner.borrow_mut();
+        st.game.loot_action_pending = true;
+        if let Some(net) = &st.net {
+            net.send(&shared::protocol::ClientMessage::LootTakeAll {
+                entity_id: shared::entity::EntityId::new(entity_id as u64),
+            });
+        }
+    }
+
     pub fn get_game_status_json(&self) -> String {
         let st = self.inner.borrow();
         serde_json::to_string(&st.game.status_snapshot()).unwrap_or_else(|_| "{}".to_owned())

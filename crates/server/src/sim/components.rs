@@ -1,7 +1,10 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use shared::character::{CharacterDefinition, CompactCharacterAppearance};
-use shared::entity::{EntityId, EntityVisual, ScriptConfig, TriggerConfig};
+use shared::entity::{
+    EntityId, EntityVisual, InventoryConfig, InventoryEntry, LootableConfig, ScriptConfig,
+    TriggerConfig,
+};
 use shared::protocol::ServerMessage;
 use tokio::sync::mpsc;
 
@@ -102,6 +105,7 @@ pub enum VisualComponent {
     Character {
         definition: CharacterDefinition,
         compact: CompactCharacterAppearance,
+        pose_clip: Option<String>,
     },
     Prop {
         asset_id: String,
@@ -176,6 +180,97 @@ pub struct ScriptComponent {
 
 impl ScriptComponent {
     pub fn new(config: ScriptConfig) -> Self {
+        Self { config }
+    }
+}
+
+/// Authoritative item storage attached to players, NPCs, corpses, and containers.
+#[derive(Debug, Clone, Default)]
+pub struct InventoryComponent {
+    pub items: Vec<InventoryEntry>,
+}
+
+impl InventoryComponent {
+    pub fn from_config(cfg: &InventoryConfig) -> Self {
+        let items = cfg
+            .items
+            .iter()
+            .filter(|e| !e.item_id.trim().is_empty() && e.count > 0)
+            .cloned()
+            .collect();
+        Self { items }
+    }
+
+    pub fn to_config(&self) -> InventoryConfig {
+        InventoryConfig {
+            items: self
+                .items
+                .iter()
+                .filter(|e| e.count > 0)
+                .cloned()
+                .collect(),
+        }
+    }
+
+    pub fn take_item(&mut self, item_id: &str) -> Option<InventoryEntry> {
+        let pos = self
+            .items
+            .iter()
+            .position(|e| e.item_id == item_id && e.count > 0)?;
+        Some(self.items.remove(pos))
+    }
+
+    pub fn take_all(&mut self) -> Vec<InventoryEntry> {
+        self.items.drain(..).filter(|e| e.count > 0).collect()
+    }
+
+    pub fn give_item(&mut self, item_id: &str, count: u32, max_stack: u32, equip_now: bool) {
+        if count == 0 || item_id.trim().is_empty() {
+            return;
+        }
+        let stack_cap = max_stack.max(1);
+        let mut remaining = count;
+        if equip_now {
+            self.items.push(InventoryEntry {
+                item_id: item_id.to_owned(),
+                count: 1,
+                equipped: true,
+            });
+            remaining -= 1;
+        }
+        if remaining == 0 {
+            return;
+        }
+        for existing in &mut self.items {
+            if !existing.equipped && existing.item_id == item_id && existing.count < stack_cap {
+                let add = remaining.min(stack_cap - existing.count);
+                existing.count += add;
+                remaining -= add;
+                if remaining == 0 {
+                    return;
+                }
+            }
+        }
+        while remaining > 0 {
+            let chunk = remaining.min(stack_cap);
+            self.items.push(InventoryEntry {
+                item_id: item_id.to_owned(),
+                count: chunk,
+                equipped: false,
+            });
+            remaining -= chunk;
+        }
+    }
+}
+
+/// Click-to-loot behavior opening an interactive dialog over the entity's inventory.
+#[derive(Debug, Clone, Default)]
+pub struct LootableComponent {
+    pub config: LootableConfig,
+}
+
+impl LootableComponent {
+    pub fn new(config: LootableConfig) -> Self {
         Self { config }
     }
 }

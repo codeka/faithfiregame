@@ -33,7 +33,7 @@ pub struct EditorState {
     pub entity_studio: EntityStudioState,
     pub entity_templates: HashMap<String, EntityTemplate>,
     pub character_presets: HashMap<String, CharacterDefinition>,
-    pub entity_poses: HashMap<String, SkeletonPose>,
+    pub entity_poses: HashMap<(String, Option<String>), SkeletonPose>,
     pub entity_anim_time: f32,
 
     pub active_area: AreaMetadata,
@@ -414,7 +414,7 @@ impl EditorState {
 
     fn queue_assets_for_visual(&mut self, cfg: &VisualConfig) {
         match cfg {
-            VisualConfig::Character { preset_id } => {
+            VisualConfig::Character { preset_id, .. } => {
                 if let Some(def) = self.character_presets.get(preset_id).cloned() {
                     self.character_studio.queue_glbs_for_definition(&def);
                 }
@@ -676,15 +676,82 @@ impl EditorState {
             return;
         }
         self.entity_anim_time += dt;
+        let mut needed_pose_keys: HashMap<(String, Option<String>), CharacterDefinition> =
+            HashMap::new();
         for def in self.character_presets.values() {
-            if !self.entity_poses.contains_key(&def.skeleton_id) {
-                self.entity_poses
-                    .insert(def.skeleton_id.clone(), SkeletonPose::default());
+            needed_pose_keys
+                .entry((def.skeleton_id.clone(), None))
+                .or_insert_with(|| def.clone());
+        }
+        for tpl in self.entity_templates.values() {
+            if let Some(VisualConfig::Character {
+                preset_id,
+                pose_clip,
+            }) = &tpl.visual
+            {
+                if let Some(def) = self.character_presets.get(preset_id) {
+                    let norm_pose = pose_clip
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(ToOwned::to_owned);
+                    needed_pose_keys
+                        .entry((def.skeleton_id.clone(), norm_pose))
+                        .or_insert_with(|| def.clone());
+                }
             }
-            if let Some(pose) = self.entity_poses.get_mut(&def.skeleton_id) {
-                self.character_studio
-                    .evaluate_idle_pose(def, self.entity_anim_time, pose);
+        }
+        if self.active_area.kind == AreaKind::Outside {
+            for tile in self.outside_tiles.values() {
+                for placed in &tile.entities {
+                    let res = placed.resolve(self.entity_templates.get(&placed.template_id));
+                    if let Some(VisualConfig::Character {
+                        preset_id,
+                        pose_clip,
+                    }) = &res.visual
+                    {
+                        if let Some(def) = self.character_presets.get(preset_id) {
+                            let norm_pose = pose_clip
+                                .as_deref()
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                                .map(ToOwned::to_owned);
+                            needed_pose_keys
+                                .entry((def.skeleton_id.clone(), norm_pose))
+                                .or_insert_with(|| def.clone());
+                        }
+                    }
+                }
             }
+        } else if let Some(inside) = &self.inside_area {
+            for placed in &inside.entities {
+                let res = placed.resolve(self.entity_templates.get(&placed.template_id));
+                if let Some(VisualConfig::Character {
+                    preset_id,
+                    pose_clip,
+                }) = &res.visual
+                {
+                    if let Some(def) = self.character_presets.get(preset_id) {
+                        let norm_pose = pose_clip
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(ToOwned::to_owned);
+                        needed_pose_keys
+                            .entry((def.skeleton_id.clone(), norm_pose))
+                            .or_insert_with(|| def.clone());
+                    }
+                }
+            }
+        }
+        for (key, def) in needed_pose_keys {
+            let pose = self.entity_poses.entry(key.clone()).or_default();
+            self.character_studio.evaluate_pose_or_idle(
+                &def,
+                key.1.as_deref(),
+                self.entity_anim_time,
+                pose,
+            );
         }
 
         // 1. Stream visible tiles around editor camera target

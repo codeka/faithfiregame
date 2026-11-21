@@ -46,6 +46,26 @@ pub struct ClientPopupMessage {
     pub tone: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientLootItemView {
+    pub item_id: String,
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    pub count: u32,
+    pub equipped: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientLootWindow {
+    pub entity_id: u64,
+    pub title: String,
+    pub description: String,
+    pub items: Vec<ClientLootItemView>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameStatusSnapshot {
@@ -57,6 +77,7 @@ pub struct GameStatusSnapshot {
     pub fresh_cryo_wake: bool,
     pub wake_ready: bool,
     pub popup: Option<ClientPopupMessage>,
+    pub loot: Option<ClientLootWindow>,
     pub error: Option<String>,
 }
 
@@ -135,6 +156,8 @@ pub struct GameClientState {
     pub hover_walkable: Option<bool>,
     pub applied_cursor: &'static str,
     pub active_popup: Option<ClientPopupMessage>,
+    pub active_loot: Option<ClientLootWindow>,
+    pub loot_action_pending: bool,
     pub next_popup_id: u64,
 
     pub pending_tile_fetches: Vec<(String, i32, i32)>,
@@ -178,6 +201,8 @@ impl GameClientState {
             hover_walkable: None,
             applied_cursor: "",
             active_popup: None,
+            active_loot: None,
+            loot_action_pending: false,
             next_popup_id: 0,
             pending_tile_fetches: Vec::new(),
             pending_inside_fetch: None,
@@ -254,6 +279,8 @@ impl GameClientState {
         self.hover_walkable = None;
         self.applied_cursor = "";
         self.active_popup = None;
+        self.active_loot = None;
+        self.loot_action_pending = false;
         self.pending_tile_fetches.clear();
         self.pending_inside_fetch = None;
         self.pending_asset_fetches.clear();
@@ -279,6 +306,7 @@ impl GameClientState {
             fresh_cryo_wake: self.fresh_cryo_wake,
             wake_ready: self.wake_ready,
             popup: self.active_popup.clone(),
+            loot: self.active_loot.clone(),
             error,
         }
     }

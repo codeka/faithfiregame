@@ -23,6 +23,15 @@ pub enum SimCommand {
         actor_id: EntityId,
         target_id: EntityId,
     },
+    LootTake {
+        actor_id: EntityId,
+        target_id: EntityId,
+        item_id: String,
+    },
+    LootTakeAll {
+        actor_id: EntityId,
+        target_id: EntityId,
+    },
     StopMovement {
         entity_id: EntityId,
     },
