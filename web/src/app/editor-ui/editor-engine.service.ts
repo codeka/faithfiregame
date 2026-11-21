@@ -202,6 +202,11 @@ export interface MovementConfig {
   speed: number;
 }
 
+export interface ScriptConfig {
+  source: string;
+  compiled_js: string;
+}
+
 export type PropertyValue =
   | { Bool: boolean }
   | { Int: number }
@@ -215,6 +220,7 @@ export interface EntityTemplate {
   visual: VisualConfig | null;
   movement: MovementConfig | null;
   trigger: TriggerConfig | null;
+  script: ScriptConfig | null;
 }
 
 export type ComponentOverride<T> = 'inherit' | { set: T } | 'remove';
@@ -226,6 +232,7 @@ export interface EntityOverrides {
   visual: ComponentOverride<VisualConfig>;
   movement: ComponentOverride<MovementConfig>;
   trigger: ComponentOverride<TriggerConfig>;
+  script: ComponentOverride<ScriptConfig>;
 }
 
 export interface PlacedEntity {

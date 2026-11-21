@@ -15,6 +15,20 @@ fn is_typing_in_form(target: Option<web_sys::EventTarget>) -> bool {
     let Ok(el) = t.dyn_into::<Element>() else {
         return false;
     };
+    if el
+        .get_attribute("contenteditable")
+        .is_some_and(|v| !v.eq_ignore_ascii_case("false"))
+        || el
+            .get_attribute("role")
+            .is_some_and(|r| r.eq_ignore_ascii_case("textbox"))
+        || el
+            .closest(".monaco-editor, .script-modal-backdrop")
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        return true;
+    }
     let tag = el.tag_name();
     match tag.as_str() {
         "TEXTAREA" | "SELECT" => true,

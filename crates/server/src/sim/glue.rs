@@ -1,4 +1,5 @@
 use shared::entity::{EntityId, PropertyValue};
+use shared::protocol::PopupTone;
 
 use super::components::EntityLocation;
 
@@ -36,6 +37,22 @@ pub enum SimCommand {
         key: String,
         value: PropertyValue,
     },
+    RemoveProperty {
+        entity_id: EntityId,
+        key: String,
+    },
+    TransferToArea {
+        entity_id: EntityId,
+        area_id: String,
+        pos: [f32; 3],
+        yaw: Option<f32>,
+    },
+    ShowPopup {
+        player_entity_id: EntityId,
+        title: String,
+        body: String,
+        tone: PopupTone,
+    },
     Despawn {
         entity_id: EntityId,
     },
@@ -64,5 +81,9 @@ pub enum SimEvent {
         trigger_entity_id: EntityId,
         actor_entity_id: EntityId,
         way: TriggerWay,
+    },
+    ScriptError {
+        entity_id: EntityId,
+        message: String,
     },
 }

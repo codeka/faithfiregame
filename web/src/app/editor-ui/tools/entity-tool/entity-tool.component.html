@@ -517,6 +517,40 @@
             </button>
           }
         </div>
+
+        <!-- Script Component Override -->
+        <div class="comp-card">
+          <div class="section-head">
+            <span class="comp-title">Script</span>
+            <div class="override-meta">
+              <span class="badge" [class.overridden]="sel.overrides.script !== 'inherit'">
+                {{ overrideStatusLabel(sel.overrides.script, !!linkedTemplate()?.script) }}
+              </span>
+              @if (sel.overrides.script !== 'inherit') {
+                <button
+                  type="button"
+                  class="btn btn-sm btn-mini reset-script-btn"
+                  (click)="setScriptOverride('inherit')"
+                >
+                  Reset
+                </button>
+              }
+            </div>
+          </div>
+          @if (res.script; as scr) {
+            <pre class="script-preview">{{ scriptPreview(scr.source) }}</pre>
+            <button type="button" class="btn btn-sm edit-inst-script-btn" (click)="openScriptEditor()">
+              Edit Script…
+            </button>
+            <button type="button" class="btn btn-sm btn-danger remove-script-btn" (click)="removeScript()">
+              Remove Script
+            </button>
+          } @else {
+            <button type="button" class="btn btn-sm add-inst-script-btn" (click)="addOrRestoreScript()">
+              {{ sel.overrides.script === 'remove' ? 'Restore Template Script' : '+ Add Script' }}
+            </button>
+          }
+        </div>
       </div>
     }
   } @else {

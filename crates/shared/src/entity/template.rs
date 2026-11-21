@@ -32,6 +32,35 @@ impl Default for MovementConfig {
     }
 }
 
+/// Authored TypeScript trigger script and compiled JS payload on an entity template or override.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScriptConfig {
+    pub source: String,
+    #[serde(default)]
+    pub compiled_js: String,
+}
+
+impl ScriptConfig {
+    pub fn effective_js(&self) -> &str {
+        if self.compiled_js.trim().is_empty() {
+            &self.source
+        } else {
+            &self.compiled_js
+        }
+    }
+}
+
+impl Default for ScriptConfig {
+    fn default() -> Self {
+        let source = "function onTrigger(ctx: TriggerContext): void {\n  ctx.showPopup(ctx.entity.name, `Triggered via ${ctx.way}!`);\n}\n".to_owned();
+        let compiled_js = "function onTrigger(ctx) {\n  ctx.showPopup(ctx.entity.name, `Triggered via ${ctx.way}!`);\n}\n".to_owned();
+        Self {
+            source,
+            compiled_js,
+        }
+    }
+}
+
 /// Reusable entity archetype authored in Entity Templates mode and saved as JSON.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EntityTemplate {
@@ -45,6 +74,8 @@ pub struct EntityTemplate {
     pub movement: Option<MovementConfig>,
     #[serde(default)]
     pub trigger: Option<TriggerConfig>,
+    #[serde(default)]
+    pub script: Option<ScriptConfig>,
 }
 
 /// Per-instance override state for an optional component derived from an [`EntityTemplate`].
@@ -82,6 +113,8 @@ pub struct EntityOverrides {
     pub movement: ComponentOverride<MovementConfig>,
     #[serde(default)]
     pub trigger: ComponentOverride<TriggerConfig>,
+    #[serde(default)]
+    pub script: ComponentOverride<ScriptConfig>,
 }
 
 impl EntityOverrides {
@@ -92,6 +125,7 @@ impl EntityOverrides {
             && matches!(self.visual, ComponentOverride::Inherit)
             && matches!(self.movement, ComponentOverride::Inherit)
             && matches!(self.trigger, ComponentOverride::Inherit)
+            && matches!(self.script, ComponentOverride::Inherit)
     }
 }
 
@@ -114,6 +148,7 @@ pub struct ResolvedEntityData {
     pub visual: Option<VisualConfig>,
     pub movement: Option<MovementConfig>,
     pub trigger: Option<TriggerConfig>,
+    pub script: Option<ScriptConfig>,
 }
 
 impl PlacedEntity {
@@ -148,6 +183,11 @@ impl PlacedEntity {
             .trigger
             .resolve(template.and_then(|t| t.trigger.as_ref()))
             .cloned();
+        let script = self
+            .overrides
+            .script
+            .resolve(template.and_then(|t| t.script.as_ref()))
+            .cloned();
 
         ResolvedEntityData {
             name,
@@ -155,6 +195,7 @@ impl PlacedEntity {
             visual,
             movement,
             trigger,
+            script,
         }
     }
 }
@@ -185,12 +226,14 @@ mod tests {
                 activation: TriggerActivation::Click,
                 interaction_range: 2.5,
             }),
+            script: Some(ScriptConfig::default()),
         }
     }
 
     #[test]
     fn placed_entity_inherits_template_edits_and_applies_overrides() {
         let mut tpl = sample_template();
+        assert!(tpl.script.as_ref().unwrap().effective_js().contains("ctx.showPopup"));
 
         let mut placed = PlacedEntity {
             id: 7,
@@ -239,6 +282,17 @@ mod tests {
         assert_eq!(r2.movement, None);
         assert!(matches!(r2.visual, Some(VisualConfig::Prop { .. })));
         assert_eq!(r2.trigger, tpl.trigger);
+        assert_eq!(r2.script, tpl.script);
+
+        placed.overrides.script = ComponentOverride::Set(ScriptConfig {
+            source: "function onTrigger(ctx: TriggerContext) {}".to_owned(),
+            compiled_js: String::new(),
+        });
+        let r3 = placed.resolve(Some(&tpl));
+        assert_eq!(
+            r3.script.as_ref().map(|s| s.effective_js()),
+            Some("function onTrigger(ctx: TriggerContext) {}")
+        );
 
         // Postcard roundtrip for template and placed entity.
         let tpl_bytes = postcard::to_allocvec(&tpl).unwrap();

@@ -44,6 +44,23 @@
     [playerPos]="status.playerPos" />
 
     <app-hud-system-bar class="hud-slot-top-right" [showEditor]="engine.editorBuild()" (leave)="onLeave()" />
+
+    @if (status.popup; as popup) {
+    <div class="hud-popup-backdrop" role="dialog" aria-modal="true" aria-labelledby="hud-popup-title">
+      <app-hud-frame class="hud-popup-frame" variant="console" [tone]="popup.tone" [topFlare]="true" [topDots]="true"
+        [bottomDots]="true">
+        <div class="hud-popup-body-wrap">
+          <h2 id="hud-popup-title" class="hud-popup-title">{{ popup.title }}</h2>
+          <p class="hud-popup-body">{{ popup.body }}</p>
+          <div class="hud-popup-actions">
+            <button type="button" appHudButton [tone]="popup.tone" (click)="engine.dismissPopup()">
+              Acknowledge
+            </button>
+          </div>
+        </div>
+      </app-hud-frame>
+    </div>
+    }
   </div>
   }
   }

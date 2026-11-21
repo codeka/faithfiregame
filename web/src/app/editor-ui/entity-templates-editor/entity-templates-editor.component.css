@@ -160,3 +160,18 @@
 .field-row.disabled {
   opacity: 0.45;
 }
+
+.script-preview {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #0d131c;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #cbd5e0;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  max-height: 76px;
+  overflow: hidden;
+}

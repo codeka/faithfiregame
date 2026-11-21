@@ -37,6 +37,15 @@ impl GamePhase {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientPopupMessage {
+    pub id: u64,
+    pub title: String,
+    pub body: String,
+    pub tone: &'static str,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameStatusSnapshot {
@@ -47,6 +56,7 @@ pub struct GameStatusSnapshot {
     pub player_pos: Option<[f32; 3]>,
     pub fresh_cryo_wake: bool,
     pub wake_ready: bool,
+    pub popup: Option<ClientPopupMessage>,
     pub error: Option<String>,
 }
 
@@ -124,6 +134,8 @@ pub struct GameClientState {
     pub move_target_marker: Option<Vec3>,
     pub hover_walkable: Option<bool>,
     pub applied_cursor: &'static str,
+    pub active_popup: Option<ClientPopupMessage>,
+    pub next_popup_id: u64,
 
     pub pending_tile_fetches: Vec<(String, i32, i32)>,
     pub pending_inside_fetch: Option<String>,
@@ -165,6 +177,8 @@ impl GameClientState {
             move_target_marker: None,
             hover_walkable: None,
             applied_cursor: "",
+            active_popup: None,
+            next_popup_id: 0,
             pending_tile_fetches: Vec::new(),
             pending_inside_fetch: None,
             pending_asset_fetches: Vec::new(),
@@ -239,6 +253,7 @@ impl GameClientState {
         self.move_target_marker = None;
         self.hover_walkable = None;
         self.applied_cursor = "";
+        self.active_popup = None;
         self.pending_tile_fetches.clear();
         self.pending_inside_fetch = None;
         self.pending_asset_fetches.clear();
@@ -263,6 +278,7 @@ impl GameClientState {
             player_pos,
             fresh_cryo_wake: self.fresh_cryo_wake,
             wake_ready: self.wake_ready,
+            popup: self.active_popup.clone(),
             error,
         }
     }

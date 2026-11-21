@@ -300,6 +300,7 @@ mod tests {
             visual: None,
             movement: Some(MovementConfig { speed: 2.0 }),
             trigger: Some(TriggerConfig::default()),
+            script: None,
         };
 
         let Json(saved_tpl) = save_entity_template(

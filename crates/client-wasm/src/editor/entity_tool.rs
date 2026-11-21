@@ -548,6 +548,7 @@ mod tests {
             visual: None,
             movement: None,
             trigger: Some(TriggerConfig::default()),
+            script: None,
         }
     }
 

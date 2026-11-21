@@ -6,6 +6,7 @@ import { EditorEngineService } from './editor-engine.service';
 import { EditorStateService } from './editor-state.service';
 import { EntityEditorStateService } from './entity-editor-state.service';
 import { EntityTemplatesEditorComponent } from './entity-templates-editor/entity-templates-editor.component';
+import { ScriptEditorModalComponent } from './script-editor-modal/script-editor-modal.component';
 import { EditorToolbarComponent } from './toolbar/editor-toolbar.component';
 import { ENTITY_SUBMODES, EntityToolComponent } from './tools/entity-tool/entity-tool.component';
 import {
@@ -57,6 +58,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
     CreateAreaModalComponent,
     CharactersEditorComponent,
     EntityTemplatesEditorComponent,
+    ScriptEditorModalComponent,
   ],
   providers: [EditorStateService, CharacterEditorStateService, EntityEditorStateService],
   templateUrl: './editor-ui.component.html',
@@ -86,7 +88,7 @@ export class EditorUiComponent implements OnInit {
     if ((this.engine.status()?.editorMode ?? 'world') !== 'world') {
       return;
     }
-    if (this.state.showNewAreaModal() || isEditableTarget(ev.target)) {
+    if (this.state.showNewAreaModal() || this.entityState.scriptModalTarget() !== null || isEditableTarget(ev.target)) {
       return;
     }
     if (ev.key < '1' || ev.key > '9') {

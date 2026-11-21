@@ -8,16 +8,17 @@ use shared::pathfinding::{WalkGrid, find_path, smooth_path};
 use shared::protocol::{EntitySnapshot, ServerMessage};
 use shared::world::{AreaKind, AreaMetadata, InsideKind, InsideSimData, TILE_SIZE, TileSimData};
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::db::CharacterSaveRecord;
 
 use super::components::{
     CRYO_PRISON_AREA_ID, EntityLocation, InsideInstanceId, MovementComponent, PlayerComponent,
-    SpawnOrigin, TriggerComponent, VisualComponent, inside_instance_for,
+    ScriptComponent, SpawnOrigin, TriggerComponent, VisualComponent, inside_instance_for,
 };
 use super::entity::{Entity, RemovedPlayer};
 use super::glue::{SimCommand, SimEvent, TriggerWay};
+use super::scripting::{ScriptTriggerInput, execute_trigger_script};
 
 /// Configurable Outside simulation radius around each online player (`1` = `3×3` tiles = 9 tiles).
 pub const OUTSIDE_SIM_RADIUS: i32 = 1;
@@ -343,6 +344,7 @@ impl SimWorld {
                 trig.config = cfg;
                 trig
             });
+            entity.script = resolved.script.map(ScriptComponent::new);
         }
     }
 
@@ -457,6 +459,9 @@ impl SimWorld {
         }
         if let Some(trig) = resolved.trigger {
             entity.trigger = Some(TriggerComponent::new(trig));
+        }
+        if let Some(script) = resolved.script {
+            entity.script = Some(ScriptComponent::new(script));
         }
         self.spawn_entity(entity)
     }
@@ -734,6 +739,54 @@ impl SimWorld {
             actor_entity_id: actor_id,
             way: TriggerWay::Click,
         });
+        self.run_trigger_script(target_id, actor_id, TriggerWay::Click);
+    }
+
+    fn run_trigger_script(&mut self, trigger_id: EntityId, actor_id: EntityId, way: TriggerWay) {
+        let Some((js_source, input)) = (|| {
+            let trig_ent = self.entities.get(&trigger_id)?;
+            let script = trig_ent.script.as_ref()?;
+            let actor = self.entities.get(&actor_id)?;
+            let js_source = script.config.effective_js().to_owned();
+            let input = ScriptTriggerInput {
+                trigger_entity_id: trigger_id,
+                trigger_entity_name: trig_ent.name.clone().unwrap_or_else(|| format!("Entity {trigger_id}")),
+                trigger_pos: trig_ent.transform.pos,
+                trigger_props: trig_ent.properties.clone(),
+                actor_entity_id: actor_id,
+                actor_pos: actor.transform.pos,
+                actor_props: actor.properties.clone(),
+                actor_is_player: actor.player.is_some(),
+                area_id: trig_ent.location.area_id().to_owned(),
+                way,
+            };
+            Some((js_source, input))
+        })() else {
+            return;
+        };
+
+        match execute_trigger_script(&js_source, input) {
+            Ok(out) => {
+                for cmd in out.commands {
+                    self.enqueue_command(cmd);
+                }
+            }
+            Err(message) => {
+                warn!("Trigger script error on entity {}: {}", trigger_id, message);
+                self.recent_events.push(SimEvent::ScriptError {
+                    entity_id: trigger_id,
+                    message,
+                });
+            }
+        }
+    }
+
+    fn remove_from_trigger_occupants(&mut self, entity_id: EntityId) {
+        for entity in self.entities.values_mut() {
+            if let Some(trig) = &mut entity.trigger {
+                trig.occupants.remove(&entity_id);
+            }
+        }
     }
 
     pub fn process_commands(&mut self) {
@@ -837,6 +890,7 @@ impl SimWorld {
                     mut pos,
                     yaw,
                 } => {
+                    self.remove_from_trigger_occupants(entity_id);
                     let is_player = self
                         .entities
                         .get(&entity_id)
@@ -868,7 +922,133 @@ impl SimWorld {
                         entity.properties.set(key, value);
                     }
                 }
+                SimCommand::RemoveProperty { entity_id, key } => {
+                    if let Some(entity) = self.entities.get_mut(&entity_id) {
+                        entity.properties.remove(&key);
+                    }
+                }
+                SimCommand::ShowPopup {
+                    player_entity_id,
+                    title,
+                    body,
+                    tone,
+                } => {
+                    if let Some(player) = self
+                        .entities
+                        .get(&player_entity_id)
+                        .and_then(|e| e.player.as_ref())
+                    {
+                        let _ = player.tx_out.send(ServerMessage::Popup { title, body, tone });
+                    }
+                }
+                SimCommand::TransferToArea {
+                    entity_id,
+                    area_id,
+                    mut pos,
+                    yaw,
+                } => {
+                    if !pos[0].is_finite() || !pos[2].is_finite() {
+                        continue;
+                    }
+                    let Some((current_location, account_id)) =
+                        self.entities.get(&entity_id).map(|e| {
+                            (
+                                e.location.clone(),
+                                e.player.as_ref().map(|p| p.account_id).unwrap_or(0),
+                            )
+                        })
+                    else {
+                        continue;
+                    };
+
+                    let (target_area_id, target_location) = if area_id.is_empty() {
+                        (current_location.area_id().to_owned(), current_location)
+                    } else {
+                        let area_exists = area_id == "main"
+                            || area_id == CRYO_PRISON_AREA_ID
+                            || self
+                                .world_dir
+                                .join("areas")
+                                .join(&area_id)
+                                .join("area.bin")
+                                .exists();
+                        if !area_exists {
+                            warn!("TransferToArea ignored: unknown area '{area_id}'");
+                            continue;
+                        }
+                        let meta = self.load_area_meta(&area_id);
+                        let loc = if meta.kind == AreaKind::Outside {
+                            EntityLocation::Outside {
+                                area_id: area_id.clone(),
+                            }
+                        } else {
+                            EntityLocation::Inside(inside_instance_for(&area_id, account_id))
+                        };
+                        (area_id, loc)
+                    };
+
+                    let same_location = target_location == current_location_of(&self.entities, entity_id);
+                    self.remove_from_trigger_occupants(entity_id);
+
+                    let is_player = self
+                        .entities
+                        .get(&entity_id)
+                        .is_some_and(|e| e.player.is_some());
+                    if is_player {
+                        self.ensure_location_loaded(&target_location, pos);
+                    }
+                    pos[1] = self.ground_elevation(&target_location, pos);
+
+                    let mut final_yaw = 0.0;
+                    let mut tx_player: Option<mpsc::UnboundedSender<ServerMessage>> = None;
+                    let mut visual_wire: Option<EntityVisual> = None;
+                    if let Some(entity) = self.entities.get_mut(&entity_id) {
+                        entity.location = target_location;
+                        entity.transform.pos = pos;
+                        if let Some(new_yaw) = yaw {
+                            entity.transform.yaw = new_yaw;
+                        }
+                        final_yaw = entity.transform.yaw;
+                        if let Some(movement) = &mut entity.movement {
+                            movement.clear_path();
+                        }
+                        if let Some(player) = &mut entity.player {
+                            player.pending_interaction = None;
+                            tx_player = Some(player.tx_out.clone());
+                        }
+                        if let Some(vis) = &entity.visual {
+                            visual_wire = Some(vis.to_wire());
+                        }
+                    }
+
+                    if !same_location {
+                        if let (Some(tx_out), Some(visual)) = (tx_player, visual_wire) {
+                            let meta = self.load_area_meta(&target_area_id);
+                            let enter_msg = ServerMessage::EnterArea {
+                                entity_id,
+                                area_id: target_area_id,
+                                area_name: meta.name,
+                                area_kind: meta.kind,
+                                dimensions: meta.dimensions,
+                                pos,
+                                yaw: final_yaw,
+                                visual,
+                                fresh_cryo_wake: false,
+                            };
+                            let snap_entities = self
+                                .entities
+                                .get(&entity_id)
+                                .map(|obs| self.visible_entities_for(obs))
+                                .unwrap_or_default();
+                            let _ = tx_out.send(enter_msg);
+                            let _ = tx_out.send(ServerMessage::WorldSnapshot {
+                                entities: snap_entities,
+                            });
+                        }
+                    }
+                }
                 SimCommand::Despawn { entity_id } => {
+                    self.remove_from_trigger_occupants(entity_id);
                     self.despawn_entity(entity_id);
                 }
             }
@@ -1280,6 +1460,7 @@ impl SimWorld {
                     actor_entity_id,
                     way: TriggerWay::WalkInto,
                 });
+                self.run_trigger_script(trig_id, actor_entity_id, TriggerWay::WalkInto);
             }
         }
 
@@ -1302,6 +1483,18 @@ impl SimWorld {
             let _ = tx_out.send(ServerMessage::WorldSnapshot { entities });
         }
     }
+}
+
+fn current_location_of(
+    entities: &BTreeMap<EntityId, Entity>,
+    entity_id: EntityId,
+) -> EntityLocation {
+    entities
+        .get(&entity_id)
+        .map(|e| e.location.clone())
+        .unwrap_or_else(|| EntityLocation::Outside {
+            area_id: String::new(),
+        })
 }
 
 fn build_waypoints(
@@ -1330,8 +1523,9 @@ mod tests {
     use super::*;
     use shared::entity::{
         ComponentOverride, EntityCapabilities, EntityOverrides, MovementConfig, PropertyBag,
-        PropertyValue, TriggerActivation, TriggerConfig,
+        PropertyValue, ScriptConfig, TriggerActivation, TriggerConfig,
     };
+    use shared::protocol::PopupTone;
     use shared::world::InsideVisData;
 
     fn workspace_world_dir() -> PathBuf {
@@ -1419,12 +1613,16 @@ mod tests {
         assert_eq!(sim.player_entity_id(101), Some(p1_entity_id));
         assert_eq!(sim.player_entity_id(202), Some(p2_entity_id));
 
-        // Each player in cryo_prison must ONLY see themselves (Solo instance isolation).
+        // Each player in cryo_prison must ONLY see themselves as a player (Solo instance isolation).
         match snap1 {
             ServerMessage::WorldSnapshot { entities } => {
-                assert_eq!(entities.len(), 1);
-                assert_eq!(entities[0].entity_id, p1_entity_id);
-                assert!(entities[0]
+                let players: Vec<_> = entities
+                    .iter()
+                    .filter(|e| e.capabilities.contains(EntityCapabilities::PLAYER))
+                    .collect();
+                assert_eq!(players.len(), 1);
+                assert_eq!(players[0].entity_id, p1_entity_id);
+                assert!(players[0]
                     .capabilities
                     .contains(EntityCapabilities::PLAYER | EntityCapabilities::MOVABLE));
             }
@@ -1432,8 +1630,12 @@ mod tests {
         }
         match snap2 {
             ServerMessage::WorldSnapshot { entities } => {
-                assert_eq!(entities.len(), 1);
-                assert_eq!(entities[0].entity_id, p2_entity_id);
+                let players: Vec<_> = entities
+                    .iter()
+                    .filter(|e| e.capabilities.contains(EntityCapabilities::PLAYER))
+                    .collect();
+                assert_eq!(players.len(), 1);
+                assert_eq!(players[0].entity_id, p2_entity_id);
             }
             other => panic!("unexpected snap2: {other:?}"),
         }
@@ -1454,9 +1656,10 @@ mod tests {
         let mut latest_p1 = None;
         while let Ok(msg) = rx1.try_recv() {
             if let ServerMessage::WorldSnapshot { entities } = msg {
-                assert_eq!(entities.len(), 1);
-                assert_eq!(entities[0].entity_id, p1_entity_id);
-                latest_p1 = Some(entities[0].clone());
+                assert!(!entities.iter().any(|e| e.entity_id == p2_entity_id));
+                if let Some(p1_snap) = entities.iter().find(|e| e.entity_id == p1_entity_id) {
+                    latest_p1 = Some(p1_snap.clone());
+                }
             }
         }
         let p1 = latest_p1.expect("tick emitted WorldSnapshot");
@@ -1468,9 +1671,10 @@ mod tests {
         let mut latest_p2 = None;
         while let Ok(msg) = rx2.try_recv() {
             if let ServerMessage::WorldSnapshot { entities } = msg {
-                assert_eq!(entities.len(), 1);
-                assert_eq!(entities[0].entity_id, p2_entity_id);
-                latest_p2 = Some(entities[0].clone());
+                assert!(!entities.iter().any(|e| e.entity_id == p1_entity_id));
+                if let Some(p2_snap) = entities.iter().find(|e| e.entity_id == p2_entity_id) {
+                    latest_p2 = Some(p2_snap.clone());
+                }
             }
         }
         let p2 = latest_p2.expect("p2 snapshot");
@@ -1557,16 +1761,17 @@ mod tests {
         assert!((drone_entity.transform.pos[0] - 11.5).abs() < 0.05);
         assert!((drone_entity.transform.pos[2] - 9.5).abs() < 0.05);
 
-        // Player 101 sees themselves + console + drone; Player 202 sees only themselves.
+        // Player 101 sees themselves + console + drone (+ any authored solo instance entities); Player 202 sees none of Player 101's.
         let mut latest_p1_entities = Vec::new();
         while let Ok(msg) = rx1.try_recv() {
             if let ServerMessage::WorldSnapshot { entities } = msg {
                 latest_p1_entities = entities;
             }
         }
-        assert_eq!(latest_p1_entities.len(), 3);
         let p1_ids: Vec<EntityId> = latest_p1_entities.iter().map(|e| e.entity_id).collect();
-        assert_eq!(p1_ids, vec![p1_id, console_id, drone_id]);
+        assert!(p1_ids.contains(&p1_id));
+        assert!(p1_ids.contains(&console_id));
+        assert!(p1_ids.contains(&drone_id));
 
         let console_snap = latest_p1_entities
             .iter()
@@ -1586,7 +1791,16 @@ mod tests {
                 latest_p2_entities = entities;
             }
         }
-        assert_eq!(latest_p2_entities.len(), 1);
+        assert!(!latest_p2_entities
+            .iter()
+            .any(|e| e.entity_id == p1_id || e.entity_id == console_id || e.entity_id == drone_id));
+        assert_eq!(
+            latest_p2_entities
+                .iter()
+                .filter(|e| e.capabilities.contains(EntityCapabilities::PLAYER))
+                .count(),
+            1
+        );
 
         // Disconnecting Player 101 despawns orphaned solo-instance entities on the next tick.
         assert!(sim.remove_player(101, conn1).is_some());
@@ -1624,8 +1838,12 @@ mod tests {
         assert_eq!(sim.player_entity_id(555), Some(new_id));
         match snap2 {
             ServerMessage::WorldSnapshot { entities } => {
-                assert_eq!(entities.len(), 1);
-                assert_eq!(entities[0].entity_id, new_id);
+                let players: Vec<_> = entities
+                    .iter()
+                    .filter(|e| e.capabilities.contains(EntityCapabilities::PLAYER))
+                    .collect();
+                assert_eq!(players.len(), 1);
+                assert_eq!(players[0].entity_id, new_id);
             }
             _ => panic!("expected WorldSnapshot"),
         }
@@ -1661,6 +1879,7 @@ mod tests {
                 activation: TriggerActivation::Both,
                 interaction_range: 1.5,
             }),
+            script: None,
         };
         fs::create_dir_all(world_dir.join("entities").join("templates")).unwrap();
         fs::write(
@@ -1823,6 +2042,169 @@ mod tests {
         assert_eq!(walk_count, 2, "re-entering walk-into trigger should fire again");
 
         assert!(sim.remove_player(77, conn_id).is_some());
+        let _ = fs::remove_dir_all(&world_dir);
+    }
+
+    #[test]
+    fn scripted_trigger_executes_props_popups_area_transfer_and_runtime_limits() {
+        let world_dir = unique_temp_world("scripted_triggers");
+        fs::create_dir_all(world_dir.join("entities").join("templates")).unwrap();
+        fs::create_dir_all(world_dir.join("areas").join("dest_room")).unwrap();
+
+        let dest_meta = AreaMetadata {
+            id: "dest_room".to_owned(),
+            name: "Dest Room".to_owned(),
+            kind: AreaKind::Inside(InsideKind::Permanent),
+            dimensions: Some((16, 16)),
+        };
+        fs::write(
+            world_dir.join("areas/dest_room/area.bin"),
+            postcard::to_allocvec(&dest_meta).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            world_dir.join("areas/dest_room/sim.bin"),
+            postcard::to_allocvec(&InsideSimData::flat_default(16, 16)).unwrap(),
+        )
+        .unwrap();
+
+        let mut props = PropertyBag::new();
+        props.set("count", PropertyValue::Int(0));
+        let mut portal_tpl = EntityTemplate {
+            id: "portal_script".to_owned(),
+            name: "Warp Console".to_owned(),
+            properties: props,
+            visual: None,
+            movement: None,
+            trigger: Some(TriggerConfig {
+                size: [2.0, 2.0, 2.0],
+                offset: [0.0, 0.0, 0.0],
+                yaw_deg: 0.0,
+                activation: TriggerActivation::Click,
+                interaction_range: 3.0,
+            }),
+            script: Some(ScriptConfig {
+                source: String::new(),
+                compiled_js: r#"
+                    function onTrigger(ctx) {
+                        const next = (ctx.entity.getInt("count") || 0) + 1;
+                        ctx.entity.setInt("count", next);
+                        ctx.player.giveQuest("q_warp", "Enter Dest Room");
+                        ctx.showPopup("Portal", "Warping (#" + next + ")", "info");
+                        ctx.player.moveToArea("dest_room", 6.0, 6.0, 180);
+                    }
+                "#
+                .to_owned(),
+            }),
+        };
+        fs::write(
+            world_dir.join("entities/templates/portal_script.json"),
+            serde_json::to_vec(&portal_tpl).unwrap(),
+        )
+        .unwrap();
+
+        let mut start_sim = InsideSimData::flat_default(20, 20);
+        start_sim.entities.push(PlacedEntity {
+            id: 1,
+            template_id: "portal_script".to_owned(),
+            position: [5.0, 0.0, 5.0],
+            rotation_y: 0.0,
+            overrides: EntityOverrides::default(),
+        });
+        fs::create_dir_all(world_dir.join("areas").join("start_room")).unwrap();
+        let start_meta = AreaMetadata {
+            id: "start_room".to_owned(),
+            name: "Start Room".to_owned(),
+            kind: AreaKind::Inside(InsideKind::Permanent),
+            dimensions: Some((20, 20)),
+        };
+        fs::write(
+            world_dir.join("areas/start_room/area.bin"),
+            postcard::to_allocvec(&start_meta).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            world_dir.join("areas/start_room/sim.bin"),
+            postcard::to_allocvec(&start_sim).unwrap(),
+        )
+        .unwrap();
+
+        let mut sim = SimWorld::new(world_dir.clone());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let saved = CharacterSaveRecord {
+            account_id: 88,
+            area_id: "start_room".to_owned(),
+            pos: [5.0, 0.0, 5.0],
+            yaw: 0.0,
+            appearance: CharacterDefinition::cryo_awakening_default(),
+        };
+        let (conn_id, enter_msg, snap_msg) = sim.spawn_player(88, Some(saved), tx);
+        let player_eid = match enter_msg {
+            ServerMessage::EnterArea { entity_id, .. } => entity_id,
+            _ => panic!("expected EnterArea"),
+        };
+        let console_eid = match snap_msg {
+            ServerMessage::WorldSnapshot { entities } => entities
+                .into_iter()
+                .find(|e| e.entity_id != player_eid)
+                .expect("scripted trigger visible in snapshot")
+                .entity_id,
+            _ => panic!("expected WorldSnapshot"),
+        };
+        assert!(sim.entity(console_eid).unwrap().capabilities().contains(EntityCapabilities::SCRIPTED));
+
+        sim.interact_player_with(88, console_eid);
+
+        let console = sim.entity(console_eid).unwrap();
+        assert_eq!(console.properties.get_int("count"), Some(1));
+
+        let player = sim.entity(player_eid).unwrap();
+        assert_eq!(player.location.area_id(), "dest_room");
+        assert_eq!(player.properties.get_str("quest:q_warp"), Some("active"));
+
+        let mut saw_popup = false;
+        let mut saw_transfer = false;
+        while let Ok(msg) = rx.try_recv() {
+            match msg {
+                ServerMessage::Popup { title, body, tone } => {
+                    assert_eq!(title, "Portal");
+                    assert_eq!(body, "Warping (#1)");
+                    assert_eq!(tone, PopupTone::Info);
+                    saw_popup = true;
+                }
+                ServerMessage::EnterArea { area_id, .. } if area_id == "dest_room" => {
+                    saw_transfer = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_popup, "player should receive ServerMessage::Popup");
+        assert!(saw_transfer, "player should receive EnterArea for dest_room");
+
+        // Live-update template script to an infinite loop; must abort safely & emit ScriptError.
+        portal_tpl.script = Some(ScriptConfig {
+            source: String::new(),
+            compiled_js: "function onTrigger(ctx) { while (true) {} }".to_owned(),
+        });
+        sim.upsert_entity_template(portal_tpl);
+
+        // Move player back to start_room and interact again to hit the updated faulty script.
+        sim.enqueue_command(SimCommand::TransferToArea {
+            entity_id: player_eid,
+            area_id: "start_room".to_owned(),
+            pos: [5.0, 0.0, 5.0],
+            yaw: None,
+        });
+        sim.process_commands();
+        sim.interact_player_with(88, console_eid);
+        assert!(
+            sim.recent_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::ScriptError { entity_id, .. } if *entity_id == console_eid)),
+            "faulty loop script should record SimEvent::ScriptError"
+        );
+
+        assert!(sim.remove_player(88, conn_id).is_some());
         let _ = fs::remove_dir_all(&world_dir);
     }
 }

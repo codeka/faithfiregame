@@ -3,7 +3,16 @@ use serde::{Deserialize, Serialize};
 use crate::entity::{EntityCapabilities, EntityId, EntityVisual, TriggerConfig};
 use crate::world::AreaKind;
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PopupTone {
+    Info,
+    Success,
+    Warning,
+    Danger,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientMessage {
@@ -64,6 +73,11 @@ pub enum ServerMessage {
     },
     AreaUpdated {
         area_id: String,
+    },
+    Popup {
+        title: String,
+        body: String,
+        tone: PopupTone,
     },
 }
 
@@ -188,5 +202,13 @@ mod tests {
         };
         let ibytes = encode_client_msg(&interact).unwrap();
         assert_eq!(decode_client_msg(&ibytes).unwrap(), interact);
+
+        let popup = ServerMessage::Popup {
+            title: "Cryo Terminal".to_owned(),
+            body: "Welcome back.".to_owned(),
+            tone: PopupTone::Success,
+        };
+        let pbytes = encode_server_msg(&popup).unwrap();
+        assert_eq!(decode_server_msg(&pbytes).unwrap(), popup);
     }
 }

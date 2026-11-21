@@ -3,8 +3,8 @@ use shared::entity::{EntityCapabilities, EntityId, PropertyBag, PropertyValue};
 use shared::protocol::EntitySnapshot;
 
 use super::components::{
-    EntityLocation, MovementComponent, PlayerComponent, SpawnOrigin, TransformComponent,
-    TriggerComponent, VisualComponent,
+    EntityLocation, MovementComponent, PlayerComponent, ScriptComponent, SpawnOrigin,
+    TransformComponent, TriggerComponent, VisualComponent,
 };
 
 /// Composable simulation entity composed of spatial state, properties, and optional components.
@@ -20,6 +20,7 @@ pub struct Entity {
     pub visual: Option<VisualComponent>,
     pub movement: Option<MovementComponent>,
     pub trigger: Option<TriggerComponent>,
+    pub script: Option<ScriptComponent>,
     pub player: Option<PlayerComponent>,
 }
 
@@ -36,6 +37,7 @@ impl Entity {
             visual: None,
             movement: None,
             trigger: None,
+            script: None,
             player: None,
         }
     }
@@ -78,6 +80,12 @@ impl Entity {
         self
     }
 
+    #[allow(dead_code)]
+    pub fn with_script(mut self, script: ScriptComponent) -> Self {
+        self.script = Some(script);
+        self
+    }
+
     pub fn with_player(mut self, player: PlayerComponent) -> Self {
         self.player = Some(player);
         self
@@ -96,6 +104,9 @@ impl Entity {
             if trig.config.activation.allows_click() {
                 caps.insert(EntityCapabilities::INTERACTABLE);
             }
+        }
+        if self.script.is_some() {
+            caps.insert(EntityCapabilities::SCRIPTED);
         }
         caps
     }

@@ -9,6 +9,13 @@ export type GamePhase =
   | 'unauthorized'
   | 'error';
 
+export interface GamePopup {
+  id: number;
+  title: string;
+  body: string;
+  tone: 'cyan' | 'mint' | 'amber' | 'crimson';
+}
+
 export interface GameStatus {
   phase: GamePhase;
   playerId: number | null;
@@ -17,6 +24,7 @@ export interface GameStatus {
   playerPos: [number, number, number] | null;
   freshCryoWake: boolean;
   wakeReady: boolean;
+  popup?: GamePopup | null;
   error: string | null;
 }
 
@@ -90,6 +98,11 @@ export class EngineService implements OnDestroy {
 
   disconnectGameSession(): void {
     this.enterLandingMode();
+  }
+
+  dismissPopup(): void {
+    this.handle?.dismiss_game_popup();
+    this.refreshGameStatus();
   }
 
   stopGamePolling(): void {

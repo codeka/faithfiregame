@@ -106,7 +106,7 @@
         <span class="section-label">Components</span>
       </div>
 
-      @if (!tpl.visual || !tpl.movement || !tpl.trigger) {
+      @if (!tpl.visual || !tpl.movement || !tpl.trigger || !tpl.script) {
         <div class="add-comp-row">
           @if (!tpl.visual) {
             <button type="button" class="btn btn-sm add-visual-btn" (click)="addVisualComponent()">
@@ -121,6 +121,11 @@
           @if (!tpl.trigger) {
             <button type="button" class="btn btn-sm add-trigger-btn" (click)="addTriggerComponent()">
               + Trigger
+            </button>
+          }
+          @if (!tpl.script) {
+            <button type="button" class="btn btn-sm add-script-btn" (click)="addScriptComponent()">
+              + Script
             </button>
           }
         </div>
@@ -337,6 +342,25 @@
               (ngModelChange)="setTriggerRange(+$event)"
             />
           </label>
+        </div>
+      }
+
+      @if (tpl.script; as scr) {
+        <div class="comp-card">
+          <div class="row-between comp-head">
+            <span class="comp-title">Script</span>
+            <button type="button" class="btn btn-sm btn-danger" (click)="entityState.setScript(null)">
+              Remove
+            </button>
+          </div>
+          <pre class="script-preview">{{ scriptPreview(scr.source) }}</pre>
+          <button
+            type="button"
+            class="btn btn-sm edit-tpl-script-btn"
+            (click)="entityState.openTemplateScriptModal()"
+          >
+            Edit Script…
+          </button>
         </div>
       }
     </div>

@@ -8,6 +8,7 @@ import {
   MovementConfig,
   PlacedEntity,
   PropertyValue,
+  ScriptConfig,
   TriggerActivation,
   TriggerConfig,
   VisualConfig,
@@ -24,6 +25,7 @@ import {
   propertyTypeOf,
   resolvePlacedEntity,
 } from '../../entity-editor-state.service';
+import { defaultScriptConfig } from '../../script-compiler';
 
 export const ENTITY_SUBMODES = [
   { id: 'place', label: 'Place', shortcut: '1' },
@@ -115,9 +117,10 @@ export class EntityToolComponent {
       name: sel.overrides.name,
       properties: structuredClone(sel.overrides.properties ?? {}),
       removed_properties: [...(sel.overrides.removed_properties ?? [])],
-      visual: structuredClone(sel.overrides.visual),
-      movement: structuredClone(sel.overrides.movement),
-      trigger: structuredClone(sel.overrides.trigger),
+      visual: structuredClone(sel.overrides.visual ?? 'inherit'),
+      movement: structuredClone(sel.overrides.movement ?? 'inherit'),
+      trigger: structuredClone(sel.overrides.trigger ?? 'inherit'),
+      script: structuredClone(sel.overrides.script ?? 'inherit'),
     };
   }
 
@@ -142,6 +145,7 @@ export class EntityToolComponent {
         visual: 'inherit',
         movement: 'inherit',
         trigger: 'inherit',
+        script: 'inherit',
       },
     });
   }
@@ -397,5 +401,36 @@ export class EntityToolComponent {
   setTriggerRange(range: number): void {
     if (!Number.isFinite(range)) return;
     this.patchTrigger({ interaction_range: Math.max(0.1, range) });
+  }
+
+  setScriptOverride(ovVal: ComponentOverride<ScriptConfig>): void {
+    const sel = this.selectedEntity();
+    if (!sel) return;
+    const ov = this.cloneOverrides(sel);
+    ov.script = ovVal;
+    this.pushUpdated({ ...sel, overrides: ov });
+  }
+
+  addOrRestoreScript(): void {
+    const sel = this.selectedEntity();
+    if (!sel) return;
+    if (sel.overrides.script === 'remove' && this.linkedTemplate()?.script) {
+      this.setScriptOverride('inherit');
+      return;
+    }
+    this.setScriptOverride({ set: defaultScriptConfig() });
+  }
+
+  removeScript(): void {
+    const tplHas = Boolean(this.linkedTemplate()?.script);
+    this.setScriptOverride(tplHas ? 'remove' : 'inherit');
+  }
+
+  openScriptEditor(): void {
+    this.entityState.openInstanceScriptModal();
+  }
+
+  scriptPreview(source: string): string {
+    return source.trim().split(/\r?\n/).slice(0, 4).join('\n');
   }
 }

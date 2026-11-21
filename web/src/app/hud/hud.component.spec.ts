@@ -16,6 +16,7 @@ describe('HudComponent & LoginComponent entry flow', () => {
   let connectCalls: string[];
   let landingCalls: number;
   let stopPollingCalls: number;
+  let dismissPopupCalls: number;
   let origFetch: typeof globalThis.fetch;
 
   function configureTestBed(): void {
@@ -34,6 +35,10 @@ describe('HudComponent & LoginComponent entry flow', () => {
       disconnectGameSession: () => {
         landingCalls++;
         gameStatusSig.set(null);
+      },
+      dismissPopup: () => {
+        dismissPopupCalls++;
+        gameStatusSig.update((s) => (s ? { ...s, popup: null } : s));
       },
       stopGamePolling: () => {
         stopPollingCalls++;
@@ -61,6 +66,7 @@ describe('HudComponent & LoginComponent entry flow', () => {
     connectCalls = [];
     landingCalls = 0;
     stopPollingCalls = 0;
+    dismissPopupCalls = 0;
   });
 
   afterEach(() => {
@@ -333,5 +339,49 @@ describe('HudComponent & LoginComponent entry flow', () => {
     expect(fetchCalls).toEqual([{ url: '/api/auth/logout', method: 'POST' }]);
     expect(document.cookie).not.toContain('play-tok-2');
     expect(host.querySelector('.landing-card')).not.toBeNull();
+  });
+
+  it('displays server popup modal during gameplay and dismisses on Acknowledge click', async () => {
+    document.cookie = `${SESSION_COOKIE}=play-tok-3; Path=/`;
+    configureTestBed();
+    const fixture = TestBed.createComponent(HudComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    gameStatusSig.set({
+      phase: 'playing',
+      playerId: 3,
+      areaId: 'cryo_prison',
+      areaName: 'Cryo Prison',
+      playerPos: [4, 0, 4],
+      freshCryoWake: false,
+      wakeReady: true,
+      popup: {
+        id: 1,
+        title: 'Airlock Override',
+        body: 'Decontamination cycle complete.',
+        tone: 'mint',
+      },
+      error: null,
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('.hud-popup-title')?.textContent?.trim()).toBe('Airlock Override');
+    expect(host.querySelector('.hud-popup-body')?.textContent?.trim()).toBe(
+      'Decontamination cycle complete.',
+    );
+
+    const ackBtn = Array.from(host.querySelectorAll('.hud-popup-actions button')).find(
+      (b) => b.textContent?.trim() === 'Acknowledge',
+    ) as HTMLButtonElement | undefined;
+    expect(ackBtn).toBeDefined();
+    ackBtn!.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(dismissPopupCalls).toBe(1);
+    expect(host.querySelector('.hud-popup-backdrop')).toBeNull();
   });
 });

@@ -1,0 +1,71 @@
+<div class="script-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="script-modal-title">
+  <div class="script-modal">
+    <div class="modal-header">
+      <div class="header-left">
+        <h3 id="script-modal-title">{{ targetTitle() }}</h3>
+        <span class="api-badge">TypeScript · onTrigger(ctx: TriggerContext)</span>
+      </div>
+      <div class="header-tools">
+        <select
+          class="select"
+          name="scriptSnippetSelect"
+          [ngModel]="selectedSnippetId()"
+          (ngModelChange)="selectedSnippetId.set($event)"
+        >
+          @for (s of snippets; track s.id) {
+            <option [value]="s.id">{{ s.label }}</option>
+          }
+        </select>
+        <button type="button" class="btn btn-sm load-snippet-btn" (click)="applySnippet()">
+          Load Example
+        </button>
+      </div>
+    </div>
+
+    <div class="editor-shell">
+      <div
+        #monacoHost
+        class="monaco-host"
+        [class.hidden]="!monacoReady()"
+      ></div>
+      @if (!monacoReady()) {
+        <textarea
+          name="scriptSourceEditor"
+          class="fallback-editor"
+          spellcheck="false"
+          [ngModel]="draftSource()"
+          (ngModelChange)="onSourceTextareaChange($event)"
+        ></textarea>
+      }
+    </div>
+
+    @if (monacoError(); as err) {
+      <div class="diag-warn">Monaco fallback active: {{ err }}</div>
+    }
+
+    @if (diagnostics().length > 0) {
+      <div class="diag-errors" role="alert">
+        @for (msg of diagnostics(); track $index) {
+          <div>{{ msg }}</div>
+        }
+      </div>
+    }
+
+    <div class="modal-footer">
+      <span class="footer-hint">Ctrl/Cmd+S to Apply · Escape to Cancel</span>
+      <div class="footer-actions">
+        <button type="button" class="btn cancel-script-btn" (click)="entityState.closeScriptModal()">
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="btn primary apply-script-btn"
+          [disabled]="transpilePreview().diagnostics.length > 0"
+          (click)="apply()"
+        >
+          Apply
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

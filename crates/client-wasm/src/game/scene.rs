@@ -7,7 +7,7 @@ use shared::character::{
     PartAttachment, SkeletonDef,
 };
 use shared::entity::{EntityCapabilities, EntityId, EntityVisual};
-use shared::protocol::ServerMessage;
+use shared::protocol::{PopupTone, ServerMessage};
 use shared::world::{
     AreaKind, AssetEntry, InsideVisData, PropPlacement, RoadSpline, TILE_SIZE, TILE_VERTICES,
     TileVisData, is_local_asset_id, local_asset_http_path, local_asset_slug, prettify_asset_slug,
@@ -28,8 +28,8 @@ use crate::render::{
 
 use super::cursor::resolve_game_cursor;
 use super::state::{
-    ClientEntityRenderState, ClientEntityVisualState, GameClientState, GameInsideState, GamePhase,
-    GameTileState,
+    ClientEntityRenderState, ClientEntityVisualState, ClientPopupMessage, GameClientState,
+    GameInsideState, GamePhase, GameTileState,
 };
 
 impl GameClientState {
@@ -115,6 +115,7 @@ impl GameClientState {
                     self.wake_ready = false;
                     self.area_enter_elapsed_s = 0.0;
                     self.move_target_marker = None;
+                    self.active_popup = None;
                     self.phase = GamePhase::LoadingArea;
 
                     self.ensure_entity_visual_requested(&area_id, &visual);
@@ -221,6 +222,21 @@ impl GameClientState {
                     if self.area_id == area_id && self.area_kind != AreaKind::Outside {
                         self.pending_inside_fetch = Some(area_id);
                     }
+                }
+                ServerMessage::Popup { title, body, tone } => {
+                    self.next_popup_id += 1;
+                    let tone_str = match tone {
+                        PopupTone::Info => "cyan",
+                        PopupTone::Success => "mint",
+                        PopupTone::Warning => "amber",
+                        PopupTone::Danger => "crimson",
+                    };
+                    self.active_popup = Some(ClientPopupMessage {
+                        id: self.next_popup_id,
+                        title,
+                        body,
+                        tone: tone_str,
+                    });
                 }
                 ServerMessage::Pong(_) => {}
             }

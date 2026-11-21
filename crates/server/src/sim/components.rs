@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use shared::character::{CharacterDefinition, CompactCharacterAppearance};
-use shared::entity::{EntityId, EntityVisual, TriggerConfig};
+use shared::entity::{EntityId, EntityVisual, ScriptConfig, TriggerConfig};
 use shared::protocol::ServerMessage;
 use tokio::sync::mpsc;
 
@@ -165,6 +165,18 @@ impl TriggerComponent {
             config,
             occupants: BTreeSet::new(),
         }
+    }
+}
+
+/// Custom TypeScript/JS trigger handler attached to an entity.
+#[derive(Debug, Clone)]
+pub struct ScriptComponent {
+    pub config: ScriptConfig,
+}
+
+impl ScriptComponent {
+    pub fn new(config: ScriptConfig) -> Self {
+        Self { config }
     }
 }
 

@@ -17,6 +17,7 @@ import {
   PropertyKind,
   propertyTypeOf,
 } from '../entity-editor-state.service';
+import { defaultScriptConfig } from '../script-compiler';
 
 @Component({
   selector: 'app-entity-templates-editor',
@@ -180,5 +181,13 @@ export class EntityTemplatesEditorComponent {
   setTriggerRange(range: number): void {
     if (!Number.isFinite(range)) return;
     this.patchTrigger({ interaction_range: Math.max(0.1, range) });
+  }
+
+  addScriptComponent(): void {
+    this.entityState.setScript(defaultScriptConfig());
+  }
+
+  scriptPreview(source: string): string {
+    return source.trim().split(/\r?\n/).slice(0, 4).join('\n');
   }
 }

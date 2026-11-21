@@ -42,6 +42,7 @@ impl EntityCapabilities {
     pub const QUEST_GIVER: Self = Self(1 << 4);
     pub const VENDOR: Self = Self(1 << 5);
     pub const TRIGGER: Self = Self(1 << 6);
+    pub const SCRIPTED: Self = Self(1 << 7);
 
     #[inline]
     pub const fn contains(self, flag: Self) -> bool {
@@ -376,8 +377,10 @@ mod tests {
 
         caps.insert(EntityCapabilities::VENDOR);
         caps.insert(EntityCapabilities::TRIGGER);
+        caps.insert(EntityCapabilities::SCRIPTED);
         assert!(caps.contains(EntityCapabilities::VENDOR));
         assert!(caps.contains(EntityCapabilities::TRIGGER));
+        assert!(caps.contains(EntityCapabilities::SCRIPTED));
 
         caps.remove(EntityCapabilities::MOVABLE);
         assert!(!caps.contains(EntityCapabilities::MOVABLE));

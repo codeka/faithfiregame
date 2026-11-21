@@ -8,6 +8,7 @@ import {
   EditorStatus,
 } from './editor-engine.service';
 import { EditorUiComponent } from './editor-ui.component';
+import { buildFaithFireTypeDefs, transpileTypeScriptToJs } from './script-compiler';
 
 const MOCK_CHARACTER_CATALOG: CharacterCatalog = {
   skeletons: [
@@ -265,6 +266,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
                 activation: 'click',
                 interaction_range: 2.5,
               },
+              script: null,
             },
           ]);
         }
@@ -1161,6 +1163,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
                 visual: 'inherit',
                 movement: 'inherit',
                 trigger: 'inherit',
+                script: 'inherit',
               },
             },
           }
@@ -1194,7 +1197,144 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
       visual: 'inherit',
       movement: 'inherit',
       trigger: 'inherit',
+      script: 'inherit',
     });
+  });
+
+  it('edits TypeScript trigger scripts in modal, transpiles to plain JS, generates FaithFire libs, and saves template', async () => {
+    const typeDefs = buildFaithFireTypeDefs(['cryo_prison', 'main'], ['guard_npc']);
+    expect(typeDefs).toContain('"cryo_prison" | "main"');
+    expect(typeDefs).toContain('"guard_npc"');
+    expect(typeDefs).toContain('interface TriggerContext');
+
+    const tsCheck = transpileTypeScriptToJs(
+      "function onTrigger(ctx: TriggerContext): void { const msg: string = 'Hi'; ctx.showPopup('Test', msg); }",
+    );
+    expect(tsCheck.diagnostics).toEqual([]);
+    expect(tsCheck.compiledJs).not.toContain(': TriggerContext');
+    expect(tsCheck.compiledJs).not.toContain(': string');
+    expect(tsCheck.compiledJs).toContain("ctx.showPopup('Test', msg)");
+
+    statusSig.set({ ...baseStatus('decoration'), editorMode: 'entities' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const addScriptBtn = root.querySelector('.add-script-btn') as HTMLButtonElement;
+    expect(addScriptBtn).not.toBeNull();
+    addScriptBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const editScriptBtn = root.querySelector('.edit-tpl-script-btn') as HTMLButtonElement;
+    expect(editScriptBtn).not.toBeNull();
+    editScriptBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const modal = root.querySelector('app-script-editor-modal');
+    expect(modal).not.toBeNull();
+    const textarea = root.querySelector(
+      'textarea[name="scriptSourceEditor"]',
+    ) as HTMLTextAreaElement;
+    expect(textarea).not.toBeNull();
+    const authoredTs =
+      "function onTrigger(ctx: TriggerContext): void {\n  const dest: AreaId = 'main';\n  ctx.player.moveToArea(dest, 8, 8, 0);\n}\n";
+    textarea.value = authoredTs;
+    textarea.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const applyBtn = root.querySelector('.apply-script-btn') as HTMLButtonElement;
+    expect(applyBtn.disabled).toBe(false);
+    applyBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(root.querySelector('app-script-editor-modal')).toBeNull();
+
+    const saveBtn = root.querySelector('.toolbar .btn.primary') as HTMLButtonElement;
+    saveBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const putCall = savedEntityTemplates.find((c) =>
+      c.url.includes('/api/editor/entities/templates/guard_npc'),
+    );
+    expect(putCall).toBeDefined();
+    const savedScript = putCall!.body['script'] as { source: string; compiled_js: string };
+    expect(savedScript.source).toBe(authoredTs);
+    expect(savedScript.compiled_js).not.toContain(': TriggerContext');
+    expect(savedScript.compiled_js).not.toContain(': AreaId');
+    expect(savedScript.compiled_js).toContain("ctx.player.moveToArea(dest, 8, 8, 0)");
+  });
+
+  it('overrides and resets Script component on a World PlacedEntity instance', async () => {
+    statusSig.set({
+      ...baseStatus('entities'),
+      editorMode: 'world',
+      entitySubmode: 'move',
+      selectedEntity: {
+        id: 99,
+        template_id: 'guard_npc',
+        position: [12, 0, 14],
+        rotation_y: 0,
+        overrides: {
+          name: null,
+          properties: {},
+          removed_properties: [],
+          visual: 'inherit',
+          movement: 'inherit',
+          trigger: 'inherit',
+          script: 'inherit',
+        },
+      },
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const addInstScriptBtn = root.querySelector('.add-inst-script-btn') as HTMLButtonElement;
+    expect(addInstScriptBtn).not.toBeNull();
+    addInstScriptBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const editInstScriptBtn = root.querySelector('.edit-inst-script-btn') as HTMLButtonElement;
+    expect(editInstScriptBtn).not.toBeNull();
+    editInstScriptBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const textarea = root.querySelector(
+      'textarea[name="scriptSourceEditor"]',
+    ) as HTMLTextAreaElement;
+    textarea.value =
+      "function onTrigger(ctx: TriggerContext): void { ctx.showPopup('Instance', 'Custom!'); }\n";
+    textarea.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const applyBtn = root.querySelector('.apply-script-btn') as HTMLButtonElement;
+    applyBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const scriptOv = statusSig()?.selectedEntity?.overrides.script as {
+      set: { source: string; compiled_js: string };
+    };
+    expect(scriptOv.set.source).toContain('Instance');
+    expect(scriptOv.set.compiled_js).not.toContain(': TriggerContext');
+
+    const resetScriptBtn = root.querySelector('.reset-script-btn') as HTMLButtonElement;
+    expect(resetScriptBtn).not.toBeNull();
+    resetScriptBtn.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(statusSig()?.selectedEntity?.overrides.script).toBe('inherit');
   });
 
   it('switches top-level modes between World, Characters, and Entities and gates World hotkeys', () => {

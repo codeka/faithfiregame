@@ -3,6 +3,8 @@ import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../auth/auth.service';
 import { EngineService } from '../engine.service';
 import { WakeOverlayState } from './hud.types';
+import { HudButtonComponent } from './primitives/hud-button/hud-button.component';
+import { HudFrameComponent } from './primitives/hud-frame/hud-frame.component';
 import { AreaTelemetryComponent } from './widgets/area-telemetry/area-telemetry.component';
 import { SystemBarComponent } from './widgets/system-bar/system-bar.component';
 import { WakeOverlayComponent } from './widgets/wake-overlay/wake-overlay.component';
@@ -12,7 +14,14 @@ export type { WakeOverlayState } from './hud.types';
 @Component({
   selector: 'app-hud',
   standalone: true,
-  imports: [RouterLink, AreaTelemetryComponent, SystemBarComponent, WakeOverlayComponent],
+  imports: [
+    RouterLink,
+    HudButtonComponent,
+    HudFrameComponent,
+    AreaTelemetryComponent,
+    SystemBarComponent,
+    WakeOverlayComponent,
+  ],
   templateUrl: './hud.component.html',
   styleUrl: './hud.component.css',
 })

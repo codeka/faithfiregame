@@ -210,6 +210,10 @@ impl EngineHandle {
         self.enter_landing_mode();
     }
 
+    pub fn dismiss_game_popup(&self) {
+        self.inner.borrow_mut().game.active_popup = None;
+    }
+
     pub fn get_game_status_json(&self) -> String {
         let st = self.inner.borrow();
         serde_json::to_string(&st.game.status_snapshot()).unwrap_or_else(|_| "{}".to_owned())

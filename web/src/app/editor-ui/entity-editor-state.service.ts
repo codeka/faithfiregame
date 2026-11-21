@@ -7,6 +7,7 @@ import {
   MovementConfig,
   PlacedEntity,
   PropertyValue,
+  ScriptConfig,
   TriggerConfig,
   VisualConfig,
 } from './editor-engine.service';
@@ -89,7 +90,8 @@ export function isOverridesEmpty(ov: EntityOverrides): boolean {
     (ov.removed_properties ?? []).length === 0 &&
     ov.visual === 'inherit' &&
     ov.movement === 'inherit' &&
-    ov.trigger === 'inherit'
+    ov.trigger === 'inherit' &&
+    ov.script === 'inherit'
   );
 }
 
@@ -108,6 +110,7 @@ export interface ResolvedPlacedEntityView {
   visual: VisualConfig | null;
   movement: MovementConfig | null;
   trigger: TriggerConfig | null;
+  script: ScriptConfig | null;
 }
 
 export function resolvePlacedEntity(
@@ -131,8 +134,11 @@ export function resolvePlacedEntity(
     visual: resolveComponentOverride(placed.overrides.visual, template?.visual),
     movement: resolveComponentOverride(placed.overrides.movement, template?.movement),
     trigger: resolveComponentOverride(placed.overrides.trigger, template?.trigger),
+    script: resolveComponentOverride(placed.overrides.script, template?.script),
   };
 }
+
+export type ScriptModalTarget = { kind: 'template' } | { kind: 'instance' } | null;
 
 @Injectable()
 export class EntityEditorStateService {
@@ -143,6 +149,7 @@ export class EntityEditorStateService {
   readonly dirty = signal<boolean>(false);
   readonly saveState = signal<string>('Saved');
   readonly templateSearch = signal<string>('');
+  readonly scriptModalTarget = signal<ScriptModalTarget>(null);
 
   readonly filteredTemplates = computed<readonly EntityTemplate[]>(() => {
     const tokens = this.templateSearch().trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -185,6 +192,7 @@ export class EntityEditorStateService {
       visual: tpl.visual ? structuredClone(tpl.visual) : null,
       movement: tpl.movement ? structuredClone(tpl.movement) : null,
       trigger: tpl.trigger ? structuredClone(tpl.trigger) : null,
+      script: tpl.script ? structuredClone(tpl.script) : null,
     };
   }
 
@@ -223,6 +231,7 @@ export class EntityEditorStateService {
       visual: null,
       movement: null,
       trigger: null,
+      script: null,
     };
     const nextList = [...this.templates(), created];
     this.templates.set(nextList);
@@ -317,6 +326,22 @@ export class EntityEditorStateService {
 
   setTrigger(trigger: TriggerConfig | null): void {
     this.mutateActive((t) => ({ ...t, trigger }));
+  }
+
+  setScript(script: ScriptConfig | null): void {
+    this.mutateActive((t) => ({ ...t, script }));
+  }
+
+  openTemplateScriptModal(): void {
+    this.scriptModalTarget.set({ kind: 'template' });
+  }
+
+  openInstanceScriptModal(): void {
+    this.scriptModalTarget.set({ kind: 'instance' });
+  }
+
+  closeScriptModal(): void {
+    this.scriptModalTarget.set(null);
   }
 
   async saveActiveTemplate(): Promise<boolean> {
