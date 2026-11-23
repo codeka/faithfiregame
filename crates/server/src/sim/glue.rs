@@ -56,6 +56,11 @@ pub enum SimCommand {
         pos: [f32; 3],
         yaw: Option<f32>,
     },
+    TeleportToAreaTarget {
+        entity_id: EntityId,
+        area_id: String,
+        target_name: String,
+    },
     ShowPopup {
         player_entity_id: EntityId,
         title: String,

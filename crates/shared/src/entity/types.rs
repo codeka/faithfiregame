@@ -112,6 +112,50 @@ pub struct LootableConfig {
     pub description: Option<String>,
 }
 
+/// Authored arrival marker allowing scripts (`ctx.teleportToArea(areaId, targetName)`)
+/// to teleport actors to this entity's world position and `yaw` heading by entity `name`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeleportTargetConfig {}
+
+impl TeleportTargetConfig {
+    /// Returns `GL_LINES` vertex pairs showing a diamond pad, center beacon, and `+Z` arrival facing arrow.
+    pub fn wireframe_segments(&self, entity_pos: [f32; 3], entity_yaw_rad: f32) -> Vec<[f32; 3]> {
+        let world = Mat4::from_rotation_translation(
+            Quat::from_rotation_y(entity_yaw_rad),
+            Vec3::from(entity_pos),
+        );
+        let mut pts = Vec::with_capacity(12 * 2);
+        let mut push_seg = |a: Vec3, b: Vec3| {
+            pts.push(world.transform_point3(a).to_array());
+            pts.push(world.transform_point3(b).to_array());
+        };
+
+        let y_pad = 0.04f32;
+        for r in [0.65f32, 0.32f32] {
+            let n = Vec3::new(0.0, y_pad, r);
+            let e = Vec3::new(r, y_pad, 0.0);
+            let s = Vec3::new(0.0, y_pad, -r);
+            let w = Vec3::new(-r, y_pad, 0.0);
+            push_seg(n, e);
+            push_seg(e, s);
+            push_seg(s, w);
+            push_seg(w, n);
+        }
+
+        // Vertical beacon post
+        push_seg(Vec3::new(0.0, y_pad, 0.0), Vec3::new(0.0, 1.35, 0.0));
+
+        // Arrival +Z facing arrow
+        let ay = 0.08f32;
+        let tip = Vec3::new(0.0, ay, 0.95);
+        push_seg(Vec3::new(0.0, ay, 0.0), tip);
+        push_seg(tip, Vec3::new(-0.20, ay, 0.70));
+        push_seg(tip, Vec3::new(0.20, ay, 0.70));
+
+        pts
+    }
+}
+
 /// Client-renderable representation attached to a replicated entity.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EntityVisual {
@@ -532,5 +576,23 @@ mod tests {
         };
         let prop_bytes = postcard::to_allocvec(&prop_vis).unwrap();
         assert_eq!(postcard::from_bytes::<EntityVisual>(&prop_bytes).unwrap(), prop_vis);
+    }
+
+    #[test]
+    fn teleport_target_wireframe_and_roundtrip() {
+        let tt = TeleportTargetConfig::default();
+        let bytes = postcard::to_allocvec(&tt).unwrap();
+        assert_eq!(
+            postcard::from_bytes::<TeleportTargetConfig>(&bytes).unwrap(),
+            tt
+        );
+
+        let segs = tt.wireframe_segments([10.0, 1.0, 20.0], std::f32::consts::FRAC_PI_2);
+        assert_eq!(segs.len(), 24);
+        // Tip of +Z arrow at local (0, 0.08, 0.95) rotated +90 deg around Y maps to +X (~10.95, 1.08, 20.0)
+        let arrow_tip = segs[19];
+        assert!((arrow_tip[0] - 10.95).abs() < 1e-4, "got {arrow_tip:?}");
+        assert!((arrow_tip[1] - 1.08).abs() < 1e-4, "got {arrow_tip:?}");
+        assert!((arrow_tip[2] - 20.0).abs() < 1e-4, "got {arrow_tip:?}");
     }
 }

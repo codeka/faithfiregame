@@ -6,7 +6,8 @@ use shared::protocol::EntitySnapshot;
 
 use super::components::{
     EntityLocation, InventoryComponent, LootableComponent, MovementComponent, PlayerComponent,
-    ScriptComponent, SpawnOrigin, TransformComponent, TriggerComponent, VisualComponent,
+    ScriptComponent, SpawnOrigin, TeleportTargetComponent, TransformComponent, TriggerComponent,
+    VisualComponent,
 };
 
 /// Composable simulation entity composed of spatial state, properties, and optional components.
@@ -25,6 +26,7 @@ pub struct Entity {
     pub script: Option<ScriptComponent>,
     pub inventory: Option<InventoryComponent>,
     pub lootable: Option<LootableComponent>,
+    pub teleport_target: Option<TeleportTargetComponent>,
     pub player: Option<PlayerComponent>,
 }
 
@@ -44,6 +46,7 @@ impl Entity {
             script: None,
             inventory: None,
             lootable: None,
+            teleport_target: None,
             player: None,
         }
     }
@@ -100,6 +103,12 @@ impl Entity {
     #[allow(dead_code)]
     pub fn with_lootable(mut self, lootable: LootableComponent) -> Self {
         self.lootable = Some(lootable);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_teleport_target(mut self, tt: TeleportTargetComponent) -> Self {
+        self.teleport_target = Some(tt);
         self
     }
 

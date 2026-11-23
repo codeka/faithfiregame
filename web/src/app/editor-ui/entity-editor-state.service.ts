@@ -12,6 +12,7 @@ import {
   PlacedEntity,
   PropertyValue,
   ScriptConfig,
+  TeleportTargetConfig,
   TriggerConfig,
   VisualConfig,
 } from './editor-engine.service';
@@ -75,6 +76,10 @@ export function defaultLootableConfig(): LootableConfig {
   return { title: null, description: null };
 }
 
+export function defaultTeleportTargetConfig(): TeleportTargetConfig {
+  return {};
+}
+
 export type PropertyKind = 'Bool' | 'Int' | 'Float' | 'String';
 
 export function propertyTypeOf(val: PropertyValue): PropertyKind {
@@ -107,7 +112,8 @@ export function isOverridesEmpty(ov: EntityOverrides): boolean {
     ov.trigger === 'inherit' &&
     ov.script === 'inherit' &&
     (ov.inventory ?? 'inherit') === 'inherit' &&
-    (ov.lootable ?? 'inherit') === 'inherit'
+    (ov.lootable ?? 'inherit') === 'inherit' &&
+    (ov.teleport_target ?? 'inherit') === 'inherit'
   );
 }
 
@@ -129,6 +135,7 @@ export interface ResolvedPlacedEntityView {
   script: ScriptConfig | null;
   inventory: InventoryConfig | null;
   lootable: LootableConfig | null;
+  teleport_target: TeleportTargetConfig | null;
 }
 
 export function resolvePlacedEntity(
@@ -155,6 +162,10 @@ export function resolvePlacedEntity(
     script: resolveComponentOverride(placed.overrides.script, template?.script),
     inventory: resolveComponentOverride(placed.overrides.inventory ?? 'inherit', template?.inventory),
     lootable: resolveComponentOverride(placed.overrides.lootable ?? 'inherit', template?.lootable),
+    teleport_target: resolveComponentOverride(
+      placed.overrides.teleport_target ?? 'inherit',
+      template?.teleport_target,
+    ),
   };
 }
 
@@ -230,6 +241,7 @@ export class EntityEditorStateService {
         ? { items: structuredClone(tpl.inventory.items ?? []) }
         : null,
       lootable: tpl.lootable ? structuredClone(tpl.lootable) : null,
+      teleport_target: tpl.teleport_target ? structuredClone(tpl.teleport_target) : null,
     };
   }
 
@@ -271,6 +283,7 @@ export class EntityEditorStateService {
       script: null,
       inventory: null,
       lootable: null,
+      teleport_target: null,
     };
     const nextList = [...this.templates(), created];
     this.templates.set(nextList);
@@ -377,6 +390,10 @@ export class EntityEditorStateService {
 
   setLootable(lootable: LootableConfig | null): void {
     this.mutateActive((t) => ({ ...t, lootable }));
+  }
+
+  setTeleportTarget(teleport_target: TeleportTargetConfig | null): void {
+    this.mutateActive((t) => ({ ...t, teleport_target }));
   }
 
   openTemplateScriptModal(): void {

@@ -239,6 +239,8 @@ export interface LootableConfig {
   description: string | null;
 }
 
+export type TeleportTargetConfig = Record<string, never>;
+
 export type PropertyValue =
   | { Bool: boolean }
   | { Int: number }
@@ -255,6 +257,7 @@ export interface EntityTemplate {
   script: ScriptConfig | null;
   inventory: InventoryConfig | null;
   lootable: LootableConfig | null;
+  teleport_target: TeleportTargetConfig | null;
 }
 
 export type ComponentOverride<T> = 'inherit' | { set: T } | 'remove';
@@ -269,6 +272,7 @@ export interface EntityOverrides {
   script: ComponentOverride<ScriptConfig>;
   inventory: ComponentOverride<InventoryConfig>;
   lootable: ComponentOverride<LootableConfig>;
+  teleport_target: ComponentOverride<TeleportTargetConfig>;
 }
 
 export interface PlacedEntity {

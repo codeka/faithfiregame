@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, VecDeque};
 use shared::character::{CharacterDefinition, CompactCharacterAppearance};
 use shared::entity::{
     EntityId, EntityVisual, InventoryConfig, InventoryEntry, LootableConfig, ScriptConfig,
-    TriggerConfig,
+    TeleportTargetConfig, TriggerConfig,
 };
 use shared::protocol::ServerMessage;
 use tokio::sync::mpsc;
@@ -271,6 +271,19 @@ pub struct LootableComponent {
 
 impl LootableComponent {
     pub fn new(config: LootableConfig) -> Self {
+        Self { config }
+    }
+}
+
+/// Marks an entity as a named arrival destination for `ctx.teleportToArea(areaId, targetName)`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TeleportTargetComponent {
+    #[allow(dead_code)]
+    pub config: TeleportTargetConfig,
+}
+
+impl TeleportTargetComponent {
+    pub fn new(config: TeleportTargetConfig) -> Self {
         Self { config }
     }
 }

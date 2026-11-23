@@ -203,6 +203,10 @@ impl EditorState {
                     let segs = trig.wireframe_segments(hit.to_array(), self.entity_preview_yaw);
                     renderer.draw_line_segments(camera, &segs, [0.45, 1.0, 0.78, 0.85], true);
                 }
+                if let Some(tt) = &tpl.teleport_target {
+                    let segs = tt.wireframe_segments(hit.to_array(), self.entity_preview_yaw);
+                    renderer.draw_line_segments(camera, &segs, [0.25, 1.0, 0.62, 0.90], true);
+                }
             }
         }
 
@@ -343,6 +347,15 @@ impl EditorState {
                     };
                     let segs = trig.wireframe_segments(placed.position, placed.rotation_y);
                     renderer.draw_line_segments(camera, &segs, color, selected);
+                }
+                if let Some(tt) = &resolved.teleport_target {
+                    let color = if selected {
+                        [1.0, 0.88, 0.25, 1.0]
+                    } else {
+                        [0.25, 1.0, 0.62, 0.92]
+                    };
+                    let segs = tt.wireframe_segments(placed.position, placed.rotation_y);
+                    renderer.draw_line_segments(camera, &segs, color, true);
                 }
                 if selected {
                     renderer.draw_node_ring(

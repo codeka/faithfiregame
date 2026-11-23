@@ -288,6 +288,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
               script: null,
               inventory: null,
               lootable: null,
+              teleport_target: null,
             },
           ]);
         }
@@ -1187,6 +1188,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
                 script: 'inherit',
                 inventory: 'inherit',
                 lootable: 'inherit',
+                teleport_target: 'inherit',
               },
             },
           }
@@ -1223,13 +1225,21 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
       script: 'inherit',
       inventory: 'inherit',
       lootable: 'inherit',
+      teleport_target: 'inherit',
     });
   });
 
   it('edits TypeScript trigger scripts in modal, transpiles to plain JS, generates FaithFire libs, and saves template', async () => {
-    const typeDefs = buildFaithFireTypeDefs(['cryo_prison', 'main'], ['guard_npc']);
+    const typeDefs = buildFaithFireTypeDefs(
+      ['cryo_prison', 'main'],
+      ['guard_npc'],
+      ['guard_rifle', 'cryo_jumpsuit'],
+    );
     expect(typeDefs).toContain('"cryo_prison" | "main"');
     expect(typeDefs).toContain('"guard_npc"');
+    expect(typeDefs).toContain('"guard_rifle"');
+    expect(typeDefs).toContain('hasItem(itemId: ItemId');
+    expect(typeDefs).toContain('teleportToArea(areaId: AreaId, targetName: string)');
     expect(typeDefs).toContain('interface TriggerContext');
 
     const tsCheck = transpileTypeScriptToJs(
@@ -1315,6 +1325,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
           script: 'inherit',
           inventory: 'inherit',
           lootable: 'inherit',
+          teleport_target: 'inherit',
         },
       },
     });
@@ -1407,6 +1418,10 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
+    (root.querySelector('.add-teleport-target-btn') as HTMLButtonElement).click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
     const saveBtn = root.querySelector('.toolbar .btn.primary') as HTMLButtonElement;
     saveBtn.click();
     await fixture.whenStable();
@@ -1427,8 +1442,9 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
       title: 'Fallen Security Guard',
       description: null,
     });
+    expect(putCall!.body['teleport_target']).toEqual({});
 
-    // Switch to World mode -> Entities tool and test instance overrides & resets for Inventory / Lootable.
+    // Switch to World mode -> Entities tool and test instance overrides & resets for Inventory / Lootable / Teleport Target.
     statusSig.set({
       ...baseStatus('entities'),
       editorMode: 'world',
@@ -1448,6 +1464,7 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
           script: 'inherit',
           inventory: 'inherit',
           lootable: 'inherit',
+          teleport_target: 'inherit',
         },
       },
     });
@@ -1477,13 +1494,20 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
       set: { title: 'Corpse Guard', description: null },
     });
 
+    (root.querySelector('.remove-teleport-target-btn') as HTMLButtonElement).click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(statusSig()?.selectedEntity?.overrides.teleport_target).toBe('remove');
+
     (root.querySelector('.reset-inventory-btn') as HTMLButtonElement).click();
     (root.querySelector('.reset-lootable-btn') as HTMLButtonElement).click();
+    (root.querySelector('.reset-teleport-target-btn') as HTMLButtonElement).click();
     await fixture.whenStable();
     fixture.detectChanges();
 
     expect(statusSig()?.selectedEntity?.overrides.inventory).toBe('inherit');
     expect(statusSig()?.selectedEntity?.overrides.lootable).toBe('inherit');
+    expect(statusSig()?.selectedEntity?.overrides.teleport_target).toBe('inherit');
   });
 
   it('switches top-level modes between World, Characters, and Entities and gates World hotkeys', () => {

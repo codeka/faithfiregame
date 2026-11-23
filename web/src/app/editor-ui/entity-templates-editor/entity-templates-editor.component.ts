@@ -17,6 +17,7 @@ import {
   defaultLootableConfig,
   defaultMovementConfig,
   defaultPropertyValue,
+  defaultTeleportTargetConfig,
   defaultTriggerConfig,
   defaultVisualConfig,
   EntityEditorStateService,
@@ -270,5 +271,9 @@ export class EntityTemplatesEditorComponent {
   patchLootable(patch: Partial<LootableConfig>): void {
     const cur = this.template()?.lootable ?? defaultLootableConfig();
     this.entityState.setLootable({ ...cur, ...patch });
+  }
+
+  addTeleportTargetComponent(): void {
+    this.entityState.setTeleportTarget(defaultTeleportTargetConfig());
   }
 }

@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::world::prettify_asset_slug;
 
-use super::types::{InventoryConfig, LootableConfig, PropertyBag, TriggerConfig};
+use super::types::{
+    InventoryConfig, LootableConfig, PropertyBag, TeleportTargetConfig, TriggerConfig,
+};
 
 /// Authored visual model configuration on an entity template or instance override.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -82,6 +84,8 @@ pub struct EntityTemplate {
     pub inventory: Option<InventoryConfig>,
     #[serde(default)]
     pub lootable: Option<LootableConfig>,
+    #[serde(default)]
+    pub teleport_target: Option<TeleportTargetConfig>,
 }
 
 /// Per-instance override state for an optional component derived from an [`EntityTemplate`].
@@ -125,6 +129,8 @@ pub struct EntityOverrides {
     pub inventory: ComponentOverride<InventoryConfig>,
     #[serde(default)]
     pub lootable: ComponentOverride<LootableConfig>,
+    #[serde(default)]
+    pub teleport_target: ComponentOverride<TeleportTargetConfig>,
 }
 
 impl EntityOverrides {
@@ -138,6 +144,7 @@ impl EntityOverrides {
             && matches!(self.script, ComponentOverride::Inherit)
             && matches!(self.inventory, ComponentOverride::Inherit)
             && matches!(self.lootable, ComponentOverride::Inherit)
+            && matches!(self.teleport_target, ComponentOverride::Inherit)
     }
 }
 
@@ -163,6 +170,7 @@ pub struct ResolvedEntityData {
     pub script: Option<ScriptConfig>,
     pub inventory: Option<InventoryConfig>,
     pub lootable: Option<LootableConfig>,
+    pub teleport_target: Option<TeleportTargetConfig>,
 }
 
 impl PlacedEntity {
@@ -212,6 +220,11 @@ impl PlacedEntity {
             .lootable
             .resolve(template.and_then(|t| t.lootable.as_ref()))
             .cloned();
+        let teleport_target = self
+            .overrides
+            .teleport_target
+            .resolve(template.and_then(|t| t.teleport_target.as_ref()))
+            .copied();
 
         ResolvedEntityData {
             name,
@@ -222,6 +235,7 @@ impl PlacedEntity {
             script,
             inventory,
             lootable,
+            teleport_target,
         }
     }
 }
@@ -265,6 +279,7 @@ mod tests {
                 title: Some("Guard Gear".to_owned()),
                 description: None,
             }),
+            teleport_target: None,
         }
     }
 
@@ -326,11 +341,13 @@ mod tests {
             source: "function onTrigger(ctx: TriggerContext) {}".to_owned(),
             compiled_js: String::new(),
         });
+        placed.overrides.teleport_target = ComponentOverride::Set(TeleportTargetConfig::default());
         let r3 = placed.resolve(Some(&tpl));
         assert_eq!(
             r3.script.as_ref().map(|s| s.effective_js()),
             Some("function onTrigger(ctx: TriggerContext) {}")
         );
+        assert!(r3.teleport_target.is_some());
 
         // Postcard roundtrip for template and placed entity.
         let tpl_bytes = postcard::to_allocvec(&tpl).unwrap();

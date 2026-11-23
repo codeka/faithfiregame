@@ -554,6 +554,7 @@ mod tests {
             script: None,
             inventory: None,
             lootable: None,
+            teleport_target: None,
         }
     }
 

@@ -318,6 +318,7 @@ mod tests {
             script: None,
             inventory: None,
             lootable: None,
+            teleport_target: None,
         };
 
         let Json(saved_tpl) = save_entity_template(

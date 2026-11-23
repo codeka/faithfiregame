@@ -21,8 +21,8 @@ use crate::db::CharacterSaveRecord;
 
 use super::components::{
     CRYO_PRISON_AREA_ID, EntityLocation, InsideInstanceId, InventoryComponent, LootableComponent,
-    MovementComponent, PlayerComponent, ScriptComponent, SpawnOrigin, TriggerComponent,
-    VisualComponent, inside_instance_for,
+    MovementComponent, PlayerComponent, ScriptComponent, SpawnOrigin, TeleportTargetComponent,
+    TriggerComponent, VisualComponent, inside_instance_for,
 };
 use super::entity::{Entity, RemovedPlayer};
 use super::glue::{SimCommand, SimEvent, TriggerWay};
@@ -372,6 +372,7 @@ impl SimWorld {
                 .as_ref()
                 .map(InventoryComponent::from_config);
             entity.lootable = resolved.lootable.map(LootableComponent::new);
+            entity.teleport_target = resolved.teleport_target.map(TeleportTargetComponent::new);
             apply_equipped_inventory_to_visual(entity, &self.item_catalog, &self.character_catalog);
         }
     }
@@ -501,7 +502,14 @@ impl SimWorld {
         if let Some(loot) = resolved.lootable {
             entity.lootable = Some(LootableComponent::new(loot));
         }
-        apply_equipped_inventory_to_visual(&mut entity, &self.item_catalog, &self.character_catalog);
+        if let Some(tt) = resolved.teleport_target {
+            entity.teleport_target = Some(TeleportTargetComponent::new(tt));
+        }
+        apply_equipped_inventory_to_visual(
+            &mut entity,
+            &self.item_catalog,
+            &self.character_catalog,
+        );
         self.spawn_entity(entity)
     }
 
@@ -683,6 +691,17 @@ impl SimWorld {
         target_x: f32,
         target_z: f32,
     ) -> Option<VecDeque<[f32; 2]>> {
+        self.compute_waypoints_with_goal_radius(location, pos, target_x, target_z, 2)
+    }
+
+    fn compute_waypoints_with_goal_radius(
+        &self,
+        location: &EntityLocation,
+        pos: [f32; 3],
+        target_x: f32,
+        target_z: f32,
+        goal_radius: i32,
+    ) -> Option<VecDeque<[f32; 2]>> {
         match location {
             EntityLocation::Outside { area_id } => {
                 let center_tx = (pos[0] / TILE_SIZE as f32).floor() as i32;
@@ -706,7 +725,7 @@ impl SimWorld {
                     (target_x.floor() as i32 - origin_wx).clamp(0, side as i32 - 1),
                     (target_z.floor() as i32 - origin_wz).clamp(0, side as i32 - 1),
                 );
-                let goal = find_nearest_walkable(&grid, goal_raw, 2)?;
+                let goal = find_nearest_walkable(&grid, goal_raw, goal_radius)?;
                 let raw_path = find_path(&grid, start, goal)?;
                 let smoothed = smooth_path(&grid, &raw_path);
                 let final_pt = if goal == goal_raw {
@@ -739,7 +758,7 @@ impl SimWorld {
                     (target_x.floor() as i32).clamp(0, w - 1),
                     (target_z.floor() as i32).clamp(0, l - 1),
                 );
-                let goal = find_nearest_walkable(sim, goal_raw, 2)?;
+                let goal = find_nearest_walkable(sim, goal_raw, goal_radius)?;
                 let raw_path = find_path(sim, start, goal)?;
                 let smoothed = smooth_path(sim, &raw_path);
                 let final_pt = if goal == goal_raw {
@@ -874,9 +893,19 @@ impl SimWorld {
                 trigger_entity_name: trig_ent.name.clone().unwrap_or_else(|| format!("Entity {trigger_id}")),
                 trigger_pos: trig_ent.transform.pos,
                 trigger_props: trig_ent.properties.clone(),
+                trigger_inventory: trig_ent
+                    .inventory
+                    .as_ref()
+                    .map(|i| i.items.clone())
+                    .unwrap_or_default(),
                 actor_entity_id: actor_id,
                 actor_pos: actor.transform.pos,
                 actor_props: actor.properties.clone(),
+                actor_inventory: actor
+                    .inventory
+                    .as_ref()
+                    .map(|i| i.items.clone())
+                    .unwrap_or_default(),
                 actor_is_player: actor.player.is_some(),
                 area_id: trig_ent.location.area_id().to_owned(),
                 way,
@@ -975,11 +1004,13 @@ impl SimWorld {
                     if dist <= trig_cfg.interaction_range.max(0.1) {
                         self.fire_click_trigger(actor_id, target_id, target_pos);
                     } else if can_move {
-                        let waypoints = self.compute_waypoints(
+                        let goal_radius = (trig_cfg.interaction_range.ceil() as i32 + 2).clamp(2, 6);
+                        let waypoints = self.compute_waypoints_with_goal_radius(
                             &actor_loc,
                             actor_pos,
                             target_pos[0],
                             target_pos[2],
+                            goal_radius,
                         );
                         if let Some(actor) = self.entities.get_mut(&actor_id) {
                             if let Some(wps) = waypoints {
@@ -1075,108 +1106,47 @@ impl SimWorld {
                 SimCommand::TransferToArea {
                     entity_id,
                     area_id,
-                    mut pos,
+                    pos,
                     yaw,
                 } => {
                     if !pos[0].is_finite() || !pos[2].is_finite() {
                         continue;
                     }
-                    let Some((current_location, account_id)) =
-                        self.entities.get(&entity_id).map(|e| {
-                            (
-                                e.location.clone(),
-                                e.player.as_ref().map(|p| p.account_id).unwrap_or(0),
-                            )
-                        })
+                    let Some((target_area_id, target_location)) =
+                        self.resolve_area_location(entity_id, &area_id)
                     else {
+                        warn!("TransferToArea ignored: unknown area '{area_id}'");
                         continue;
                     };
-
-                    let (target_area_id, target_location) = if area_id.is_empty() {
-                        (current_location.area_id().to_owned(), current_location)
-                    } else {
-                        let area_exists = area_id == "main"
-                            || area_id == CRYO_PRISON_AREA_ID
-                            || self
-                                .world_dir
-                                .join("areas")
-                                .join(&area_id)
-                                .join("area.bin")
-                                .exists();
-                        if !area_exists {
-                            warn!("TransferToArea ignored: unknown area '{area_id}'");
-                            continue;
-                        }
-                        let meta = self.load_area_meta(&area_id);
-                        let loc = if meta.kind == AreaKind::Outside {
-                            EntityLocation::Outside {
-                                area_id: area_id.clone(),
-                            }
-                        } else {
-                            EntityLocation::Inside(inside_instance_for(&area_id, account_id))
-                        };
-                        (area_id, loc)
+                    self.execute_area_transfer(entity_id, target_area_id, target_location, pos, yaw);
+                }
+                SimCommand::TeleportToAreaTarget {
+                    entity_id,
+                    area_id,
+                    target_name,
+                } => {
+                    let Some((target_area_id, target_location)) =
+                        self.resolve_area_location(entity_id, &area_id)
+                    else {
+                        warn!("TeleportToAreaTarget ignored: unknown area '{area_id}'");
+                        continue;
                     };
-
-                    let same_location = target_location == current_location_of(&self.entities, entity_id);
-                    self.remove_from_trigger_occupants(entity_id);
-
-                    let is_player = self
-                        .entities
-                        .get(&entity_id)
-                        .is_some_and(|e| e.player.is_some());
-                    if is_player {
-                        self.ensure_location_loaded(&target_location, pos);
-                    }
-                    pos[1] = self.ground_elevation(&target_location, pos);
-
-                    let mut final_yaw = 0.0;
-                    let mut tx_player: Option<mpsc::UnboundedSender<ServerMessage>> = None;
-                    let mut visual_wire: Option<EntityVisual> = None;
-                    if let Some(entity) = self.entities.get_mut(&entity_id) {
-                        entity.location = target_location;
-                        entity.transform.pos = pos;
-                        if let Some(new_yaw) = yaw {
-                            entity.transform.yaw = new_yaw;
-                        }
-                        final_yaw = entity.transform.yaw;
-                        if let Some(movement) = &mut entity.movement {
-                            movement.clear_path();
-                        }
-                        if let Some(player) = &mut entity.player {
-                            player.pending_interaction = None;
-                            tx_player = Some(player.tx_out.clone());
-                        }
-                        if let Some(vis) = &entity.visual {
-                            visual_wire = Some(vis.to_wire());
-                        }
-                    }
-
-                    if !same_location {
-                        if let (Some(tx_out), Some(visual)) = (tx_player, visual_wire) {
-                            let meta = self.load_area_meta(&target_area_id);
-                            let enter_msg = ServerMessage::EnterArea {
-                                entity_id,
-                                area_id: target_area_id,
-                                area_name: meta.name,
-                                area_kind: meta.kind,
-                                dimensions: meta.dimensions,
-                                pos,
-                                yaw: final_yaw,
-                                visual,
-                                fresh_cryo_wake: false,
-                            };
-                            let snap_entities = self
-                                .entities
-                                .get(&entity_id)
-                                .map(|obs| self.visible_entities_for(obs))
-                                .unwrap_or_default();
-                            let _ = tx_out.send(enter_msg);
-                            let _ = tx_out.send(ServerMessage::WorldSnapshot {
-                                entities: snap_entities,
-                            });
-                        }
-                    }
+                    let Some((pos, target_yaw)) =
+                        self.resolve_teleport_target(&target_location, &target_name)
+                    else {
+                        warn!(
+                            "TeleportToAreaTarget ignored: target '{}' not found in area '{}'",
+                            target_name, target_area_id
+                        );
+                        continue;
+                    };
+                    self.execute_area_transfer(
+                        entity_id,
+                        target_area_id,
+                        target_location,
+                        pos,
+                        Some(target_yaw),
+                    );
                 }
                 SimCommand::Despawn { entity_id } => {
                     self.remove_from_trigger_occupants(entity_id);
@@ -1358,6 +1328,205 @@ impl SimWorld {
                 target_id,
             });
             self.process_commands();
+        }
+    }
+
+    fn resolve_area_location(
+        &self,
+        entity_id: EntityId,
+        area_id: &str,
+    ) -> Option<(String, EntityLocation)> {
+        let entity = self.entities.get(&entity_id)?;
+        if area_id.is_empty() {
+            return Some((entity.location.area_id().to_owned(), entity.location.clone()));
+        }
+        let area_exists = area_id == "main"
+            || area_id == CRYO_PRISON_AREA_ID
+            || self
+                .world_dir
+                .join("areas")
+                .join(area_id)
+                .join("area.bin")
+                .exists();
+        if !area_exists {
+            return None;
+        }
+        let account_id = entity.player.as_ref().map(|p| p.account_id).unwrap_or(0);
+        let meta = self.load_area_meta(area_id);
+        let loc = if meta.kind == AreaKind::Outside {
+            EntityLocation::Outside {
+                area_id: area_id.to_owned(),
+            }
+        } else {
+            EntityLocation::Inside(inside_instance_for(area_id, account_id))
+        };
+        Some((area_id.to_owned(), loc))
+    }
+
+    fn resolve_teleport_target(
+        &mut self,
+        target_location: &EntityLocation,
+        target_name: &str,
+    ) -> Option<([f32; 3], f32)> {
+        let trimmed = target_name.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let mut ci_fallback: Option<([f32; 3], f32)> = None;
+        match target_location {
+            EntityLocation::Inside(inst) => {
+                self.ensure_inside_area(inst);
+                for entity in self.entities.values() {
+                    if &entity.location != target_location || entity.teleport_target.is_none() {
+                        continue;
+                    }
+                    if let Some(name) = entity.name.as_deref() {
+                        if name == trimmed {
+                            return Some((entity.transform.pos, entity.transform.yaw));
+                        }
+                        if ci_fallback.is_none() && name.eq_ignore_ascii_case(trimmed) {
+                            ci_fallback = Some((entity.transform.pos, entity.transform.yaw));
+                        }
+                    }
+                }
+                ci_fallback
+            }
+            EntityLocation::Outside { area_id } => {
+                for entity in self.entities.values() {
+                    let in_area = matches!(
+                        &entity.location,
+                        EntityLocation::Outside { area_id: a } if a == area_id
+                    );
+                    if !in_area || entity.teleport_target.is_none() {
+                        continue;
+                    }
+                    if let Some(name) = entity.name.as_deref() {
+                        if name == trimmed {
+                            return Some((entity.transform.pos, entity.transform.yaw));
+                        }
+                        if ci_fallback.is_none() && name.eq_ignore_ascii_case(trimmed) {
+                            ci_fallback = Some((entity.transform.pos, entity.transform.yaw));
+                        }
+                    }
+                }
+                let area_dir = self.world_dir.join("areas").join(area_id);
+                let Ok(entries) = fs::read_dir(area_dir) else {
+                    return ci_fallback;
+                };
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    let Some(coord_str) = path.file_name().and_then(|s| s.to_str()) else {
+                        continue;
+                    };
+                    let Some((tx_s, ty_s)) = coord_str.split_once(',') else {
+                        continue;
+                    };
+                    let (Ok(tx), Ok(ty)) = (tx_s.parse::<i32>(), ty_s.parse::<i32>()) else {
+                        continue;
+                    };
+                    if self
+                        .active_outside
+                        .contains_key(&(area_id.clone(), tx, ty))
+                    {
+                        continue;
+                    }
+                    let Ok(bytes) = fs::read(path.join("sim.bin")) else {
+                        continue;
+                    };
+                    let Ok(sim) = TileSimData::from_postcard_bytes(&bytes) else {
+                        continue;
+                    };
+                    for placed in &sim.entities {
+                        let resolved =
+                            placed.resolve(self.entity_templates.get(&placed.template_id));
+                        if resolved.teleport_target.is_some() {
+                            if resolved.name == trimmed {
+                                return Some((placed.position, placed.rotation_y));
+                            }
+                            if ci_fallback.is_none() && resolved.name.eq_ignore_ascii_case(trimmed)
+                            {
+                                ci_fallback = Some((placed.position, placed.rotation_y));
+                            }
+                        }
+                    }
+                }
+                ci_fallback
+            }
+        }
+    }
+
+    fn execute_area_transfer(
+        &mut self,
+        entity_id: EntityId,
+        target_area_id: String,
+        target_location: EntityLocation,
+        mut pos: [f32; 3],
+        yaw: Option<f32>,
+    ) {
+        if !pos[0].is_finite() || !pos[2].is_finite() {
+            return;
+        }
+        let same_location = target_location == current_location_of(&self.entities, entity_id);
+        self.remove_from_trigger_occupants(entity_id);
+
+        let is_player = self
+            .entities
+            .get(&entity_id)
+            .is_some_and(|e| e.player.is_some());
+        if is_player {
+            self.ensure_location_loaded(&target_location, pos);
+        }
+        pos[1] = self.ground_elevation(&target_location, pos);
+
+        let mut final_yaw = 0.0;
+        let mut tx_player: Option<mpsc::UnboundedSender<ServerMessage>> = None;
+        let mut visual_wire: Option<EntityVisual> = None;
+        if let Some(entity) = self.entities.get_mut(&entity_id) {
+            entity.location = target_location;
+            entity.transform.pos = pos;
+            if let Some(new_yaw) = yaw {
+                entity.transform.yaw = new_yaw;
+            }
+            final_yaw = entity.transform.yaw;
+            if let Some(movement) = &mut entity.movement {
+                movement.clear_path();
+            }
+            if let Some(player) = &mut entity.player {
+                player.pending_interaction = None;
+                tx_player = Some(player.tx_out.clone());
+            }
+            if let Some(vis) = &entity.visual {
+                visual_wire = Some(vis.to_wire());
+            }
+        }
+
+        if same_location {
+            self.broadcast_snapshots_for_entity_change(entity_id);
+        } else if let (Some(tx_out), Some(visual)) = (tx_player, visual_wire) {
+            let meta = self.load_area_meta(&target_area_id);
+            let enter_msg = ServerMessage::EnterArea {
+                entity_id,
+                area_id: target_area_id,
+                area_name: meta.name,
+                area_kind: meta.kind,
+                dimensions: meta.dimensions,
+                pos,
+                yaw: final_yaw,
+                visual,
+                fresh_cryo_wake: false,
+            };
+            let snap_entities = self
+                .entities
+                .get(&entity_id)
+                .map(|obs| self.visible_entities_for(obs))
+                .unwrap_or_default();
+            let _ = tx_out.send(enter_msg);
+            let _ = tx_out.send(ServerMessage::WorldSnapshot {
+                entities: snap_entities,
+            });
         }
     }
 
@@ -2272,6 +2441,7 @@ mod tests {
             script: None,
             inventory: None,
             lootable: None,
+            teleport_target: None,
         };
         fs::create_dir_all(world_dir.join("entities").join("templates")).unwrap();
         fs::write(
@@ -2491,6 +2661,7 @@ mod tests {
             }),
             inventory: None,
             lootable: None,
+            teleport_target: None,
         };
         fs::write(
             world_dir.join("entities/templates/portal_script.json"),
@@ -2779,5 +2950,150 @@ mod tests {
         assert!(saw_empty_guard_window, "LootTakeAll sends updated empty LootWindow");
 
         assert!(sim.remove_player(901, conn_id).is_some());
+    }
+
+    #[test]
+    fn cryo_prison_elevator_exit_checks_inventory_and_teleports_to_named_target_in_main() {
+        let world_dir = workspace_world_dir();
+        if !world_dir.join("areas").join("cryo_prison").join("sim.bin").exists()
+            || !world_dir
+                .join("areas")
+                .join("main")
+                .join("0,0")
+                .join("sim.bin")
+                .exists()
+        {
+            return;
+        }
+
+        // Read authored CryoElevatorExit target coords from main/0,0/sim.bin for exact verification.
+        let main_sim = TileSimData::from_postcard_bytes(
+            &fs::read(world_dir.join("areas/main/0,0/sim.bin")).unwrap(),
+        )
+        .unwrap();
+        let target_placed = main_sim
+            .entities
+            .iter()
+            .find(|e| e.overrides.name.as_deref() == Some("CryoElevatorExit"))
+            .expect("CryoElevatorExit placed in main/0,0/sim.bin");
+
+        let mut sim = SimWorld::new(world_dir);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (conn_id, enter_msg, snap_msg) = sim.spawn_player(902, None, tx);
+        let player_eid = match enter_msg {
+            ServerMessage::EnterArea { entity_id, .. } => entity_id,
+            _ => panic!("expected EnterArea"),
+        };
+        let entities = match snap_msg {
+            ServerMessage::WorldSnapshot { entities } => entities,
+            _ => panic!("expected WorldSnapshot"),
+        };
+
+        let exit_eid = entities
+            .iter()
+            .find(|e| e.name.as_deref() == Some("ElevatorExit"))
+            .expect("ElevatorExit entity spawned in cryo_prison")
+            .entity_id;
+        let prisoner_eid = entities
+            .iter()
+            .find(|e| e.name.as_deref() == Some("Fallen Prisoner"))
+            .expect("Fallen Prisoner entity spawned in cryo_prison")
+            .entity_id;
+        let guard_eid = entities
+            .iter()
+            .find(|e| e.name.as_deref() == Some("Fallen Security Guard"))
+            .expect("Fallen Security Guard entity spawned in cryo_prison")
+            .entity_id;
+
+        // 1. Click ElevatorExit with empty inventory -> stays in cryo_prison and sees exact warning popup.
+        sim.interact_player_with(902, exit_eid);
+        for _ in 0..80 {
+            sim.tick();
+        }
+        assert_eq!(
+            sim.entity(player_eid).unwrap().location.area_id(),
+            "cryo_prison"
+        );
+        let mut saw_check_popup = false;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMessage::Popup { body, .. } = msg {
+                if body == "Maybe I should check out the guard and the dead prisoner first" {
+                    saw_check_popup = true;
+                }
+            }
+        }
+        assert!(
+            saw_check_popup,
+            "missing-gear ElevatorExit click must show reminder popup"
+        );
+
+        // 2. Loot clothes only -> still missing guard rifle, must still show popup and stay inside.
+        sim.interact_player_with(902, prisoner_eid);
+        for _ in 0..80 {
+            sim.tick();
+        }
+        sim.loot_take_all_player_from(902, prisoner_eid);
+        sim.interact_player_with(902, exit_eid);
+        for _ in 0..80 {
+            sim.tick();
+        }
+        assert_eq!(
+            sim.entity(player_eid).unwrap().location.area_id(),
+            "cryo_prison"
+        );
+        let mut saw_second_popup = false;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMessage::Popup { body, .. } = msg {
+                if body == "Maybe I should check out the guard and the dead prisoner first" {
+                    saw_second_popup = true;
+                }
+            }
+        }
+        assert!(
+            saw_second_popup,
+            "clothes without rifle must still show reminder popup"
+        );
+
+        // 3. Loot guard rifle, then click ElevatorExit -> teleports to main at CryoElevatorExit!
+        sim.interact_player_with(902, guard_eid);
+        for _ in 0..40 {
+            sim.tick();
+        }
+        sim.loot_take_all_player_from(902, guard_eid);
+        while rx.try_recv().is_ok() {}
+
+        sim.interact_player_with(902, exit_eid);
+        for _ in 0..80 {
+            sim.tick();
+        }
+
+        let player_ent = sim.entity(player_eid).unwrap();
+        assert_eq!(player_ent.location.area_id(), "main");
+        assert!(
+            (player_ent.transform.pos[0] - target_placed.position[0]).abs() < 1e-3,
+            "expected x={}, got {}",
+            target_placed.position[0],
+            player_ent.transform.pos[0]
+        );
+        assert!(
+            (player_ent.transform.pos[2] - target_placed.position[2]).abs() < 1e-3,
+            "expected z={}, got {}",
+            target_placed.position[2],
+            player_ent.transform.pos[2]
+        );
+
+        let mut entered_main = false;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMessage::EnterArea { area_id, pos, .. } = msg {
+                if area_id == "main" {
+                    entered_main = true;
+                    assert!((pos[0] - target_placed.position[0]).abs() < 1e-3);
+                    assert!((pos[2] - target_placed.position[2]).abs() < 1e-3);
+                }
+            }
+        }
+        assert!(entered_main, "player should receive EnterArea for 'main'");
+
+        assert!(sim.remove_player(902, conn_id).is_some());
     }
 }

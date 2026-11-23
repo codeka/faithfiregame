@@ -695,6 +695,51 @@
             </button>
           }
         </div>
+
+        <!-- Teleport Target Component Override -->
+        <div class="comp-card">
+          <div class="section-head">
+            <span class="comp-title">Teleport Target</span>
+            <div class="override-meta">
+              <span class="badge" [class.overridden]="sel.overrides.teleport_target !== 'inherit'">
+                {{ overrideStatusLabel(sel.overrides.teleport_target, !!linkedTemplate()?.teleport_target) }}
+              </span>
+              @if (sel.overrides.teleport_target !== 'inherit') {
+                <button
+                  type="button"
+                  class="btn btn-sm btn-mini reset-teleport-target-btn"
+                  (click)="setTeleportTargetOverride('inherit')"
+                >
+                  Reset
+                </button>
+              }
+            </div>
+          </div>
+          @if (res.teleport_target) {
+            <div class="empty-hint">
+              Target Name: <strong>"{{ res.name }}"</strong> · Uses Name above &amp; Yaw for arrival.
+            </div>
+            <button
+              type="button"
+              class="btn btn-sm btn-danger remove-teleport-target-btn"
+              (click)="removeTeleportTarget()"
+            >
+              Remove Teleport Target
+            </button>
+          } @else {
+            <button
+              type="button"
+              class="btn btn-sm add-inst-teleport-target-btn"
+              (click)="addOrRestoreTeleportTarget()"
+            >
+              {{
+                sel.overrides.teleport_target === 'remove'
+                  ? 'Restore Template Teleport Target'
+                  : '+ Add Teleport Target'
+              }}
+            </button>
+          }
+        </div>
       </div>
     }
   } @else {

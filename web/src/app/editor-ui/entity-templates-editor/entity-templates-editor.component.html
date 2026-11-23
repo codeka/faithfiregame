@@ -63,7 +63,7 @@
       <span class="section-label">Components</span>
     </div>
 
-    @if (!tpl.visual || !tpl.movement || !tpl.trigger || !tpl.script || !tpl.inventory || !tpl.lootable) {
+    @if (!tpl.visual || !tpl.movement || !tpl.trigger || !tpl.script || !tpl.inventory || !tpl.lootable || !tpl.teleport_target) {
     <div class="add-comp-row">
       @if (!tpl.visual) {
       <button type="button" class="btn btn-sm add-visual-btn" (click)="addVisualComponent()">
@@ -93,6 +93,11 @@
       @if (!tpl.lootable) {
       <button type="button" class="btn btn-sm add-lootable-btn" (click)="addLootableComponent()">
         + Lootable
+      </button>
+      }
+      @if (!tpl.teleport_target) {
+      <button type="button" class="btn btn-sm add-teleport-target-btn" (click)="addTeleportTargetComponent()">
+        + Teleport Target
       </button>
       }
     </div>
@@ -314,6 +319,20 @@
           [ngModel]="loot.description ?? ''"
           (ngModelChange)="patchLootable({ description: $event.trim() ? $event : null })" />
       </label>
+    </div>
+    }
+
+    @if (tpl.teleport_target) {
+    <div class="comp-card">
+      <div class="row-between comp-head">
+        <span class="comp-title">Teleport Target</span>
+        <button type="button" class="btn btn-sm btn-danger" (click)="entityState.setTeleportTarget(null)">
+          Remove
+        </button>
+      </div>
+      <div class="empty-hint">
+        Destination for <code>ctx.teleportToArea(areaId, name)</code> using each placed instance's Name &amp; Yaw.
+      </div>
     </div>
     }
   </div>

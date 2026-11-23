@@ -7,7 +7,7 @@ use boa_engine::prelude::{
 };
 use boa_engine::property::Attribute;
 use boa_engine::{JsArgs, JsNativeError, JsResult, js_string};
-use shared::entity::{EntityId, PropertyBag, PropertyValue};
+use shared::entity::{EntityId, InventoryEntry, PropertyBag, PropertyValue};
 use shared::protocol::PopupTone;
 use tracing::info;
 
@@ -24,9 +24,11 @@ pub struct ScriptTriggerInput {
     pub trigger_entity_name: String,
     pub trigger_pos: [f32; 3],
     pub trigger_props: PropertyBag,
+    pub trigger_inventory: Vec<InventoryEntry>,
     pub actor_entity_id: EntityId,
     pub actor_pos: [f32; 3],
     pub actor_props: PropertyBag,
+    pub actor_inventory: Vec<InventoryEntry>,
     pub actor_is_player: bool,
     pub area_id: String,
     pub way: TriggerWay,
@@ -40,8 +42,10 @@ pub struct ScriptExecutionOutput {
 struct ScriptRunState {
     trigger_entity_id: EntityId,
     trigger_props: PropertyBag,
+    trigger_inventory: Vec<InventoryEntry>,
     actor_entity_id: EntityId,
     actor_props: PropertyBag,
+    actor_inventory: Vec<InventoryEntry>,
     actor_is_player: bool,
     commands: Vec<SimCommand>,
     logs: Vec<String>,
@@ -81,6 +85,160 @@ impl ScriptRunState {
             self.actor_entity_id
         }
     }
+
+    fn inventory_ref(&self, is_entity: bool) -> &[InventoryEntry] {
+        if is_entity {
+            &self.trigger_inventory
+        } else {
+            &self.actor_inventory
+        }
+    }
+}
+
+fn check_has_item(
+    args: &[JsValue],
+    state: &SharedScriptState,
+    is_entity: bool,
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let item_id = arg_string(args.get_or_undefined(0), context)?;
+    let min_val = args.get_or_undefined(1);
+    let min_count = if min_val.is_null_or_undefined() {
+        1.0
+    } else {
+        let n = min_val.to_number(context)?;
+        if !n.is_finite() {
+            return Err(JsNativeError::range()
+                .with_message("hasItem minCount must be finite")
+                .into());
+        }
+        n
+    };
+    if min_count <= 0.0 {
+        return Ok(JsValue::from(false));
+    }
+    let st = state.inner.borrow();
+    let total: f64 = st
+        .inventory_ref(is_entity)
+        .iter()
+        .filter(|e| e.item_id == item_id && e.count > 0)
+        .map(|e| e.count as f64)
+        .sum();
+    Ok(JsValue::from(total >= min_count))
+}
+
+fn attach_inventory_methods(
+    init: &mut ObjectInitializer<'_>,
+    state: &SharedScriptState,
+    is_entity: bool,
+) {
+    init.function(
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this, args, shared, context| check_has_item(args, shared, is_entity, context),
+            state.clone(),
+        ),
+        js_string!("hasItem"),
+        2,
+    );
+
+    init.function(
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this, args, shared, context| {
+                let item_id = arg_string(args.get_or_undefined(0), context)?;
+                let st = shared.inner.borrow();
+                let total: u64 = st
+                    .inventory_ref(is_entity)
+                    .iter()
+                    .filter(|e| e.item_id == item_id && e.count > 0)
+                    .map(|e| e.count as u64)
+                    .sum();
+                Ok(JsValue::from(total as f64))
+            },
+            state.clone(),
+        ),
+        js_string!("itemCount"),
+        1,
+    );
+
+    init.function(
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this, args, shared, context| {
+                let item_id = arg_string(args.get_or_undefined(0), context)?;
+                let st = shared.inner.borrow();
+                let equipped = st
+                    .inventory_ref(is_entity)
+                    .iter()
+                    .any(|e| e.item_id == item_id && e.count > 0 && e.equipped);
+                Ok(JsValue::from(equipped))
+            },
+            state.clone(),
+        ),
+        js_string!("isEquipped"),
+        1,
+    );
+
+    init.function(
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this, _args, shared, context| {
+                let entries = shared.inner.borrow().inventory_ref(is_entity).to_vec();
+                let objects: Vec<JsValue> = entries
+                    .into_iter()
+                    .filter(|e| e.count > 0)
+                    .map(|entry| {
+                        let mut obj = ObjectInitializer::new(context);
+                        obj.property(
+                            js_string!("itemId"),
+                            JsValue::from(JsString::from(entry.item_id.as_str())),
+                            Attribute::READONLY | Attribute::ENUMERABLE,
+                        );
+                        obj.property(
+                            js_string!("count"),
+                            JsValue::from(entry.count as f64),
+                            Attribute::READONLY | Attribute::ENUMERABLE,
+                        );
+                        obj.property(
+                            js_string!("equipped"),
+                            JsValue::from(entry.equipped),
+                            Attribute::READONLY | Attribute::ENUMERABLE,
+                        );
+                        JsValue::from(obj.build())
+                    })
+                    .collect();
+                Ok(JsArray::from_iter(objects, context).into())
+            },
+            state.clone(),
+        ),
+        js_string!("items"),
+        0,
+    );
+}
+
+fn push_teleport_to_area_target(
+    args: &[JsValue],
+    shared: &SharedScriptState,
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let area_id = arg_string(args.get_or_undefined(0), context)?;
+    if !is_valid_script_area_id(&area_id) {
+        return Err(JsNativeError::range()
+            .with_message("teleportToArea requires a valid area id [a-zA-Z0-9_-]")
+            .into());
+    }
+    let raw_target = arg_string(args.get_or_undefined(1), context)?;
+    let target_name = clamp_text(raw_target.trim());
+    if target_name.is_empty() {
+        return Err(JsNativeError::range()
+            .with_message("teleportToArea requires a non-empty target entity name")
+            .into());
+    }
+    let mut st = shared.inner.borrow_mut();
+    let entity_id = st.actor_entity_id;
+    st.push_command(SimCommand::TeleportToAreaTarget {
+        entity_id,
+        area_id,
+        target_name,
+    })?;
+    Ok(JsValue::undefined())
 }
 
 #[derive(Clone, Trace, Finalize, JsData)]
@@ -362,6 +520,7 @@ fn build_entity_object(
         Attribute::READONLY | Attribute::ENUMERABLE,
     );
     attach_prop_methods(&mut init, state, true);
+    attach_inventory_methods(&mut init, state, true);
     init.function(
         NativeFunction::from_copy_closure_with_captures(
             move |_this, _args, shared, _ctx| {
@@ -396,6 +555,7 @@ fn build_player_object(
         Attribute::READONLY | Attribute::ENUMERABLE,
     );
     attach_prop_methods(&mut init, state, false);
+    attach_inventory_methods(&mut init, state, false);
 
     init.function(
         NativeFunction::from_copy_closure_with_captures(
@@ -580,6 +740,15 @@ fn build_player_object(
         4,
     );
 
+    init.function(
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this, args, shared, context| push_teleport_to_area_target(args, shared, context),
+            state.clone(),
+        ),
+        js_string!("teleportToArea"),
+        2,
+    );
+
     init.build()
 }
 
@@ -607,8 +776,10 @@ pub fn execute_trigger_script(
         inner: Rc::new(RefCell::new(ScriptRunState {
             trigger_entity_id: input.trigger_entity_id,
             trigger_props: input.trigger_props.clone(),
+            trigger_inventory: input.trigger_inventory.clone(),
             actor_entity_id: input.actor_entity_id,
             actor_props: input.actor_props.clone(),
+            actor_inventory: input.actor_inventory.clone(),
             actor_is_player: input.actor_is_player,
             commands: Vec::new(),
             logs: Vec::new(),
@@ -639,6 +810,24 @@ pub fn execute_trigger_script(
             js_string!("player"),
             JsValue::from(player_obj),
             Attribute::READONLY | Attribute::ENUMERABLE,
+        );
+        init.function(
+            NativeFunction::from_copy_closure_with_captures(
+                move |_this, args, shared, context| check_has_item(args, shared, false, context),
+                shared.clone(),
+            ),
+            js_string!("hasItem"),
+            2,
+        );
+        init.function(
+            NativeFunction::from_copy_closure_with_captures(
+                move |_this, args, shared, context| {
+                    push_teleport_to_area_target(args, shared, context)
+                },
+                shared.clone(),
+            ),
+            js_string!("teleportToArea"),
+            2,
         );
         init.function(
             NativeFunction::from_copy_closure_with_captures(
@@ -722,9 +911,11 @@ mod tests {
             trigger_entity_name: "Cryo Terminal".to_owned(),
             trigger_pos: [4.0, 0.0, 8.0],
             trigger_props,
+            trigger_inventory: Vec::new(),
             actor_entity_id: EntityId::new(1),
             actor_pos: [3.5, 0.0, 7.5],
             actor_props: PropertyBag::new(),
+            actor_inventory: Vec::new(),
             actor_is_player: true,
             area_id: "cryo_prison".to_owned(),
             way: TriggerWay::Click,
@@ -805,5 +996,52 @@ mod tests {
             .err()
             .expect("missing onTrigger must error");
         assert!(missing_err.contains("onTrigger"));
+    }
+
+    #[test]
+    fn executes_inventory_checks_and_teleport_to_area_target() {
+        let mut input = sample_input();
+        input.actor_inventory = vec![
+            InventoryEntry {
+                item_id: "cryo_jumpsuit".to_owned(),
+                count: 1,
+                equipped: true,
+            },
+            InventoryEntry {
+                item_id: "ration_pack".to_owned(),
+                count: 3,
+                equipped: false,
+            },
+        ];
+
+        let js = r#"
+            function onTrigger(ctx) {
+                const items = ctx.player.items();
+                ctx.log("len=" + items.length + ",count=" + ctx.player.itemCount("ration_pack"));
+                if (
+                    ctx.player.hasItem("cryo_jumpsuit") &&
+                    ctx.player.isEquipped("cryo_jumpsuit") &&
+                    ctx.hasItem("ration_pack", 2) &&
+                    !ctx.player.hasItem("guard_rifle") &&
+                    items[0].itemId === "cryo_jumpsuit" &&
+                    items[0].equipped === true
+                ) {
+                    ctx.teleportToArea("main", "CryoElevatorExit");
+                }
+            }
+        "#;
+
+        let out = execute_trigger_script(js, input).expect("inventory + teleport script succeeds");
+        assert_eq!(out.logs, vec!["len=2,count=3".to_owned()]);
+        assert!(out.commands.iter().any(|c| matches!(
+            c,
+            SimCommand::TeleportToAreaTarget {
+                entity_id,
+                area_id,
+                target_name,
+            } if *entity_id == EntityId::new(1)
+                && area_id == "main"
+                && target_name == "CryoElevatorExit"
+        )));
     }
 }

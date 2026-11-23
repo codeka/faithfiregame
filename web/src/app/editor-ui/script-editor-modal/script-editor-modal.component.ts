@@ -189,7 +189,8 @@ export class ScriptEditorModalComponent implements OnInit, AfterViewInit, OnDest
 
       const areaIds = this.worldState.areas().map((a) => a.id);
       const tplIds = this.entityState.templates().map((t) => t.id);
-      const typeDefs = buildFaithFireTypeDefs(areaIds, tplIds);
+      const itemIds = this.entityState.items().map((i) => i.id);
+      const typeDefs = buildFaithFireTypeDefs(areaIds, tplIds, itemIds);
 
       monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
         target: monaco.languages.typescript.ScriptTarget.ES2022,

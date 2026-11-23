@@ -139,7 +139,12 @@ impl EntityStudioState {
         if let Some(trig) = &tpl.trigger {
             let segs = trig.wireframe_segments([0.0, 0.0, 0.0], 0.0);
             renderer.draw_line_segments(camera, &segs, [0.25, 0.92, 1.0, 0.95], true);
-        } else if tpl.visual.is_none() {
+        }
+        if let Some(tt) = &tpl.teleport_target {
+            let segs = tt.wireframe_segments([0.0, 0.0, 0.0], 0.0);
+            renderer.draw_line_segments(camera, &segs, [0.25, 1.0, 0.62, 0.95], true);
+        }
+        if tpl.visual.is_none() && tpl.trigger.is_none() && tpl.teleport_target.is_none() {
             renderer.draw_node_ring(
                 camera,
                 Vec3::Y * 0.05,

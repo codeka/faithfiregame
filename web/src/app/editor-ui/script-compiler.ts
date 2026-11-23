@@ -68,6 +68,25 @@ export const SCRIPT_SNIPPETS: readonly ScriptSnippet[] = [
 `,
   },
   {
+    id: 'inventory_teleport',
+    label: 'Inventory Check & Teleport Target',
+    source: `function onTrigger(ctx: TriggerContext): void {
+  const hasClothes =
+    ctx.player.hasItem('cryo_jumpsuit') && ctx.player.hasItem('cargo_pants');
+  const hasRifle = ctx.player.hasItem('guard_rifle');
+  if (!hasClothes || !hasRifle) {
+    ctx.showPopup(
+      ctx.entity.name,
+      'Maybe I should check out the guard and the dead prisoner first',
+      'warning',
+    );
+    return;
+  }
+  ctx.teleportToArea('main', 'CryoElevatorExit');
+}
+`,
+  },
+  {
     id: 'quest_gate',
     label: 'Quest Grant & Completion',
     source: `function onTrigger(ctx: TriggerContext): void {
@@ -108,17 +127,26 @@ function toUnionLiteral(ids: readonly string[], fallback: string): string {
 export function buildFaithFireTypeDefs(
   areaIds: readonly string[],
   templateIds: readonly string[],
+  itemIds: readonly string[] = [],
 ): string {
   const areaUnion = toUnionLiteral(areaIds, 'string');
   const tplUnion = toUnionLiteral(templateIds, 'string');
+  const itemUnion = toUnionLiteral(itemIds, 'string');
 
   return `// Faith & Fire Entity Scripting API (generated live from current project data)
 type AreaId = ${areaUnion};
 type TemplateId = ${tplUnion};
+type ItemId = ${itemUnion};
 type PopupTone = 'info' | 'success' | 'warning' | 'danger';
 type TriggerWay = 'click' | 'walk_into';
 type QuestStatus = 'none' | 'active' | 'completed';
 type PropertyPrimitive = boolean | number | string | null;
+
+interface InventoryEntryView {
+  readonly itemId: string;
+  readonly count: number;
+  readonly equipped: boolean;
+}
 
 interface ScriptEntityApi {
   /** Runtime entity ID. */
@@ -137,6 +165,14 @@ interface ScriptEntityApi {
   setProp(key: string, value: PropertyPrimitive): void;
   setInt(key: string, value: number): void;
   setFloat(key: string, value: number): void;
+  /** Returns true if this entity carries at least minCount (default 1) of itemId. */
+  hasItem(itemId: ItemId, minCount?: number): boolean;
+  /** Returns total quantity of itemId in this entity's inventory. */
+  itemCount(itemId: ItemId): number;
+  /** Returns true if itemId is currently equipped on this entity. */
+  isEquipped(itemId: ItemId): boolean;
+  /** Returns all item entries in this entity's inventory. */
+  items(): InventoryEntryView[];
   /** Despawns this entity instance from the active simulation. */
   despawn(): void;
 }
@@ -154,6 +190,14 @@ interface ScriptPlayerApi {
   setProp(key: string, value: PropertyPrimitive): void;
   setInt(key: string, value: number): void;
   setFloat(key: string, value: number): void;
+  /** Returns true if the player has at least minCount (default 1) of itemId. */
+  hasItem(itemId: ItemId, minCount?: number): boolean;
+  /** Returns total quantity of itemId in the player's inventory. */
+  itemCount(itemId: ItemId): number;
+  /** Returns true if itemId is currently equipped on the player. */
+  isEquipped(itemId: ItemId): boolean;
+  /** Returns all item entries in the player's inventory. */
+  items(): InventoryEntryView[];
   /** Returns 'none', 'active', or 'completed'. */
   questStatus(questId: string): QuestStatus;
   /** Returns true if the quest has been started or completed. */
@@ -166,6 +210,8 @@ interface ScriptPlayerApi {
   teleport(x: number, z: number, yawDeg?: number): void;
   /** Transfers the player into another area at (x, z) with optional heading in degrees. */
   moveToArea(areaId: AreaId, x: number, z: number, yawDeg?: number): void;
+  /** Transfers the player to an entity with TeleportTarget in areaId matching targetName. */
+  teleportToArea(areaId: AreaId, targetName: string): void;
 }
 
 interface TriggerContext {
@@ -179,6 +225,10 @@ interface TriggerContext {
   readonly entity: ScriptEntityApi;
   /** The interacting or overlapping player entity. */
   readonly player: ScriptPlayerApi;
+  /** Shorthand for ctx.player.hasItem(itemId, minCount). */
+  hasItem(itemId: ItemId, minCount?: number): boolean;
+  /** Transfers the player to an entity with TeleportTarget in areaId matching targetName. */
+  teleportToArea(areaId: AreaId, targetName: string): void;
   /** Displays a holographic popup dialog on the triggering player's HUD. */
   showPopup(title: string, body: string, tone?: PopupTone): void;
   /** Writes a diagnostic message to the server log. */

@@ -12,6 +12,7 @@ import {
   PlacedEntity,
   PropertyValue,
   ScriptConfig,
+  TeleportTargetConfig,
   TriggerActivation,
   TriggerConfig,
   VisualConfig,
@@ -22,6 +23,7 @@ import {
   defaultLootableConfig,
   defaultMovementConfig,
   defaultPropertyValue,
+  defaultTeleportTargetConfig,
   defaultTriggerConfig,
   defaultVisualConfig,
   EntityEditorStateService,
@@ -138,6 +140,7 @@ export class EntityToolComponent {
       script: structuredClone(sel.overrides.script ?? 'inherit'),
       inventory: structuredClone(sel.overrides.inventory ?? 'inherit'),
       lootable: structuredClone(sel.overrides.lootable ?? 'inherit'),
+      teleport_target: structuredClone(sel.overrides.teleport_target ?? 'inherit'),
     };
   }
 
@@ -165,6 +168,7 @@ export class EntityToolComponent {
         script: 'inherit',
         inventory: 'inherit',
         lootable: 'inherit',
+        teleport_target: 'inherit',
       },
     });
   }
@@ -556,5 +560,28 @@ export class EntityToolComponent {
   patchLootable(patch: Partial<LootableConfig>): void {
     const cur = this.resolved()?.lootable ?? defaultLootableConfig();
     this.setLootableOverride({ set: { ...cur, ...patch } });
+  }
+
+  setTeleportTargetOverride(ovVal: ComponentOverride<TeleportTargetConfig>): void {
+    const sel = this.selectedEntity();
+    if (!sel) return;
+    const ov = this.cloneOverrides(sel);
+    ov.teleport_target = ovVal;
+    this.pushUpdated({ ...sel, overrides: ov });
+  }
+
+  addOrRestoreTeleportTarget(): void {
+    const sel = this.selectedEntity();
+    if (!sel) return;
+    if (sel.overrides.teleport_target === 'remove' && this.linkedTemplate()?.teleport_target) {
+      this.setTeleportTargetOverride('inherit');
+      return;
+    }
+    this.setTeleportTargetOverride({ set: defaultTeleportTargetConfig() });
+  }
+
+  removeTeleportTarget(): void {
+    const tplHas = Boolean(this.linkedTemplate()?.teleport_target);
+    this.setTeleportTargetOverride(tplHas ? 'remove' : 'inherit');
   }
 }
