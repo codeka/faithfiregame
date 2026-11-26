@@ -66,20 +66,38 @@
         <div class="tool-section">
           <span class="section-label">Socket Attachments</span>
           @for (sock of skel.sockets; track sock.id) {
-            <label class="field-row">
-              <span class="field-name">{{ sock.name }}</span>
-              <select
-                class="select"
-                [attr.name]="'socket_' + sock.id"
-                [ngModel]="charState.equippedSocketPart(sock.id)"
-                (ngModelChange)="charState.setSocketPart(sock.id, $event)"
-              >
-                <option value="">(None)</option>
-                @for (part of charState.partsForSocket(sock.id); track part.id) {
-                  <option [value]="part.id">{{ part.name }}</option>
-                }
-              </select>
-            </label>
+            <div class="socket-stack-block">
+              <div class="field-row">
+                <span class="field-name">{{ sock.name }}</span>
+                <select
+                  class="select"
+                  [attr.name]="'socket_add_' + sock.id"
+                  (change)="onAddSocketPart(sock.id, $event)"
+                >
+                  <option value="">+ Add…</option>
+                  @for (part of charState.availablePartsForSocket(sock.id); track part.id) {
+                    <option [value]="part.id">{{ part.name }}</option>
+                  }
+                </select>
+              </div>
+              @if (charState.equippedSocketParts(sock.id).length > 0) {
+                <div class="socket-chips">
+                  @for (partId of charState.equippedSocketParts(sock.id); track partId) {
+                    <span class="socket-chip">
+                      <span class="socket-chip-name">{{ charState.partNameById(partId) }}</span>
+                      <button
+                        type="button"
+                        class="socket-chip-remove"
+                        [attr.aria-label]="'Remove ' + charState.partNameById(partId)"
+                        (click)="charState.removeSocketPart(sock.id, partId)"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  }
+                </div>
+              }
+            </div>
           }
         </div>
       }
@@ -332,7 +350,7 @@
           />
         </label>
 
-        @if (charState.equippedPartOnSelectedSocket(); as eqPart) {
+        @for (eqPart of charState.equippedPartsOnSelectedSocket(); track eqPart.id) {
           @if (eqPart.attachment.kind === 'socket') {
             <span class="sub-label">{{ eqPart.name }} Local Offset (m)</span>
             <div class="xyz-grid">
@@ -340,30 +358,30 @@
                 <span>X</span>
                 <input
                   type="number"
-                  name="partOffsetX"
+                  [attr.name]="'partOffsetX_' + eqPart.id"
                   step="0.01"
                   [ngModel]="eqPart.attachment.offset[0]"
-                  (ngModelChange)="updatePartOffset(0, +$event)"
+                  (ngModelChange)="updatePartOffset(eqPart.id, 0, +$event)"
                 />
               </label>
               <label class="num-cell">
                 <span>Y</span>
                 <input
                   type="number"
-                  name="partOffsetY"
+                  [attr.name]="'partOffsetY_' + eqPart.id"
                   step="0.01"
                   [ngModel]="eqPart.attachment.offset[1]"
-                  (ngModelChange)="updatePartOffset(1, +$event)"
+                  (ngModelChange)="updatePartOffset(eqPart.id, 1, +$event)"
                 />
               </label>
               <label class="num-cell">
                 <span>Z</span>
                 <input
                   type="number"
-                  name="partOffsetZ"
+                  [attr.name]="'partOffsetZ_' + eqPart.id"
                   step="0.01"
                   [ngModel]="eqPart.attachment.offset[2]"
-                  (ngModelChange)="updatePartOffset(2, +$event)"
+                  (ngModelChange)="updatePartOffset(eqPart.id, 2, +$event)"
                 />
               </label>
             </div>

@@ -1,0 +1,216 @@
+<section class="inv-dock" role="dialog" aria-label="Inventory">
+  <app-hud-frame
+    class="inv-frame"
+    variant="console"
+    tone="cyan"
+    [topFlare]="true"
+    [topDots]="true"
+    [bottomDots]="true"
+  >
+    <div class="inv-shell">
+      <header class="inv-head">
+        <div class="inv-title-group">
+          <h2 class="inv-title">Inventory</h2>
+          <span class="inv-stat-pill">{{ usedBagCount() }}/{{ inventory().bagCapacity }}</span>
+          <span class="inv-stat-pill" [attr.data-tone]="weightState()">
+            {{ inventory().totalWeight.toFixed(1) }}/{{ inventory().maxWeight.toFixed(0) }} kg
+          </span>
+        </div>
+        <button
+          type="button"
+          class="inv-close-btn"
+          aria-label="Close inventory"
+          (click)="close.emit()"
+        >
+          ×
+        </button>
+      </header>
+
+      <div class="inv-paperdoll">
+        <div class="equip-col">
+          @for (eq of leftEquipSlots(); track eq.slot) {
+            <div class="equip-wrap">
+              <span class="equip-label">{{ eq.label }}</span>
+              <div
+                class="item-cell equip-cell"
+                [attr.data-slot]="eq.slot"
+                [class.has-item]="!!eq.item"
+                [class.is-two-handed-ghost]="eq.isTwoHandedGhost"
+                [class.drop-compat]="canDropOnEquipSlot(eq.slot)"
+                [class.drop-hover]="dropHoverTarget() === 'equip:' + eq.slot"
+                [draggable]="!!eq.item && !eq.isTwoHandedGhost"
+                (dragstart)="eq.item && onEquipDragStart(eq.slot, eq.item, $event)"
+                (dragend)="onDragEnd()"
+                (dragover)="onEquipDragOver(eq.slot, $event)"
+                (dragleave)="onEquipDragLeave(eq.slot)"
+                (drop)="onEquipDrop(eq.slot, $event)"
+                (dblclick)="onEquipDblClick(eq.slot, eq.item)"
+                (mouseenter)="setHovered(eq.item, eq.isTwoHandedGhost)"
+                (mouseleave)="setHovered(null)"
+              >
+                @if (eq.item; as item) {
+                  @if (thumbFor(item); as src) {
+                    <img class="item-thumb" [src]="src" [alt]="item.name" draggable="false" />
+                  } @else {
+                    <span class="item-fallback">{{ item.name }}</span>
+                  }
+                  @if (eq.isTwoHandedGhost) {
+                    <span class="slot-badge">2H</span>
+                  }
+                }
+              </div>
+            </div>
+          }
+        </div>
+
+        <div
+          class="preview-stage"
+          (pointerdown)="onPreviewPointerDown($event)"
+          (pointermove)="onPreviewPointerMove($event)"
+          (pointerup)="onPreviewPointerUp()"
+          (pointercancel)="onPreviewPointerUp()"
+          (dblclick)="onPreviewDblClick()"
+        >
+          <canvas
+            #previewCanvas
+            class="preview-canvas"
+            width="192"
+            height="276"
+            aria-label="Character equipment preview"
+          ></canvas>
+          <span class="preview-hint">Drag to rotate</span>
+        </div>
+
+        <div class="equip-col">
+          @for (eq of rightEquipSlots(); track eq.slot) {
+            <div class="equip-wrap">
+              <span class="equip-label">{{ eq.label }}</span>
+              <div
+                class="item-cell equip-cell"
+                [attr.data-slot]="eq.slot"
+                [class.has-item]="!!eq.item"
+                [class.is-two-handed-ghost]="eq.isTwoHandedGhost"
+                [class.drop-compat]="canDropOnEquipSlot(eq.slot)"
+                [class.drop-hover]="dropHoverTarget() === 'equip:' + eq.slot"
+                [draggable]="!!eq.item && !eq.isTwoHandedGhost"
+                (dragstart)="eq.item && onEquipDragStart(eq.slot, eq.item, $event)"
+                (dragend)="onDragEnd()"
+                (dragover)="onEquipDragOver(eq.slot, $event)"
+                (dragleave)="onEquipDragLeave(eq.slot)"
+                (drop)="onEquipDrop(eq.slot, $event)"
+                (dblclick)="onEquipDblClick(eq.slot, eq.item)"
+                (mouseenter)="setHovered(eq.item, eq.isTwoHandedGhost)"
+                (mouseleave)="setHovered(null)"
+              >
+                @if (eq.item; as item) {
+                  @if (thumbFor(item); as src) {
+                    <img class="item-thumb" [src]="src" [alt]="item.name" draggable="false" />
+                  } @else {
+                    <span class="item-fallback">{{ item.name }}</span>
+                  }
+                  @if (eq.isTwoHandedGhost) {
+                    <span class="slot-badge">2H</span>
+                  }
+                }
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+
+      <div class="bag-header">
+        <span class="section-cap">Backpack</span>
+        <span class="bag-tip-hint">Double-click equip · Right-click/Shift+drag split</span>
+      </div>
+
+      <div class="bag-grid" role="grid" aria-label="Backpack grid">
+        @for (cell of bagSlots(); track $index) {
+          <div
+            class="item-cell bag-cell"
+            [attr.data-bag-slot]="$index"
+            [class.has-item]="!!cell"
+            [class.drop-hover]="dropHoverTarget() === 'bag:' + $index"
+            [draggable]="!!cell"
+            (dragstart)="cell && onBagDragStart($index, cell, $event)"
+            (dragend)="onDragEnd()"
+            (dragover)="onBagDragOver($index, $event)"
+            (dragleave)="onBagDragLeave($index)"
+            (drop)="onBagDrop($index, $event)"
+            (dblclick)="onBagDblClick($index, cell)"
+            (contextmenu)="onBagContextMenu($index, cell, $event)"
+            (mouseenter)="setHovered(cell)"
+            (mouseleave)="setHovered(null)"
+          >
+            @if (cell; as item) {
+              @if (thumbFor(item); as src) {
+                <img class="item-thumb" [src]="src" [alt]="item.name" draggable="false" />
+              } @else {
+                <span class="item-fallback">{{ item.name }}</span>
+              }
+              @if (item.count > 1) {
+                <span class="count-badge">×{{ item.count }}</span>
+              }
+            }
+          </div>
+        }
+      </div>
+
+      @if (splitDraft(); as split) {
+        <div class="split-popover" role="dialog" aria-label="Split stack">
+          <div class="split-head">Split {{ split.itemName }}</div>
+          <div class="split-controls">
+            <input
+              type="range"
+              class="split-range"
+              min="1"
+              [max]="split.maxSplit"
+              [ngModel]="split.amount"
+              (ngModelChange)="setSplitAmount(+$event)"
+            />
+            <input
+              type="number"
+              class="split-num"
+              name="splitAmount"
+              min="1"
+              [max]="split.maxSplit"
+              [ngModel]="split.amount"
+              (ngModelChange)="setSplitAmount(+$event)"
+            />
+          </div>
+          <div class="split-actions">
+            <button type="button" appHudButton tone="mint" class="split-ok-btn" (click)="confirmSplit()">
+              Split
+            </button>
+            <button type="button" appHudButton tone="cyan" class="split-cancel-btn" (click)="cancelSplit()">
+              Cancel
+            </button>
+          </div>
+        </div>
+      }
+
+      @if (hoveredInfo(); as tip) {
+        <div class="item-tooltip" role="status">
+          <div class="tip-top">
+            <span class="tip-name">{{ tip.item.name }}</span>
+            @if (tip.item.equipSlot) {
+              <span class="tip-tag">{{ slotLabel(tip.item.equipSlot) }}</span>
+            }
+            @if (tip.item.twoHanded) {
+              <span class="tip-tag">2H</span>
+            }
+            @if (tip.item.bonusBagSlots > 0) {
+              <span class="tip-tag mint">+{{ tip.item.bonusBagSlots }} Slots</span>
+            }
+            <span class="tip-weight">{{ (tip.item.weight * tip.item.count).toFixed(1) }} kg</span>
+          </div>
+          @if (tip.item.description) {
+            <div class="tip-desc">{{ tip.item.description }}</div>
+          }
+          @if (tip.isTwoHandedGhost) {
+            <div class="tip-hint">Occupied by two-handed weapon</div>
+          }
+        </div>
+      }
+    </div>
+  </app-hud-frame>
+</section>

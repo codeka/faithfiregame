@@ -43,7 +43,20 @@
   <app-hud-area-telemetry class="hud-slot-top-left" [areaName]="status.areaName" [areaId]="status.areaId"
     [playerPos]="status.playerPos" />
 
-    <app-hud-system-bar class="hud-slot-top-right" [showEditor]="engine.editorBuild()" (leave)="onLeave()" />
+    <app-hud-system-bar class="hud-slot-top-right" [showEditor]="engine.editorBuild()"
+      [inventoryOpen]="inventoryOpen()" (leave)="onLeave()" (toggleInventory)="toggleInventory()" />
+
+    @if (inventoryOpen()) {
+      <app-hud-inventory-panel
+        [inventory]="activeInventory()"
+        [thumbnails]="engine.itemThumbnails()"
+        (close)="closeInventory()"
+        (equipItem)="engine.equipInventoryItem($event.bagSlot, $event.targetSlot)"
+        (unequipSlot)="engine.unequipInventorySlot($event.slot, $event.targetBagSlot)"
+        (moveItem)="engine.moveInventoryItem($event.fromSlot, $event.toSlot)"
+        (splitStack)="engine.splitInventoryStack($event.fromSlot, $event.toSlot, $event.count)"
+      />
+    }
 
     @if (status.popup; as popup) {
     <div class="hud-popup-backdrop" role="dialog" aria-modal="true" aria-labelledby="hud-popup-title">
@@ -76,22 +89,30 @@
           <div class="hud-loot-list">
             @for (item of loot.items; track item.itemId) {
               <div class="hud-loot-row">
-                <div class="hud-loot-item-info">
-                  <div class="hud-loot-item-top">
-                    <span class="hud-loot-item-name">{{ item.name }}</span>
-                    @if (item.count > 1) {
-                      <span class="hud-loot-tag">×{{ item.count }}</span>
-                    }
-                    @if (item.category) {
-                      <span class="hud-loot-tag">{{ item.category }}</span>
-                    }
-                    @if (item.equipped) {
-                      <span class="hud-loot-tag equipped">Equipped</span>
+                <div class="hud-loot-left">
+                  @if (item.previewGlb && engine.itemThumbnails()[item.previewGlb]; as thumb) {
+                    <img class="hud-loot-thumb" [src]="thumb" [alt]="item.name" />
+                  }
+                  <div class="hud-loot-item-info">
+                    <div class="hud-loot-item-top">
+                      <span class="hud-loot-item-name">{{ item.name }}</span>
+                      @if (item.count > 1) {
+                        <span class="hud-loot-tag">×{{ item.count }}</span>
+                      }
+                      @if (item.category) {
+                        <span class="hud-loot-tag">{{ item.category }}</span>
+                      }
+                      @if (item.weight > 0) {
+                        <span class="hud-loot-tag">{{ (item.weight * item.count).toFixed(1) }} kg</span>
+                      }
+                      @if (item.equipped) {
+                        <span class="hud-loot-tag equipped">Equipped</span>
+                      }
+                    </div>
+                    @if (item.description) {
+                      <div class="hud-loot-item-desc">{{ item.description }}</div>
                     }
                   </div>
-                  @if (item.description) {
-                    <div class="hud-loot-item-desc">{{ item.description }}</div>
-                  }
                 </div>
                 <button type="button" appHudButton tone="mint" class="loot-take-btn"
                   (click)="engine.takeLootItem(loot.entityId, item.itemId)">

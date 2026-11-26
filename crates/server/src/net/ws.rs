@@ -165,6 +165,44 @@ async fn handle_ws_socket(mut socket: WebSocket, state: AppState) {
                                     .await
                                     .loot_take_all_player_from(player_id, entity_id);
                             }
+                            Ok(ClientMessage::EquipItem {
+                                bag_slot,
+                                target_slot,
+                            }) => {
+                                state
+                                    .sim
+                                    .write()
+                                    .await
+                                    .equip_player_item(player_id, bag_slot, target_slot);
+                            }
+                            Ok(ClientMessage::UnequipSlot {
+                                slot,
+                                target_bag_slot,
+                            }) => {
+                                state
+                                    .sim
+                                    .write()
+                                    .await
+                                    .unequip_player_slot(player_id, slot, target_bag_slot);
+                            }
+                            Ok(ClientMessage::MoveInventoryItem { from_slot, to_slot }) => {
+                                state
+                                    .sim
+                                    .write()
+                                    .await
+                                    .move_player_inventory_item(player_id, from_slot, to_slot);
+                            }
+                            Ok(ClientMessage::SplitInventoryStack {
+                                from_slot,
+                                to_slot,
+                                count,
+                            }) => {
+                                state
+                                    .sim
+                                    .write()
+                                    .await
+                                    .split_player_inventory_stack(player_id, from_slot, to_slot, count);
+                            }
                             Ok(msg) => {
                                 debug!("recv message from player {player_id}: {:?}", msg);
                             }

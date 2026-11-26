@@ -1006,11 +1006,13 @@ mod tests {
                 item_id: "cryo_jumpsuit".to_owned(),
                 count: 1,
                 equipped: true,
+                bag_slot: None,
             },
             InventoryEntry {
                 item_id: "ration_pack".to_owned(),
                 count: 3,
                 equipped: false,
+                bag_slot: Some(0),
             },
         ];
 

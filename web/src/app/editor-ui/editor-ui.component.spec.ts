@@ -20,7 +20,9 @@ const MOCK_CHARACTER_CATALOG: CharacterCatalog = {
       skinned_slots: [
         { id: 'head', name: 'Head' },
         { id: 'torso', name: 'Torso' },
+        { id: 'hands', name: 'Hands' },
         { id: 'legs', name: 'Legs' },
+        { id: 'feet', name: 'Feet' },
       ],
       sockets: [
         {
@@ -99,6 +101,20 @@ const MOCK_CHARACTER_CATALOG: CharacterCatalog = {
       category: 'Hair',
     },
     {
+      id: 'headgear_visor_goggles',
+      name: 'Visor Goggles',
+      skeleton_id: 'humanoid',
+      attachment: {
+        kind: 'socket',
+        socket_id: 'socket_head',
+        offset: [0, 0.02, 0.05],
+        rotation_deg: [0, 0, 0],
+        scale: 1,
+      },
+      path: '/world/assets/characters/headgear_visor_goggles.glb',
+      category: 'Headgear',
+    },
+    {
       id: 'weapon_guard_rifle',
       name: 'Guard Carbine',
       skeleton_id: 'humanoid',
@@ -127,7 +143,7 @@ const MOCK_CHARACTER_PRESETS: CharacterDefinition[] = [
       legs: 'legs_cargo_pants',
     },
     socket_parts: {
-      socket_head: 'hair_short_crop',
+      socket_head: ['hair_short_crop'],
     },
     palette: {},
   },
@@ -142,7 +158,7 @@ const MOCK_CHARACTER_PRESETS: CharacterDefinition[] = [
       legs: 'legs_cargo_pants',
     },
     socket_parts: {
-      socket_hand_r: 'weapon_guard_rifle',
+      socket_hand_r: ['weapon_guard_rifle'],
     },
     palette: {
       primary_color: [180, 40, 30],
@@ -1563,13 +1579,23 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     expect(component.charState.activeCharacter().id).toBe('fire_raider');
     expect(component.charState.activeCharacter().skinned_parts['head']).toBe('head_aug_visor');
 
-    // Swap torso and socket part
+    // Swap torso and stack multiple socket parts on socket_head
     component.charState.setSkinnedPart('torso', 'torso_cryo_jumpsuit');
-    component.charState.setSocketPart('socket_head', 'hair_short_crop');
+    component.charState.addSocketPart('socket_head', 'hair_short_crop');
+    component.charState.addSocketPart('socket_head', 'headgear_visor_goggles');
     fixture.detectChanges();
     expect(activeCharactersPushed.at(-1)?.skinned_parts['torso']).toBe('torso_cryo_jumpsuit');
-    expect(activeCharactersPushed.at(-1)?.socket_parts['socket_head']).toBe('hair_short_crop');
+    expect(activeCharactersPushed.at(-1)?.socket_parts['socket_head']).toEqual([
+      'hair_short_crop',
+      'headgear_visor_goggles',
+    ]);
     expect(component.charState.saveState()).toBe('Unsaved');
+
+    component.charState.removeSocketPart('socket_head', 'hair_short_crop');
+    fixture.detectChanges();
+    expect(activeCharactersPushed.at(-1)?.socket_parts['socket_head']).toEqual([
+      'headgear_visor_goggles',
+    ]);
 
     // Set and clear palette color
     component.charState.setPaletteColor('hair_color', '#ff8040');
@@ -1688,11 +1714,22 @@ describe('EditorUiComponent number-key mode shortcuts', () => {
     expect(loadedCharGlbs).toEqual([
       { path: '/world/assets/characters/plasma_pistol.glb', byteLen: 12 },
     ]);
-    expect(component.charState.activeCharacter().socket_parts['socket_hand_r']).toBe(
+    expect(component.charState.activeCharacter().socket_parts['socket_hand_r']).toEqual([
       'plasma_pistol',
-    );
+    ]);
     expect(
       component.charState.catalog().parts.some((p) => p.id === 'plasma_pistol'),
     ).toBe(true);
+
+    // Selecting socket_head stacks both parts and exposes per-part offset editors
+    component.charState.selectSocket('socket_head');
+    component.charState.addSocketPart('socket_head', 'headgear_visor_goggles');
+    fixture.detectChanges();
+    expect(component.charState.equippedPartsOnSelectedSocket().map((p) => p.id)).toEqual([
+      'hair_short_crop',
+      'headgear_visor_goggles',
+    ]);
+    expect(root.querySelector('input[name="partOffsetX_hair_short_crop"]')).not.toBeNull();
+    expect(root.querySelector('input[name="partOffsetX_headgear_visor_goggles"]')).not.toBeNull();
   });
 });

@@ -71,7 +71,7 @@ export interface CharacterDefinition {
   skeleton_id: string;
   show_base_mesh: boolean;
   skinned_parts: Record<string, string>;
-  socket_parts: Record<string, string>;
+  socket_parts: Record<string, string[]>;
   palette: CharacterPalette;
 }
 
@@ -207,9 +207,27 @@ export interface ScriptConfig {
   compiled_js: string;
 }
 
-export type ItemEquipBinding =
+export type EquipSlot =
+  | 'head'
+  | 'body'
+  | 'legs'
+  | 'feet'
+  | 'hands'
+  | 'back'
+  | 'main_hand'
+  | 'off_hand';
+
+export type VisualAttachment =
   | { kind: 'skinned'; slot: string; part_id: string }
   | { kind: 'socket'; socket_id: string; part_id: string };
+
+export interface ItemEquipSpec {
+  slot: EquipSlot;
+  two_handed: boolean;
+  visuals: VisualAttachment[];
+  hides_categories: string[];
+  bonus_bag_slots?: number;
+}
 
 export interface ItemDef {
   id: string;
@@ -217,7 +235,9 @@ export interface ItemDef {
   description: string;
   category: string;
   max_stack: number;
-  equip?: ItemEquipBinding | null;
+  weight?: number;
+  preview_glb?: string | null;
+  equip?: ItemEquipSpec | null;
 }
 
 export interface ItemCatalog {
@@ -228,6 +248,7 @@ export interface InventoryEntry {
   item_id: string;
   count: number;
   equipped: boolean;
+  bag_slot?: number | null;
 }
 
 export interface InventoryConfig {

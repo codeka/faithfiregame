@@ -387,6 +387,7 @@ mod tests {
                     item_id: "guard_rifle".to_owned(),
                     count: 1,
                     equipped: true,
+                    bag_slot: None,
                 }],
             },
         };

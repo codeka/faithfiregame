@@ -7,6 +7,7 @@ use crate::camera::Camera;
 
 use super::character_mesh::CharacterMeshGpu;
 use super::gizmo_mesh::GizmoMeshGpu;
+use super::preview::PreviewTargetGpu;
 use super::prop_mesh::{PropMeshGpu, create_selection_ring_mesh, prop_model_matrix};
 use super::road_mesh::RoadMeshGpu;
 use super::road_textures::{
@@ -52,6 +53,7 @@ pub struct Renderer {
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     studio_stage: StudioStageGpu,
     shadow_map: ShadowMapGpu,
+    preview_target: Option<PreviewTargetGpu>,
     light_view_proj: Mat4,
     pub sun_dir: Vec3,
     pub fog_start: f32,
@@ -130,6 +132,7 @@ impl Renderer {
             gizmo_mesh,
             studio_stage,
             shadow_map,
+            preview_target: None,
             light_view_proj: Mat4::IDENTITY,
             sun_dir: sun_direction(),
             fog_start: 140.0,
@@ -313,6 +316,78 @@ impl Renderer {
             gl.clear_color(self.fog_color[0], self.fog_color[1], self.fog_color[2], 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
         }
+    }
+
+    /// Renders `draw` into a transparent offscreen RGBA8 framebuffer and returns top-down RGBA bytes.
+    pub fn render_to_rgba<F: FnOnce(&Renderer)>(
+        &mut self,
+        width: i32,
+        height: i32,
+        sun_dir: Vec3,
+        draw: F,
+    ) -> Result<Vec<u8>, String> {
+        PreviewTargetGpu::ensure(&mut self.preview_target, &self.gl, width, height)?;
+        let Some(target) = self.preview_target.as_ref() else {
+            return Err("preview target unavailable".to_owned());
+        };
+        let w = target.width;
+        let h = target.height;
+
+        let saved_lvp = self.light_view_proj;
+        let saved_sun = self.sun_dir;
+        let saved_fog_start = self.fog_start;
+        let saved_fog_end = self.fog_end;
+
+        // Place light clip outside [0, 1]^3 so `sample_shadow` returns 1.0 without scene shadow artifacts.
+        self.light_view_proj = Mat4::from_translation(Vec3::splat(10.0));
+        self.sun_dir = sun_dir.normalize_or_zero();
+        self.fog_start = 1000.0;
+        self.fog_end = 2000.0;
+
+        let mut raw = vec![0u8; (w as usize) * (h as usize) * 4];
+        unsafe {
+            let gl = &self.gl;
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(target.fbo));
+            gl.viewport(0, 0, w, h);
+            gl.disable(glow::POLYGON_OFFSET_FILL);
+            gl.enable(glow::DEPTH_TEST);
+            gl.enable(glow::CULL_FACE);
+            gl.color_mask(true, true, true, true);
+            gl.depth_mask(true);
+            gl.clear_color(0.0, 0.0, 0.0, 0.0);
+            gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+        }
+
+        draw(self);
+
+        unsafe {
+            let gl = &self.gl;
+            gl.read_pixels(
+                0,
+                0,
+                w,
+                h,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(Some(&mut raw)),
+            );
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        }
+
+        self.light_view_proj = saved_lvp;
+        self.sun_dir = saved_sun;
+        self.fog_start = saved_fog_start;
+        self.fog_end = saved_fog_end;
+
+        let stride = (w as usize) * 4;
+        let mut flipped = vec![0u8; raw.len()];
+        for row in 0..(h as usize) {
+            let src_start = ((h as usize) - 1 - row) * stride;
+            let dst_start = row * stride;
+            flipped[dst_start..dst_start + stride]
+                .copy_from_slice(&raw[src_start..src_start + stride]);
+        }
+        Ok(flipped)
     }
 
     unsafe fn bind_shadow_uniforms(&self, prog: glow::Program) {

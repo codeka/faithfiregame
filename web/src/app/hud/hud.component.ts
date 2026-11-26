@@ -1,15 +1,44 @@
-import { Component, effect, inject, OnDestroy, signal } from '@angular/core';
+import { Component, computed, effect, HostListener, inject, OnDestroy, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../auth/auth.service';
-import { EngineService } from '../engine.service';
+import { EngineService, GamePlayerInventory } from '../engine.service';
 import { WakeOverlayState } from './hud.types';
 import { HudButtonComponent } from './primitives/hud-button/hud-button.component';
 import { HudFrameComponent } from './primitives/hud-frame/hud-frame.component';
 import { AreaTelemetryComponent } from './widgets/area-telemetry/area-telemetry.component';
+import { InventoryPanelComponent } from './widgets/inventory-panel/inventory-panel.component';
 import { SystemBarComponent } from './widgets/system-bar/system-bar.component';
 import { WakeOverlayComponent } from './widgets/wake-overlay/wake-overlay.component';
 
 export type { WakeOverlayState } from './hud.types';
+
+const EMPTY_INVENTORY: GamePlayerInventory = {
+  items: [],
+  bagCapacity: 20,
+  totalWeight: 0,
+  maxWeight: 30,
+};
+
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  if (
+    target.getAttribute('contenteditable') !== null &&
+    target.getAttribute('contenteditable')?.toLowerCase() !== 'false'
+  ) {
+    return true;
+  }
+  const tag = target.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') {
+    return true;
+  }
+  if (tag === 'INPUT') {
+    const type = target.getAttribute('type')?.toLowerCase() ?? '';
+    return type !== 'range' && type !== 'checkbox' && type !== 'radio' && type !== 'button';
+  }
+  return false;
+}
 
 @Component({
   selector: 'app-hud',
@@ -19,6 +48,7 @@ export type { WakeOverlayState } from './hud.types';
     HudButtonComponent,
     HudFrameComponent,
     AreaTelemetryComponent,
+    InventoryPanelComponent,
     SystemBarComponent,
     WakeOverlayComponent,
   ],
@@ -33,6 +63,11 @@ export class HudComponent implements OnDestroy {
   readonly startingPlay = signal(false);
   readonly playError = signal<string | null>(null);
   readonly wakeOverlayState = signal<WakeOverlayState>('done');
+  readonly inventoryOpen = signal(false);
+
+  readonly activeInventory = computed<GamePlayerInventory>(
+    () => this.engine.gameStatus()?.inventory ?? EMPTY_INVENTORY,
+  );
 
   private wakeTriggered = false;
   private wakeFallbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -47,6 +82,7 @@ export class HudComponent implements OnDestroy {
         this.wakeOverlayState.set('closed');
         this.engine.connectGameSession(token);
       } else {
+        this.inventoryOpen.set(false);
         this.wakeOverlayState.set('done');
         this.engine.enterLandingMode();
       }
@@ -73,6 +109,31 @@ export class HudComponent implements OnDestroy {
     });
   }
 
+  @HostListener('window:keydown', ['$event'])
+  onWindowKeyDown(ev: KeyboardEvent): void {
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat || isEditableEventTarget(ev.target)) {
+      return;
+    }
+    if (!this.auth.hasSession() || this.engine.gameStatus()?.phase !== 'playing') {
+      return;
+    }
+    if (ev.key === 'i' || ev.key === 'I') {
+      ev.preventDefault();
+      this.toggleInventory();
+    } else if (ev.key === 'Escape' && this.inventoryOpen()) {
+      ev.preventDefault();
+      this.inventoryOpen.set(false);
+    }
+  }
+
+  toggleInventory(): void {
+    this.inventoryOpen.update((open) => !open);
+  }
+
+  closeInventory(): void {
+    this.inventoryOpen.set(false);
+  }
+
   async onPlay(): Promise<void> {
     if (this.startingPlay()) {
       return;
@@ -94,6 +155,7 @@ export class HudComponent implements OnDestroy {
 
   async onLeave(): Promise<void> {
     this.clearWakeTimer();
+    this.inventoryOpen.set(false);
     this.engine.disconnectGameSession();
     await this.auth.logout();
   }

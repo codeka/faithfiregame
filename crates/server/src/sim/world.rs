@@ -7,9 +7,11 @@ use shared::entity::{
     EntityId, EntityTemplate, EntityVisual, InventoryConfig, InventoryEntry, PlacedEntity,
     VisualConfig,
 };
-use shared::item::{ItemCatalog, ItemDef, ItemEquipBinding};
+use shared::item::{EquipSlot, ItemCatalog, ItemDef, VisualAttachment};
 use shared::pathfinding::{WalkGrid, find_path, smooth_path};
-use shared::protocol::{EntitySnapshot, LootItemEntry, ServerMessage};
+use shared::protocol::{
+    EntitySnapshot, LootItemEntry, PlayerInventoryItem, PopupTone, ServerMessage,
+};
 use shared::world::{
     AreaKind, AreaMetadata, InsideKind, InsideSimData, TILE_SIZE, TileSimData,
     prettify_asset_slug,
@@ -266,18 +268,8 @@ impl SimWorld {
     #[cfg_attr(not(feature = "editor"), allow(dead_code))]
     pub fn reload_character_catalog(&mut self, catalog: CharacterCatalog) {
         self.character_catalog = catalog;
-        let catalog_ref = &self.character_catalog;
         for entity in self.entities.values_mut() {
-            if let Some(VisualComponent::Character {
-                definition,
-                compact,
-                pose_clip,
-            }) = &mut entity.visual
-            {
-                *compact = definition
-                    .to_compact_with_pose(catalog_ref, pose_clip.clone())
-                    .unwrap_or_default();
-            }
+            recompose_character_visual(entity, &self.item_catalog, &self.character_catalog);
         }
         self.refresh_entities_for_template(None);
     }
@@ -371,9 +363,13 @@ impl SimWorld {
                 .inventory
                 .as_ref()
                 .map(InventoryComponent::from_config);
+            if let Some(inv) = &mut entity.inventory {
+                inv.normalize_layout(&self.item_catalog);
+            }
             entity.lootable = resolved.lootable.map(LootableComponent::new);
             entity.teleport_target = resolved.teleport_target.map(TeleportTargetComponent::new);
-            apply_equipped_inventory_to_visual(entity, &self.item_catalog, &self.character_catalog);
+            detach_equipped_visuals_from_base(entity, &self.item_catalog);
+            recompose_character_visual(entity, &self.item_catalog, &self.character_catalog);
         }
     }
 
@@ -455,6 +451,7 @@ impl SimWorld {
                     .to_compact_with_pose(&self.character_catalog, pose_clip.clone())
                     .unwrap_or_default();
                 VisualComponent::Character {
+                    base_definition: definition.clone(),
                     definition,
                     compact,
                     pose_clip: pose_clip.clone(),
@@ -497,7 +494,9 @@ impl SimWorld {
             entity.script = Some(ScriptComponent::new(script));
         }
         if let Some(inv) = &resolved.inventory {
-            entity.inventory = Some(InventoryComponent::from_config(inv));
+            let mut inv_comp = InventoryComponent::from_config(inv);
+            inv_comp.normalize_layout(&self.item_catalog);
+            entity.inventory = Some(inv_comp);
         }
         if let Some(loot) = resolved.lootable {
             entity.lootable = Some(LootableComponent::new(loot));
@@ -505,11 +504,8 @@ impl SimWorld {
         if let Some(tt) = resolved.teleport_target {
             entity.teleport_target = Some(TeleportTargetComponent::new(tt));
         }
-        apply_equipped_inventory_to_visual(
-            &mut entity,
-            &self.item_catalog,
-            &self.character_catalog,
-        );
+        detach_equipped_visuals_from_base(&mut entity, &self.item_catalog);
+        recompose_character_visual(&mut entity, &self.item_catalog, &self.character_catalog);
         self.spawn_entity(entity)
     }
 
@@ -852,6 +848,8 @@ impl SimWorld {
                             category: def.map(|d| d.category.clone()).unwrap_or_default(),
                             count: entry.count,
                             equipped: entry.equipped,
+                            weight: def.map(|d| d.weight).unwrap_or(0.0),
+                            preview_glb: resolve_item_preview_glb(def, &self.character_catalog),
                         }
                     })
                     .collect()
@@ -864,6 +862,69 @@ impl SimWorld {
             description,
             items,
         });
+    }
+
+    fn send_player_inventory(&self, player_eid: EntityId) {
+        let Some(entity) = self.entities.get(&player_eid) else {
+            return;
+        };
+        let Some(player) = entity.player.as_ref() else {
+            return;
+        };
+        let (items, bag_capacity, total_weight, max_weight) = match entity.inventory.as_ref() {
+            Some(inv) => {
+                let mut list: Vec<PlayerInventoryItem> = inv
+                    .items
+                    .iter()
+                    .filter(|e| e.count > 0)
+                    .map(|entry| {
+                        let def = self.item_catalog.get(&entry.item_id);
+                        let spec = def.and_then(|d| d.equip.as_ref());
+                        PlayerInventoryItem {
+                            item_id: entry.item_id.clone(),
+                            name: def
+                                .map(|d| d.name.clone())
+                                .unwrap_or_else(|| prettify_asset_slug(&entry.item_id)),
+                            description: def.map(|d| d.description.clone()).unwrap_or_default(),
+                            category: def.map(|d| d.category.clone()).unwrap_or_default(),
+                            count: entry.count,
+                            max_stack: def.map(|d| d.max_stack).unwrap_or(1).max(1),
+                            weight: def.map(|d| d.weight).unwrap_or(0.0),
+                            equip_slot: spec.map(|s| s.slot),
+                            two_handed: spec.is_some_and(|s| s.two_handed),
+                            bonus_bag_slots: spec.map(|s| s.bonus_bag_slots).unwrap_or(0),
+                            equipped: entry.equipped,
+                            bag_slot: entry.bag_slot,
+                            preview_glb: resolve_item_preview_glb(def, &self.character_catalog),
+                        }
+                    })
+                    .collect();
+                list.sort_by_key(|i| (!i.equipped, i.bag_slot.unwrap_or(u16::MAX)));
+                (
+                    list,
+                    inv.bag_capacity(&self.item_catalog),
+                    inv.total_weight(&self.item_catalog),
+                    inv.max_weight(),
+                )
+            }
+            None => (Vec::new(), 20, 0.0, 30.0),
+        };
+        let _ = player.tx_out.send(ServerMessage::PlayerInventory {
+            items,
+            bag_capacity,
+            total_weight,
+            max_weight,
+        });
+    }
+
+    fn send_player_warning(&self, player_eid: EntityId, title: &str, body: &str) {
+        if let Some(player) = self.entities.get(&player_eid).and_then(|e| e.player.as_ref()) {
+            let _ = player.tx_out.send(ServerMessage::Popup {
+                title: title.to_owned(),
+                body: body.to_owned(),
+                tone: PopupTone::Warning,
+            });
+        }
     }
 
     fn broadcast_snapshots_for_entity_change(&self, changed_id: EntityId) {
@@ -1206,28 +1267,34 @@ impl SimWorld {
             .to_compact(&self.character_catalog)
             .unwrap_or_default();
 
+        let mut inv = InventoryComponent::from_config(&inventory_cfg);
+        inv.normalize_layout(&self.item_catalog);
+
         let entity_id = self.alloc_entity_id();
         let mut entity = Entity::new(entity_id, location, pos, yaw)
             .with_visual(VisualComponent::Character {
+                base_definition: appearance_def.clone(),
                 definition: appearance_def,
                 compact,
                 pose_clip: None,
             })
             .with_movement(MovementComponent::new(PLAYER_MOVE_SPEED))
-            .with_inventory(InventoryComponent::from_config(&inventory_cfg))
+            .with_inventory(inv)
             .with_player(PlayerComponent {
                 account_id,
                 conn_id,
                 tx_out,
                 pending_interaction: None,
             });
-        apply_equipped_inventory_to_visual(&mut entity, &self.item_catalog, &self.character_catalog);
+        detach_equipped_visuals_from_base(&mut entity, &self.item_catalog);
+        recompose_character_visual(&mut entity, &self.item_catalog, &self.character_catalog);
         let wire_visual = entity
             .visual
             .as_ref()
             .map(VisualComponent::to_wire)
             .unwrap_or_else(|| EntityVisual::Character(Default::default()));
         self.spawn_entity(entity);
+        self.send_player_inventory(entity_id);
 
         let snapped_pos = self
             .entities
@@ -1270,7 +1337,7 @@ impl SimWorld {
         }
         let removed = self.despawn_entity(entity_id)?;
         let appearance_def = match removed.visual {
-            Some(VisualComponent::Character { definition, .. }) => definition,
+            Some(VisualComponent::Character { base_definition, .. }) => base_definition,
             _ => CharacterDefinition::cryo_awakening_default(),
         };
         let inventory = removed
@@ -1329,6 +1396,119 @@ impl SimWorld {
             });
             self.process_commands();
         }
+    }
+
+    pub fn equip_player_item(&mut self, account_id: u64, bag_slot: u16, target_slot: Option<EquipSlot>) {
+        let Some(player_eid) = self.player_entities.get(&account_id).copied() else {
+            return;
+        };
+        let result = {
+            let Some(player) = self.entities.get_mut(&player_eid) else {
+                return;
+            };
+            let Some(inv) = &mut player.inventory else {
+                return;
+            };
+            inv.equip_from_bag(bag_slot, target_slot, &self.item_catalog)
+        };
+        match result {
+            Ok(()) => {
+                if let Some(player) = self.entities.get_mut(&player_eid) {
+                    recompose_character_visual(
+                        player,
+                        &self.item_catalog,
+                        &self.character_catalog,
+                    );
+                }
+                self.broadcast_snapshots_for_entity_change(player_eid);
+                self.send_player_inventory(player_eid);
+            }
+            Err(msg) => {
+                self.send_player_warning(player_eid, "Cannot Equip", msg);
+                self.send_player_inventory(player_eid);
+            }
+        }
+    }
+
+    pub fn unequip_player_slot(
+        &mut self,
+        account_id: u64,
+        slot: EquipSlot,
+        target_bag_slot: Option<u16>,
+    ) {
+        let Some(player_eid) = self.player_entities.get(&account_id).copied() else {
+            return;
+        };
+        let result = {
+            let Some(player) = self.entities.get_mut(&player_eid) else {
+                return;
+            };
+            let Some(inv) = &mut player.inventory else {
+                return;
+            };
+            inv.unequip_to_bag(slot, target_bag_slot, &self.item_catalog)
+        };
+        match result {
+            Ok(()) => {
+                if let Some(player) = self.entities.get_mut(&player_eid) {
+                    recompose_character_visual(
+                        player,
+                        &self.item_catalog,
+                        &self.character_catalog,
+                    );
+                }
+                self.broadcast_snapshots_for_entity_change(player_eid);
+                self.send_player_inventory(player_eid);
+            }
+            Err(msg) => {
+                self.send_player_warning(player_eid, "Cannot Unequip", msg);
+                self.send_player_inventory(player_eid);
+            }
+        }
+    }
+
+    pub fn move_player_inventory_item(&mut self, account_id: u64, from_slot: u16, to_slot: u16) {
+        let Some(player_eid) = self.player_entities.get(&account_id).copied() else {
+            return;
+        };
+        let result = {
+            let Some(player) = self.entities.get_mut(&player_eid) else {
+                return;
+            };
+            let Some(inv) = &mut player.inventory else {
+                return;
+            };
+            inv.move_bag_slot(from_slot, to_slot, &self.item_catalog)
+        };
+        if let Err(msg) = result {
+            self.send_player_warning(player_eid, "Inventory", msg);
+        }
+        self.send_player_inventory(player_eid);
+    }
+
+    pub fn split_player_inventory_stack(
+        &mut self,
+        account_id: u64,
+        from_slot: u16,
+        to_slot: u16,
+        count: u32,
+    ) {
+        let Some(player_eid) = self.player_entities.get(&account_id).copied() else {
+            return;
+        };
+        let result = {
+            let Some(player) = self.entities.get_mut(&player_eid) else {
+                return;
+            };
+            let Some(inv) = &mut player.inventory else {
+                return;
+            };
+            inv.split_bag_stack(from_slot, to_slot, count, &self.item_catalog)
+        };
+        if let Err(msg) = result {
+            self.send_player_warning(player_eid, "Split Stack", msg);
+        }
+        self.send_player_inventory(player_eid);
     }
 
     fn resolve_area_location(
@@ -1564,49 +1744,110 @@ impl SimWorld {
             return;
         }
 
-        let taken: Vec<InventoryEntry> = {
-            let Some(target) = self.entities.get_mut(&target_id) else {
+        let mut accepted: Vec<(usize, InventoryEntry)> = Vec::new();
+        let mut rejected_reason: Option<&'static str> = None;
+        {
+            let Some(actor) = self.entities.get(&actor_id) else {
                 return;
             };
-            let Some(inv) = &mut target.inventory else {
+            let Some(target) = self.entities.get(&target_id) else {
                 return;
             };
-            let list = match single_item_id {
-                Some(id) => inv.take_item(id).into_iter().collect(),
-                None => inv.take_all(),
+            let Some(actor_inv) = &actor.inventory else {
+                return;
             };
-            for entry in &list {
-                if entry.equipped {
-                    unequip_removed_item_from_visual(
+            let Some(target_inv) = &target.inventory else {
+                return;
+            };
+            let is_char = matches!(actor.visual, Some(VisualComponent::Character { .. }));
+            let mut trial_inv = actor_inv.clone();
+
+            for (idx, entry) in target_inv.items.iter().enumerate() {
+                if entry.count == 0 {
+                    continue;
+                }
+                if let Some(wanted) = single_item_id {
+                    if entry.item_id != wanted {
+                        continue;
+                    }
+                }
+                let item_def = self.item_catalog.get(&entry.item_id);
+                let equip_now = is_char
+                    && item_def
+                        .and_then(|d| d.equip.as_ref())
+                        .is_some_and(|spec| !trial_inv.has_equip_conflict(spec, &self.item_catalog));
+                match trial_inv.can_accept_item(
+                    &entry.item_id,
+                    entry.count,
+                    &self.item_catalog,
+                    equip_now,
+                ) {
+                    Ok(()) => {
+                        let max_stack = item_def.map(|d| d.max_stack).unwrap_or(1);
+                        trial_inv.give_item(&entry.item_id, entry.count, max_stack, equip_now);
+                        accepted.push((idx, entry.clone()));
+                    }
+                    Err(reason) => {
+                        rejected_reason.get_or_insert(reason);
+                    }
+                }
+                if single_item_id.is_some() {
+                    break;
+                }
+            }
+        }
+
+        if !accepted.is_empty() {
+            if let Some(target) = self.entities.get_mut(&target_id) {
+                let mut any_equipped_removed = false;
+                if let Some(inv) = &mut target.inventory {
+                    for &(idx, ref removed) in accepted.iter().rev() {
+                        any_equipped_removed |= removed.equipped;
+                        inv.items.remove(idx);
+                    }
+                }
+                if any_equipped_removed {
+                    recompose_character_visual(
                         target,
-                        entry,
                         &self.item_catalog,
                         &self.character_catalog,
                     );
                 }
             }
-            list
-        };
 
-        if !taken.is_empty() {
+            let mut actor_visual_changed = false;
             if let Some(actor) = self.entities.get_mut(&actor_id) {
-                for entry in taken {
+                for &(_, ref entry) in &accepted {
                     let item_def = self.item_catalog.get(&entry.item_id);
                     let max_stack = item_def.map(|d| d.max_stack).unwrap_or(1);
-                    let equip_now = can_auto_equip_item(actor, item_def);
+                    let equip_now = can_auto_equip_item(actor, item_def, &self.item_catalog);
                     if let Some(inv) = &mut actor.inventory {
                         inv.give_item(&entry.item_id, entry.count, max_stack, equip_now);
                     }
-                    if equip_now {
-                        apply_equipped_inventory_to_visual(
-                            actor,
-                            &self.item_catalog,
-                            &self.character_catalog,
-                        );
-                    }
+                    actor_visual_changed |= equip_now;
+                }
+                if actor_visual_changed {
+                    recompose_character_visual(
+                        actor,
+                        &self.item_catalog,
+                        &self.character_catalog,
+                    );
                 }
             }
             self.broadcast_snapshots_for_entity_change(target_id);
+            if actor_visual_changed {
+                self.broadcast_snapshots_for_entity_change(actor_id);
+            }
+            self.send_player_inventory(actor_id);
+        }
+
+        if let Some(reason) = rejected_reason {
+            let title = if reason.contains("heavy") {
+                "Too Heavy"
+            } else {
+                "Inventory Full"
+            };
+            self.send_player_warning(actor_id, title, reason);
         }
 
         self.send_loot_window_to_player(actor_id, target_id);
@@ -1901,101 +2142,73 @@ impl SimWorld {
     }
 }
 
-fn apply_equipped_inventory_to_visual(
-    entity: &mut Entity,
-    item_catalog: &ItemCatalog,
+fn resolve_item_preview_glb(
+    item_def: Option<&ItemDef>,
     char_catalog: &CharacterCatalog,
-) {
+) -> Option<String> {
+    let def = item_def?;
+    if let Some(path) = def
+        .preview_glb
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Some(path.to_owned());
+    }
+    let spec = def.equip.as_ref()?;
+    for vis in &spec.visuals {
+        let part_id = match vis {
+            VisualAttachment::Skinned { part_id, .. }
+            | VisualAttachment::Socket { part_id, .. } => part_id,
+        };
+        if let Some(part) = char_catalog.find_part(part_id) {
+            if !part.path.trim().is_empty() {
+                return Some(part.path.clone());
+            }
+        }
+    }
+    None
+}
+
+fn detach_equipped_visuals_from_base(entity: &mut Entity, item_catalog: &ItemCatalog) {
     let Some(inv) = &entity.inventory else {
         return;
     };
-    let Some(VisualComponent::Character {
-        definition,
-        compact,
-        pose_clip,
-    }) = &mut entity.visual
-    else {
+    let Some(VisualComponent::Character { base_definition, .. }) = &mut entity.visual else {
         return;
     };
-    let mut changed = false;
     for entry in &inv.items {
         if !entry.equipped || entry.count == 0 {
             continue;
         }
-        let Some(def) = item_catalog.get(&entry.item_id) else {
+        let Some(spec) = item_catalog
+            .get(&entry.item_id)
+            .and_then(|d| d.equip.as_ref())
+        else {
             continue;
         };
-        let Some(binding) = &def.equip else {
-            continue;
-        };
-        match binding {
-            ItemEquipBinding::Skinned { slot, part_id } => {
-                if definition.skinned_parts.get(slot) != Some(part_id) {
-                    definition
-                        .skinned_parts
-                        .insert(slot.clone(), part_id.clone());
-                    changed = true;
+        for vis in &spec.visuals {
+            match vis {
+                VisualAttachment::Skinned { slot, part_id } => {
+                    if base_definition.skinned_parts.get(slot) == Some(part_id) {
+                        base_definition.skinned_parts.remove(slot);
+                    }
                 }
-            }
-            ItemEquipBinding::Socket { socket_id, part_id } => {
-                if definition.socket_parts.get(socket_id) != Some(part_id) {
-                    definition
-                        .socket_parts
-                        .insert(socket_id.clone(), part_id.clone());
-                    changed = true;
+                VisualAttachment::Socket { socket_id, part_id } => {
+                    base_definition.remove_socket_part(socket_id, part_id);
                 }
             }
         }
     }
-    if changed {
-        *compact = definition
-            .to_compact_with_pose(char_catalog, pose_clip.clone())
-            .unwrap_or_default();
-    }
 }
 
-fn unequip_removed_item_from_visual(
+fn recompose_character_visual(
     entity: &mut Entity,
-    removed: &InventoryEntry,
     item_catalog: &ItemCatalog,
     char_catalog: &CharacterCatalog,
 ) {
-    if !removed.equipped {
-        return;
-    }
-    let Some(binding) = item_catalog
-        .get(&removed.item_id)
-        .and_then(|d| d.equip.as_ref())
-    else {
-        return;
-    };
-    let still_occupied = entity.inventory.as_ref().is_some_and(|inv| {
-        inv.items.iter().any(|other| {
-            if !other.equipped || other.count == 0 {
-                return false;
-            }
-            match (
-                binding,
-                item_catalog
-                    .get(&other.item_id)
-                    .and_then(|d| d.equip.as_ref()),
-            ) {
-                (
-                    ItemEquipBinding::Skinned { slot: s1, .. },
-                    Some(ItemEquipBinding::Skinned { slot: s2, .. }),
-                ) => s1 == s2,
-                (
-                    ItemEquipBinding::Socket { socket_id: s1, .. },
-                    Some(ItemEquipBinding::Socket { socket_id: s2, .. }),
-                ) => s1 == s2,
-                _ => false,
-            }
-        })
-    });
-    if still_occupied {
-        return;
-    }
     let Some(VisualComponent::Character {
+        base_definition,
         definition,
         compact,
         pose_clip,
@@ -2003,44 +2216,97 @@ fn unequip_removed_item_from_visual(
     else {
         return;
     };
-    let changed = match binding {
-        ItemEquipBinding::Skinned { slot, part_id } => {
-            if definition.skinned_parts.get(slot) == Some(part_id) {
-                definition.skinned_parts.remove(slot);
-                true
-            } else {
-                false
+
+    let mut composed = base_definition.clone();
+
+    if let Some(inv) = &entity.inventory {
+        let equipped_specs: Vec<(usize, &_)> = inv
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.equipped && e.count > 0)
+            .filter_map(|(idx, e)| {
+                item_catalog
+                    .get(&e.item_id)
+                    .and_then(|d| d.equip.as_ref())
+                    .map(|spec| (idx, spec))
+            })
+            .collect();
+
+        let all_hidden: HashSet<String> = equipped_specs
+            .iter()
+            .flat_map(|(_, spec)| spec.hides_categories.iter())
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+
+        if !all_hidden.is_empty() {
+            composed.skinned_parts.retain(|_, part_id| {
+                char_catalog
+                    .find_part(part_id)
+                    .is_none_or(|p| !all_hidden.contains(&p.category.to_ascii_lowercase()))
+            });
+            composed.socket_parts.retain(|_, part_ids| {
+                part_ids.retain(|part_id| {
+                    char_catalog
+                        .find_part(part_id)
+                        .is_none_or(|p| !all_hidden.contains(&p.category.to_ascii_lowercase()))
+                });
+                !part_ids.is_empty()
+            });
+        }
+
+        for &(idx, spec) in &equipped_specs {
+            for vis in &spec.visuals {
+                let part_id = match vis {
+                    VisualAttachment::Skinned { part_id, .. }
+                    | VisualAttachment::Socket { part_id, .. } => part_id,
+                };
+                let hidden_by_other = char_catalog.find_part(part_id).is_some_and(|part| {
+                    let cat = part.category.to_ascii_lowercase();
+                    equipped_specs.iter().any(|&(other_idx, other_spec)| {
+                        other_idx != idx
+                            && other_spec
+                                .hides_categories
+                                .iter()
+                                .any(|h| h.eq_ignore_ascii_case(&cat))
+                    })
+                });
+                if hidden_by_other {
+                    continue;
+                }
+                match vis {
+                    VisualAttachment::Skinned { slot, part_id } => {
+                        composed.skinned_parts.insert(slot.clone(), part_id.clone());
+                    }
+                    VisualAttachment::Socket { socket_id, part_id } => {
+                        composed.add_socket_part(socket_id.clone(), part_id.clone());
+                    }
+                }
             }
         }
-        ItemEquipBinding::Socket { socket_id, part_id } => {
-            if definition.socket_parts.get(socket_id) == Some(part_id) {
-                definition.socket_parts.remove(socket_id);
-                true
-            } else {
-                false
-            }
-        }
-    };
-    if changed {
-        *compact = definition
-            .to_compact_with_pose(char_catalog, pose_clip.clone())
-            .unwrap_or_default();
     }
+
+    *definition = composed;
+    *compact = definition
+        .to_compact_with_pose(char_catalog, pose_clip.clone())
+        .unwrap_or_default();
 }
 
-fn can_auto_equip_item(entity: &Entity, item_def: Option<&ItemDef>) -> bool {
-    let Some(binding) = item_def.and_then(|d| d.equip.as_ref()) else {
+fn can_auto_equip_item(
+    entity: &Entity,
+    item_def: Option<&ItemDef>,
+    item_catalog: &ItemCatalog,
+) -> bool {
+    let Some(spec) = item_def.and_then(|d| d.equip.as_ref()) else {
         return false;
     };
-    let Some(VisualComponent::Character { definition, .. }) = &entity.visual else {
+    if !matches!(entity.visual, Some(VisualComponent::Character { .. })) {
         return false;
-    };
-    match binding {
-        ItemEquipBinding::Skinned { slot, .. } => !definition.skinned_parts.contains_key(slot),
-        ItemEquipBinding::Socket { socket_id, .. } => {
-            !definition.socket_parts.contains_key(socket_id)
-        }
     }
+    let Some(inv) = &entity.inventory else {
+        return false;
+    };
+    !inv.has_equip_conflict(spec, item_catalog)
 }
 
 fn current_location_of(
@@ -2083,7 +2349,6 @@ mod tests {
         ComponentOverride, EntityCapabilities, EntityOverrides, MovementConfig, PropertyBag,
         PropertyValue, ScriptConfig, TriggerActivation, TriggerConfig,
     };
-    use shared::protocol::PopupTone;
     use shared::world::InsideVisData;
 
     fn workspace_world_dir() -> PathBuf {
@@ -2286,6 +2551,7 @@ mod tests {
             .with_name("Medical Drone")
             .with_capabilities(EntityCapabilities::INTERACTABLE | EntityCapabilities::QUEST_GIVER)
             .with_visual(VisualComponent::Character {
+                base_definition: CharacterDefinition::cryo_awakening_default(),
                 definition: CharacterDefinition::cryo_awakening_default(),
                 compact: Default::default(),
                 pose_clip: None,
@@ -2908,8 +3174,8 @@ mod tests {
         match &player_ent.visual {
             Some(VisualComponent::Character { definition, .. }) => {
                 assert_eq!(
-                    definition.socket_parts.get("socket_hand_r").map(String::as_str),
-                    Some("weapon_guard_rifle")
+                    definition.socket_parts.get("socket_hand_r").map(Vec::as_slice),
+                    Some(["weapon_guard_rifle".to_owned()].as_slice())
                 );
             }
             _ => panic!("expected player character visual"),
@@ -3095,5 +3361,688 @@ mod tests {
         assert!(entered_main, "player should receive EnterArea for 'main'");
 
         assert!(sim.remove_player(902, conn_id).is_some());
+    }
+
+    fn make_equip_test_sim(label: &str) -> (PathBuf, SimWorld) {
+        use shared::character::{CharacterPartDef, PartAttachment, SkeletonDef, SkinnedSlotDef, SocketDef};
+        use shared::item::{EquipSlot, ItemEquipSpec};
+
+        let dir = unique_temp_world(label);
+        let mut sim = SimWorld::new(dir.clone());
+        let mk_sock_part = |id: &str, socket_id: &str, category: &str| CharacterPartDef {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            skeleton_id: "humanoid".to_owned(),
+            attachment: PartAttachment::Socket {
+                socket_id: socket_id.to_owned(),
+                offset: [0.0; 3],
+                rotation_deg: [0.0; 3],
+                scale: 1.0,
+            },
+            path: format!("/world/assets/characters/{id}.glb"),
+            category: category.to_owned(),
+        };
+        sim.character_catalog = CharacterCatalog {
+            skeletons: vec![SkeletonDef {
+                id: "humanoid".to_owned(),
+                name: "Humanoid".to_owned(),
+                rig_path: "/world/assets/characters/human_base_body.glb".to_owned(),
+                render_base_mesh: true,
+                skinned_slots: vec![
+                    SkinnedSlotDef { id: "head".to_owned(), name: "Head".to_owned() },
+                    SkinnedSlotDef { id: "torso".to_owned(), name: "Torso".to_owned() },
+                    SkinnedSlotDef { id: "hands".to_owned(), name: "Hands".to_owned() },
+                    SkinnedSlotDef { id: "legs".to_owned(), name: "Legs".to_owned() },
+                    SkinnedSlotDef { id: "feet".to_owned(), name: "Feet".to_owned() },
+                ],
+                sockets: vec![
+                    SocketDef {
+                        id: "socket_head".to_owned(),
+                        name: "Head Socket".to_owned(),
+                        parent_bone: "head".to_owned(),
+                        offset: [0.0; 3],
+                        rotation_deg: [0.0; 3],
+                        scale: 1.0,
+                    },
+                    SocketDef {
+                        id: "socket_hand_l".to_owned(),
+                        name: "Left Hand".to_owned(),
+                        parent_bone: "hand_l".to_owned(),
+                        offset: [0.0; 3],
+                        rotation_deg: [0.0; 3],
+                        scale: 1.0,
+                    },
+                    SocketDef {
+                        id: "socket_hand_r".to_owned(),
+                        name: "Right Hand".to_owned(),
+                        parent_bone: "hand_r".to_owned(),
+                        offset: [0.0; 3],
+                        rotation_deg: [0.0; 3],
+                        scale: 1.0,
+                    },
+                    SocketDef {
+                        id: "socket_foot_l".to_owned(),
+                        name: "Left Foot".to_owned(),
+                        parent_bone: "foot_l".to_owned(),
+                        offset: [0.0; 3],
+                        rotation_deg: [0.0; 3],
+                        scale: 1.0,
+                    },
+                    SocketDef {
+                        id: "socket_foot_r".to_owned(),
+                        name: "Right Foot".to_owned(),
+                        parent_bone: "foot_r".to_owned(),
+                        offset: [0.0; 3],
+                        rotation_deg: [0.0; 3],
+                        scale: 1.0,
+                    },
+                ],
+                animation_paths: Vec::new(),
+            }],
+            parts: vec![
+                CharacterPartDef {
+                    id: "head_standard".to_owned(),
+                    name: "Standard Head".to_owned(),
+                    skeleton_id: "humanoid".to_owned(),
+                    attachment: PartAttachment::Skinned { slot: "head".to_owned() },
+                    path: "/world/assets/characters/head_standard.glb".to_owned(),
+                    category: "Head".to_owned(),
+                },
+                mk_sock_part("hair_short_crop", "socket_head", "Hair"),
+                mk_sock_part("visor_goggles", "socket_head", "Headgear"),
+                mk_sock_part("exo_helm", "socket_head", "Helmet"),
+                mk_sock_part("boot_l", "socket_foot_l", "Feet"),
+                mk_sock_part("boot_r", "socket_foot_r", "Feet"),
+                mk_sock_part("weapon_scrap_blade", "socket_hand_r", "Weapons"),
+                mk_sock_part("weapon_guard_rifle", "socket_hand_r", "Weapons"),
+                mk_sock_part("shield_riot", "socket_hand_l", "Shields"),
+            ],
+        };
+        sim.item_catalog = ItemCatalog {
+            items: vec![
+                ItemDef {
+                    id: "visor_goggles".to_owned(),
+                    name: "Visor Goggles".to_owned(),
+                    description: String::new(),
+                    category: "Headgear".to_owned(),
+                    max_stack: 1,
+                    weight: 0.4,
+                    preview_glb: None,
+                    equip: Some(ItemEquipSpec {
+                        slot: EquipSlot::Head,
+                        two_handed: false,
+                        visuals: vec![VisualAttachment::Socket {
+                            socket_id: "socket_head".to_owned(),
+                            part_id: "visor_goggles".to_owned(),
+                        }],
+                        hides_categories: Vec::new(),
+                        bonus_bag_slots: 0,
+                    }),
+                },
+                ItemDef {
+                    id: "exo_helm".to_owned(),
+                    name: "Exo Helm".to_owned(),
+                    description: String::new(),
+                    category: "Armor".to_owned(),
+                    max_stack: 1,
+                    weight: 1.8,
+                    preview_glb: None,
+                    equip: Some(ItemEquipSpec {
+                        slot: EquipSlot::Head,
+                        two_handed: false,
+                        visuals: vec![VisualAttachment::Socket {
+                            socket_id: "socket_head".to_owned(),
+                            part_id: "exo_helm".to_owned(),
+                        }],
+                        hides_categories: vec!["Hair".to_owned()],
+                        bonus_bag_slots: 0,
+                    }),
+                },
+                ItemDef {
+                    id: "combat_boots".to_owned(),
+                    name: "Combat Boots".to_owned(),
+                    description: String::new(),
+                    category: "Armor".to_owned(),
+                    max_stack: 1,
+                    weight: 1.4,
+                    preview_glb: None,
+                    equip: Some(ItemEquipSpec {
+                        slot: EquipSlot::Feet,
+                        two_handed: false,
+                        visuals: vec![
+                            VisualAttachment::Socket {
+                                socket_id: "socket_foot_l".to_owned(),
+                                part_id: "boot_l".to_owned(),
+                            },
+                            VisualAttachment::Socket {
+                                socket_id: "socket_foot_r".to_owned(),
+                                part_id: "boot_r".to_owned(),
+                            },
+                        ],
+                        hides_categories: Vec::new(),
+                        bonus_bag_slots: 0,
+                    }),
+                },
+                ItemDef {
+                    id: "scrap_blade".to_owned(),
+                    name: "Scrap Cleaver".to_owned(),
+                    description: String::new(),
+                    category: "Weapon".to_owned(),
+                    max_stack: 1,
+                    weight: 2.4,
+                    preview_glb: None,
+                    equip: Some(ItemEquipSpec {
+                        slot: EquipSlot::MainHand,
+                        two_handed: false,
+                        visuals: vec![VisualAttachment::Socket {
+                            socket_id: "socket_hand_r".to_owned(),
+                            part_id: "weapon_scrap_blade".to_owned(),
+                        }],
+                        hides_categories: Vec::new(),
+                        bonus_bag_slots: 0,
+                    }),
+                },
+                ItemDef {
+                    id: "guard_rifle".to_owned(),
+                    name: "Guard Carbine".to_owned(),
+                    description: String::new(),
+                    category: "Weapon".to_owned(),
+                    max_stack: 1,
+                    weight: 3.6,
+                    preview_glb: None,
+                    equip: Some(ItemEquipSpec {
+                        slot: EquipSlot::MainHand,
+                        two_handed: true,
+                        visuals: vec![VisualAttachment::Socket {
+                            socket_id: "socket_hand_r".to_owned(),
+                            part_id: "weapon_guard_rifle".to_owned(),
+                        }],
+                        hides_categories: Vec::new(),
+                        bonus_bag_slots: 0,
+                    }),
+                },
+                ItemDef {
+                    id: "riot_shield".to_owned(),
+                    name: "Riot Shield".to_owned(),
+                    description: String::new(),
+                    category: "Armor".to_owned(),
+                    max_stack: 1,
+                    weight: 4.0,
+                    preview_glb: None,
+                    equip: Some(ItemEquipSpec {
+                        slot: EquipSlot::OffHand,
+                        two_handed: false,
+                        visuals: vec![VisualAttachment::Socket {
+                            socket_id: "socket_hand_l".to_owned(),
+                            part_id: "shield_riot".to_owned(),
+                        }],
+                        hides_categories: Vec::new(),
+                        bonus_bag_slots: 0,
+                    }),
+                },
+                ItemDef {
+                    id: "salvage_rig_pack".to_owned(),
+                    name: "Salvage Rig Pack".to_owned(),
+                    description: String::new(),
+                    category: "Back".to_owned(),
+                    max_stack: 1,
+                    weight: 1.5,
+                    preview_glb: None,
+                    equip: Some(ItemEquipSpec {
+                        slot: EquipSlot::Back,
+                        two_handed: false,
+                        visuals: Vec::new(),
+                        hides_categories: Vec::new(),
+                        bonus_bag_slots: 5,
+                    }),
+                },
+                ItemDef {
+                    id: "ration_pack".to_owned(),
+                    name: "Ration Pack".to_owned(),
+                    description: String::new(),
+                    category: "Consumable".to_owned(),
+                    max_stack: 10,
+                    weight: 0.5,
+                    preview_glb: Some("/world/assets/items/ration_pack.glb".to_owned()),
+                    equip: None,
+                },
+                ItemDef {
+                    id: "heavy_core".to_owned(),
+                    name: "Heavy Reactor Core".to_owned(),
+                    description: String::new(),
+                    category: "Material".to_owned(),
+                    max_stack: 1,
+                    weight: 35.0,
+                    preview_glb: None,
+                    equip: None,
+                },
+            ],
+        };
+        (dir, sim)
+    }
+
+    fn spawn_test_room_player(sim: &mut SimWorld, account_id: u64) -> (u64, EntityId) {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let save = CharacterSaveRecord {
+            account_id,
+            area_id: "test_room".to_owned(),
+            pos: [10.0, 0.0, 10.0],
+            yaw: 0.0,
+            appearance: CharacterDefinition::cryo_awakening_default(),
+            inventory: InventoryConfig::default(),
+        };
+        let (conn_id, enter_msg, _) = sim.spawn_player(account_id, Some(save), tx);
+        let player_eid = match enter_msg {
+            ServerMessage::EnterArea { entity_id, .. } => entity_id,
+            _ => panic!("expected EnterArea"),
+        };
+        (conn_id, player_eid)
+    }
+
+    #[test]
+    fn stackable_socket_and_hides_categories_layer_over_base_hair_and_restore_on_unequip() {
+        use shared::item::EquipSlot;
+
+        let (dir, mut sim) = make_equip_test_sim("stack_hide");
+        let (_conn, player_eid) = spawn_test_room_player(&mut sim, 701);
+
+        let item_cat = sim.item_catalog.clone();
+        let char_cat = sim.character_catalog.clone();
+
+        // Equip open headgear (visor_goggles) -> stacks with base hair_short_crop on socket_head.
+        let player = sim.entities.get_mut(&player_eid).unwrap();
+        let can_auto = can_auto_equip_item(player, item_cat.get("visor_goggles"), &item_cat);
+        assert!(can_auto, "Head EquipSlot is empty even though socket_head has hair");
+        player.inventory.as_mut().unwrap().give_item("visor_goggles", 1, 1, false);
+        player.inventory.as_mut().unwrap().give_item("exo_helm", 1, 1, false);
+        assert!(player.inventory.as_mut().unwrap().equip_entry(0, &item_cat));
+        recompose_character_visual(player, &item_cat, &char_cat);
+
+        match &player.visual {
+            Some(VisualComponent::Character { base_definition, definition, .. }) => {
+                assert_eq!(
+                    base_definition.socket_parts.get("socket_head"),
+                    Some(&vec!["hair_short_crop".to_owned()])
+                );
+                assert_eq!(
+                    definition.socket_parts.get("socket_head"),
+                    Some(&vec![
+                        "hair_short_crop".to_owned(),
+                        "visor_goggles".to_owned(),
+                    ])
+                );
+            }
+            _ => panic!("expected character visual"),
+        }
+
+        // Swap to closed exo_helm (hides_categories: ["Hair"]) -> replaces visor & hides hair.
+        assert!(player.inventory.as_mut().unwrap().equip_entry(1, &item_cat));
+        recompose_character_visual(player, &item_cat, &char_cat);
+        match &player.visual {
+            Some(VisualComponent::Character { base_definition, definition, .. }) => {
+                assert_eq!(
+                    base_definition.socket_parts.get("socket_head"),
+                    Some(&vec!["hair_short_crop".to_owned()])
+                );
+                assert_eq!(
+                    definition.socket_parts.get("socket_head"),
+                    Some(&vec!["exo_helm".to_owned()])
+                );
+            }
+            _ => panic!("expected character visual"),
+        }
+
+        // Unequip Head -> hair_short_crop is automatically restored.
+        assert!(player.inventory.as_mut().unwrap().unequip_slot(EquipSlot::Head, &item_cat));
+        recompose_character_visual(player, &item_cat, &char_cat);
+        match &player.visual {
+            Some(VisualComponent::Character { definition, .. }) => {
+                assert_eq!(
+                    definition.socket_parts.get("socket_head"),
+                    Some(&vec!["hair_short_crop".to_owned()])
+                );
+            }
+            _ => panic!("expected character visual"),
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_handed_main_hand_weapon_conflicts_with_off_hand_in_auto_and_manual_equip() {
+        let (dir, mut sim) = make_equip_test_sim("two_handed");
+        let (_conn, player_eid) = spawn_test_room_player(&mut sim, 702);
+
+        let item_cat = sim.item_catalog.clone();
+        let char_cat = sim.character_catalog.clone();
+        let player = sim.entities.get_mut(&player_eid).unwrap();
+
+        // Auto-equip 1H blade + OffHand shield.
+        assert!(can_auto_equip_item(player, item_cat.get("scrap_blade"), &item_cat));
+        player.inventory.as_mut().unwrap().give_item("scrap_blade", 1, 1, true);
+        assert!(can_auto_equip_item(player, item_cat.get("riot_shield"), &item_cat));
+        player.inventory.as_mut().unwrap().give_item("riot_shield", 1, 1, true);
+        recompose_character_visual(player, &item_cat, &char_cat);
+        match &player.visual {
+            Some(VisualComponent::Character { definition, .. }) => {
+                assert_eq!(
+                    definition.socket_parts.get("socket_hand_r"),
+                    Some(&vec!["weapon_scrap_blade".to_owned()])
+                );
+                assert_eq!(
+                    definition.socket_parts.get("socket_hand_l"),
+                    Some(&vec!["shield_riot".to_owned()])
+                );
+            }
+            _ => panic!("expected character visual"),
+        }
+
+        // Two-handed guard_rifle cannot auto-equip while MainHand/OffHand occupied,
+        // but explicit equip_entry clears both and updates visuals.
+        assert!(!can_auto_equip_item(player, item_cat.get("guard_rifle"), &item_cat));
+        player.inventory.as_mut().unwrap().give_item("guard_rifle", 1, 1, false);
+        assert!(player.inventory.as_mut().unwrap().equip_entry(2, &item_cat));
+        recompose_character_visual(player, &item_cat, &char_cat);
+        match &player.visual {
+            Some(VisualComponent::Character { definition, .. }) => {
+                assert_eq!(
+                    definition.socket_parts.get("socket_hand_r"),
+                    Some(&vec!["weapon_guard_rifle".to_owned()])
+                );
+                assert!(!definition.socket_parts.contains_key("socket_hand_l"));
+            }
+            _ => panic!("expected character visual"),
+        }
+
+        // While holding two-handed guard_rifle, OffHand riot_shield is blocked from auto-equip,
+        // and explicit equip_entry unequips the two-handed rifle.
+        assert!(!can_auto_equip_item(player, item_cat.get("riot_shield"), &item_cat));
+        assert!(player.inventory.as_mut().unwrap().equip_entry(1, &item_cat));
+        recompose_character_visual(player, &item_cat, &char_cat);
+        match &player.visual {
+            Some(VisualComponent::Character { definition, .. }) => {
+                assert!(!definition.socket_parts.contains_key("socket_hand_r"));
+                assert_eq!(
+                    definition.socket_parts.get("socket_hand_l"),
+                    Some(&vec!["shield_riot".to_owned()])
+                );
+            }
+            _ => panic!("expected character visual"),
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn single_equip_slot_populates_and_clears_multiple_visuals() {
+        use shared::item::EquipSlot;
+
+        let (dir, mut sim) = make_equip_test_sim("multi_visual");
+        let (_conn, player_eid) = spawn_test_room_player(&mut sim, 703);
+
+        let item_cat = sim.item_catalog.clone();
+        let char_cat = sim.character_catalog.clone();
+        let player = sim.entities.get_mut(&player_eid).unwrap();
+
+        assert!(can_auto_equip_item(player, item_cat.get("combat_boots"), &item_cat));
+        player.inventory.as_mut().unwrap().give_item("combat_boots", 1, 1, true);
+        recompose_character_visual(player, &item_cat, &char_cat);
+        match &player.visual {
+            Some(VisualComponent::Character { base_definition, definition, .. }) => {
+                assert!(!base_definition.socket_parts.contains_key("socket_foot_l"));
+                assert!(!base_definition.socket_parts.contains_key("socket_foot_r"));
+                assert_eq!(
+                    definition.socket_parts.get("socket_foot_l"),
+                    Some(&vec!["boot_l".to_owned()])
+                );
+                assert_eq!(
+                    definition.socket_parts.get("socket_foot_r"),
+                    Some(&vec!["boot_r".to_owned()])
+                );
+            }
+            _ => panic!("expected character visual"),
+        }
+
+        assert!(player.inventory.as_mut().unwrap().unequip_slot(EquipSlot::Feet, &item_cat));
+        recompose_character_visual(player, &item_cat, &char_cat);
+        match &player.visual {
+            Some(VisualComponent::Character { definition, .. }) => {
+                assert!(!definition.socket_parts.contains_key("socket_foot_l"));
+                assert!(!definition.socket_parts.contains_key("socket_foot_r"));
+            }
+            _ => panic!("expected character visual"),
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn player_save_persists_base_appearance_separately_from_equipped_inventory() {
+        let (dir, mut sim) = make_equip_test_sim("save_sep");
+        let (conn, player_eid) = spawn_test_room_player(&mut sim, 704);
+
+        let item_cat = sim.item_catalog.clone();
+        let char_cat = sim.character_catalog.clone();
+        let player = sim.entities.get_mut(&player_eid).unwrap();
+        player.inventory.as_mut().unwrap().give_item("exo_helm", 1, 1, true);
+        player.inventory.as_mut().unwrap().give_item("combat_boots", 1, 1, true);
+        player.inventory.as_mut().unwrap().give_item("guard_rifle", 1, 1, true);
+        recompose_character_visual(player, &item_cat, &char_cat);
+
+        let removed = sim.remove_player(704, conn).expect("remove_player");
+        assert_eq!(removed.appearance_def, CharacterDefinition::cryo_awakening_default());
+        assert_eq!(removed.inventory.items.len(), 3);
+        assert!(removed.inventory.items.iter().all(|i| i.equipped));
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let record = CharacterSaveRecord {
+            account_id: removed.account_id,
+            area_id: removed.area_id,
+            pos: removed.pos,
+            yaw: removed.yaw,
+            appearance: removed.appearance_def,
+            inventory: removed.inventory,
+        };
+        let (_conn2, enter_msg, _) = sim.spawn_player(704, Some(record), tx);
+        let player2_eid = match enter_msg {
+            ServerMessage::EnterArea { entity_id, .. } => entity_id,
+            _ => panic!("expected EnterArea"),
+        };
+        match &sim.entity(player2_eid).unwrap().visual {
+            Some(VisualComponent::Character { base_definition, definition, .. }) => {
+                assert_eq!(*base_definition, CharacterDefinition::cryo_awakening_default());
+                assert_eq!(
+                    definition.socket_parts.get("socket_head"),
+                    Some(&vec!["exo_helm".to_owned()])
+                );
+                assert_eq!(
+                    definition.socket_parts.get("socket_foot_l"),
+                    Some(&vec!["boot_l".to_owned()])
+                );
+                assert_eq!(
+                    definition.socket_parts.get("socket_foot_r"),
+                    Some(&vec!["boot_r".to_owned()])
+                );
+                assert_eq!(
+                    definition.socket_parts.get("socket_hand_r"),
+                    Some(&vec!["weapon_guard_rifle".to_owned()])
+                );
+            }
+            _ => panic!("expected character visual"),
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn player_inventory_protocol_actions_and_looting_limits_work_end_to_end() {
+        let (dir, mut sim) = make_equip_test_sim("inv_actions");
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let save = CharacterSaveRecord {
+            account_id: 705,
+            area_id: "test_room".to_owned(),
+            pos: [10.0, 0.0, 10.0],
+            yaw: 0.0,
+            appearance: CharacterDefinition::cryo_awakening_default(),
+            inventory: InventoryConfig {
+                items: vec![
+                    InventoryEntry {
+                        item_id: "ration_pack".to_owned(),
+                        count: 4,
+                        equipped: false,
+                        bag_slot: Some(0),
+                    },
+                    InventoryEntry {
+                        item_id: "salvage_rig_pack".to_owned(),
+                        count: 1,
+                        equipped: false,
+                        bag_slot: Some(1),
+                    },
+                    InventoryEntry {
+                        item_id: "guard_rifle".to_owned(),
+                        count: 1,
+                        equipped: false,
+                        bag_slot: Some(2),
+                    },
+                ],
+            },
+        };
+        let (conn, enter_msg, _) = sim.spawn_player(705, Some(save), tx);
+        let player_eid = match enter_msg {
+            ServerMessage::EnterArea { entity_id, .. } => entity_id,
+            _ => panic!("expected EnterArea"),
+        };
+
+        // Initial PlayerInventory emitted upon spawn with bag_capacity 20 and max_weight 30.0.
+        let mut initial_inv = None;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMessage::PlayerInventory {
+                items,
+                bag_capacity,
+                total_weight,
+                max_weight,
+            } = msg
+            {
+                initial_inv = Some((items, bag_capacity, total_weight, max_weight));
+            }
+        }
+        let (items, bag_cap, total_w, max_w) = initial_inv.expect("spawn sends PlayerInventory");
+        assert_eq!(bag_cap, 20);
+        assert!((max_w - 30.0).abs() < 1e-4);
+        assert!((total_w - (4.0 * 0.5 + 1.5 + 3.6)).abs() < 1e-3);
+        assert_eq!(
+            items.iter().find(|i| i.item_id == "ration_pack").unwrap().preview_glb.as_deref(),
+            Some("/world/assets/items/ration_pack.glb")
+        );
+        assert_eq!(
+            items.iter().find(|i| i.item_id == "guard_rifle").unwrap().preview_glb.as_deref(),
+            Some("/world/assets/characters/weapon_guard_rifle.glb")
+        );
+
+        // Equip salvage_rig_pack from slot 1 -> bag_capacity grows 20 -> 25.
+        sim.equip_player_item(705, 1, None);
+        // Move ration_pack from slot 0 to slot 22, split 1 to slot 10, equip guard_rifle from slot 2.
+        sim.move_player_inventory_item(705, 0, 22);
+        sim.split_player_inventory_stack(705, 22, 10, 1);
+        sim.equip_player_item(705, 2, Some(EquipSlot::MainHand));
+
+        let mut latest_inv = None;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMessage::PlayerInventory {
+                items,
+                bag_capacity,
+                ..
+            } = msg
+            {
+                latest_inv = Some((items, bag_capacity));
+            }
+        }
+        let (items2, bag_cap2) = latest_inv.expect("actions emit PlayerInventory");
+        assert_eq!(bag_cap2, 25);
+        assert!(items2.iter().any(|i| i.item_id == "guard_rifle" && i.equipped));
+        assert!(items2.iter().any(|i| i.item_id == "salvage_rig_pack" && i.equipped));
+        assert_eq!(
+            items2.iter().find(|i| i.bag_slot == Some(22)).unwrap().count,
+            3
+        );
+        assert_eq!(
+            items2.iter().find(|i| i.bag_slot == Some(10)).unwrap().count,
+            1
+        );
+
+        // Spawn a lootable crate right next to the player with 1 ration_pack + 1 heavy_core (35 kg).
+        let crate_id = sim.alloc_entity_id();
+        let crate_ent = Entity::new(
+            crate_id,
+            EntityLocation::Inside(inside_instance_for("test_room", 705)),
+            [10.8, 0.0, 10.0],
+            0.0,
+        )
+        .with_name("Supply Crate")
+        .with_inventory(InventoryComponent::from_config(&InventoryConfig {
+            items: vec![
+                InventoryEntry {
+                    item_id: "ration_pack".to_owned(),
+                    count: 1,
+                    equipped: false,
+                    bag_slot: Some(0),
+                },
+                InventoryEntry {
+                    item_id: "heavy_core".to_owned(),
+                    count: 1,
+                    equipped: false,
+                    bag_slot: Some(1),
+                },
+            ],
+        }))
+        .with_lootable(LootableComponent::new(
+            shared::entity::LootableConfig::default(),
+        ));
+        sim.spawn_entity(crate_ent);
+
+        // Take All loots ration_pack, rejects heavy_core with warning popup, and keeps heavy_core in crate!
+        sim.loot_take_all_player_from(705, crate_id);
+        let mut saw_heavy_popup = false;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMessage::Popup { title, tone, .. } = msg {
+                if title == "Too Heavy" && tone == PopupTone::Warning {
+                    saw_heavy_popup = true;
+                }
+            }
+        }
+        assert!(saw_heavy_popup, "exceeding weight limit warns player");
+        assert_eq!(
+            sim.entity(crate_id).unwrap().inventory.as_ref().unwrap().items.len(),
+            1,
+            "heavy_core remains unlooted in crate"
+        );
+        assert_eq!(
+            sim.entity(crate_id).unwrap().inventory.as_ref().unwrap().items[0].item_id,
+            "heavy_core"
+        );
+
+        // Unequip backpack while slot 22 holds items -> shrinks capacity to 20 and relocates slot 22 safely!
+        sim.unequip_player_slot(705, EquipSlot::Back, None);
+        let mut shrunk_inv = None;
+        while let Ok(msg) = rx.try_recv() {
+            if let ServerMessage::PlayerInventory {
+                items,
+                bag_capacity,
+                ..
+            } = msg
+            {
+                shrunk_inv = Some((items, bag_capacity));
+            }
+        }
+        let (items3, bag_cap3) = shrunk_inv.unwrap();
+        assert_eq!(bag_cap3, 20);
+        assert!(items3.iter().all(|i| i.equipped || i.bag_slot.is_some_and(|s| s < 20)));
+        assert_eq!(
+            sim.entity(player_eid).unwrap().inventory.as_ref().unwrap().bag_capacity(&sim.item_catalog),
+            20
+        );
+
+        assert!(sim.remove_player(705, conn).is_some());
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -82,6 +82,13 @@ pub struct CharacterCatalog {
     pub parts: Vec<CharacterPartDef>,
 }
 
+impl CharacterCatalog {
+    /// Looks up a modular character part definition by ID.
+    pub fn find_part(&self, part_id: &str) -> Option<&CharacterPartDef> {
+        self.parts.iter().find(|p| p.id == part_id)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CharacterPalette {
     #[serde(default)]
@@ -128,7 +135,7 @@ pub struct CharacterDefinition {
     #[serde(default)]
     pub skinned_parts: BTreeMap<String, String>,
     #[serde(default)]
-    pub socket_parts: BTreeMap<String, String>,
+    pub socket_parts: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub palette: CharacterPalette,
 }
@@ -139,7 +146,7 @@ impl CharacterDefinition {
         let mut skinned_parts = BTreeMap::new();
         skinned_parts.insert("head".to_owned(), "head_standard".to_owned());
         let mut socket_parts = BTreeMap::new();
-        socket_parts.insert("socket_head".to_owned(), "hair_short_crop".to_owned());
+        socket_parts.insert("socket_head".to_owned(), vec!["hair_short_crop".to_owned()]);
         Self {
             id: "cryo_awakening".to_owned(),
             name: "Cryo Prisoner".to_owned(),
@@ -149,6 +156,30 @@ impl CharacterDefinition {
             socket_parts,
             palette: CharacterPalette::default(),
         }
+    }
+
+    /// Appends `part_id` to `socket_id` if not already present.
+    pub fn add_socket_part(&mut self, socket_id: impl Into<String>, part_id: impl Into<String>) {
+        let part_id = part_id.into();
+        let entry = self.socket_parts.entry(socket_id.into()).or_default();
+        if !entry.iter().any(|existing| existing == &part_id) {
+            entry.push(part_id);
+        }
+    }
+
+    /// Removes `part_id` from `socket_id`, deleting the socket key if it becomes empty.
+    pub fn remove_socket_part(&mut self, socket_id: &str, part_id: &str) -> bool {
+        let Some(parts) = self.socket_parts.get_mut(socket_id) else {
+            return false;
+        };
+        let Some(pos) = parts.iter().position(|existing| existing == part_id) else {
+            return false;
+        };
+        parts.remove(pos);
+        if parts.is_empty() {
+            self.socket_parts.remove(socket_id);
+        }
+        true
     }
 
     /// Encodes this definition into a compact index-based representation using `catalog`.
@@ -179,11 +210,17 @@ impl CharacterDefinition {
             skinned_part_indices.push((u8::try_from(slot_pos).ok()?, u16::try_from(part_pos).ok()?));
         }
 
-        let mut socket_part_indices = Vec::with_capacity(self.socket_parts.len());
-        for (socket_id, part_id) in &self.socket_parts {
+        let mut socket_part_indices = Vec::new();
+        for (socket_id, part_ids) in &self.socket_parts {
+            if part_ids.is_empty() {
+                continue;
+            }
             let sock_pos = skeleton.sockets.iter().position(|s| s.id == *socket_id)?;
-            let part_pos = catalog.parts.iter().position(|p| p.id == *part_id)?;
-            socket_part_indices.push((u8::try_from(sock_pos).ok()?, u16::try_from(part_pos).ok()?));
+            let sock_idx = u8::try_from(sock_pos).ok()?;
+            for part_id in part_ids {
+                let part_pos = catalog.parts.iter().position(|p| p.id == *part_id)?;
+                socket_part_indices.push((sock_idx, u16::try_from(part_pos).ok()?));
+            }
         }
 
         let pose_clip = pose_clip.and_then(|s| {
@@ -230,11 +267,14 @@ impl CompactCharacterAppearance {
             skinned_parts.insert(slot.id.clone(), part.id.clone());
         }
 
-        let mut socket_parts = BTreeMap::new();
+        let mut socket_parts: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for &(sock_idx, part_idx) in &self.socket_part_indices {
             let sock = skeleton.sockets.get(sock_idx as usize)?;
             let part = catalog.parts.get(part_idx as usize)?;
-            socket_parts.insert(sock.id.clone(), part.id.clone());
+            let entry = socket_parts.entry(sock.id.clone()).or_default();
+            if !entry.iter().any(|existing| existing == &part.id) {
+                entry.push(part.id.clone());
+            }
         }
 
         Some(CharacterDefinition {
@@ -270,8 +310,16 @@ mod tests {
                         name: "Torso".to_owned(),
                     },
                     SkinnedSlotDef {
+                        id: "hands".to_owned(),
+                        name: "Hands".to_owned(),
+                    },
+                    SkinnedSlotDef {
                         id: "legs".to_owned(),
                         name: "Legs".to_owned(),
+                    },
+                    SkinnedSlotDef {
+                        id: "feet".to_owned(),
+                        name: "Feet".to_owned(),
                     },
                 ],
                 sockets: vec![
@@ -338,6 +386,19 @@ mod tests {
                     path: "/world/assets/characters/hair_short_crop.glb".to_owned(),
                     category: "Hair".to_owned(),
                 },
+                CharacterPartDef {
+                    id: "visor_goggles".to_owned(),
+                    name: "Visor Goggles".to_owned(),
+                    skeleton_id: "humanoid".to_owned(),
+                    attachment: PartAttachment::Socket {
+                        socket_id: "socket_head".to_owned(),
+                        offset: [0.0, 0.0, 0.0],
+                        rotation_deg: [0.0, 0.0, 0.0],
+                        scale: 1.0,
+                    },
+                    path: "/world/assets/characters/visor_goggles.glb".to_owned(),
+                    category: "Headgear".to_owned(),
+                },
             ],
         }
     }
@@ -382,7 +443,7 @@ mod tests {
         skinned.insert("torso".to_owned(), "torso_cryo_jumpsuit".to_owned());
         skinned.insert("legs".to_owned(), "legs_cargo_pants".to_owned());
         let mut socketed = BTreeMap::new();
-        socketed.insert("socket_head".to_owned(), "hair_short_crop".to_owned());
+        socketed.insert("socket_head".to_owned(), vec!["hair_short_crop".to_owned()]);
 
         let def = CharacterDefinition {
             id: "cryo_prisoner".to_owned(),
@@ -422,8 +483,8 @@ mod tests {
         assert!(!def.skinned_parts.contains_key("torso"));
         assert!(!def.skinned_parts.contains_key("legs"));
         assert_eq!(
-            def.socket_parts.get("socket_head").map(String::as_str),
-            Some("hair_short_crop")
+            def.socket_parts.get("socket_head").map(Vec::as_slice),
+            Some(["hair_short_crop".to_owned()].as_slice())
         );
 
         let compact = def.to_compact(&catalog).expect("to_compact succeeds");
@@ -431,5 +492,43 @@ mod tests {
             .to_definition("cryo_awakening", "Cryo Prisoner", &catalog)
             .expect("to_definition succeeds");
         assert_eq!(rebuilt, def);
+    }
+
+    #[test]
+    fn stacked_socket_parts_roundtrip_and_helpers_work() {
+        let catalog = sample_catalog();
+        assert_eq!(
+            catalog.find_part("visor_goggles").map(|p| p.category.as_str()),
+            Some("Headgear")
+        );
+        assert!(catalog.find_part("nonexistent").is_none());
+
+        let mut def = CharacterDefinition::cryo_awakening_default();
+        def.add_socket_part("socket_head", "visor_goggles");
+        def.add_socket_part("socket_head", "visor_goggles");
+        assert_eq!(
+            def.socket_parts.get("socket_head"),
+            Some(&vec![
+                "hair_short_crop".to_owned(),
+                "visor_goggles".to_owned(),
+            ])
+        );
+
+        let compact = def.to_compact(&catalog).expect("to_compact succeeds");
+        let bytes = postcard::to_allocvec(&compact).expect("postcard encode");
+        let decoded: CompactCharacterAppearance = postcard::from_bytes(&bytes).expect("decode");
+        let rebuilt = decoded
+            .to_definition("cryo_awakening", "Cryo Prisoner", &catalog)
+            .expect("to_definition succeeds");
+        assert_eq!(rebuilt, def);
+
+        assert!(def.remove_socket_part("socket_head", "visor_goggles"));
+        assert!(!def.remove_socket_part("socket_head", "visor_goggles"));
+        assert_eq!(
+            def.socket_parts.get("socket_head"),
+            Some(&vec!["hair_short_crop".to_owned()])
+        );
+        assert!(def.remove_socket_part("socket_head", "hair_short_crop"));
+        assert!(!def.socket_parts.contains_key("socket_head"));
     }
 }

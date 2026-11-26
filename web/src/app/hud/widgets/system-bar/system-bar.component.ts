@@ -11,5 +11,7 @@ import { HudButtonComponent } from '../../primitives/hud-button/hud-button.compo
 })
 export class SystemBarComponent {
   readonly showEditor = input<boolean>(false);
+  readonly inventoryOpen = input<boolean>(false);
   readonly leave = output<void>();
+  readonly toggleInventory = output<void>();
 }

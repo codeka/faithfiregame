@@ -1,5 +1,6 @@
 mod character_mesh;
 mod gizmo_mesh;
+mod preview;
 mod prop_mesh;
 mod renderer;
 mod road_mesh;
@@ -10,8 +11,8 @@ mod studio_stage;
 mod terrain_mesh;
 mod terrain_textures;
 
-#[cfg_attr(not(feature = "editor"), allow(unused_imports))]
 pub use character_mesh::CharacterMeshGpu;
+pub use preview::compute_item_thumbnail_camera;
 #[cfg_attr(not(feature = "editor"), allow(unused_imports))]
 pub use prop_mesh::{PropMeshGpu, prop_model_matrix};
 pub use renderer::Renderer;

@@ -199,7 +199,7 @@ impl CharacterStudioState {
         let part_ids: Vec<String> = def
             .skinned_parts
             .values()
-            .chain(def.socket_parts.values())
+            .chain(def.socket_parts.values().flat_map(|v| v.iter()))
             .cloned()
             .collect();
         for part_id in part_ids {
@@ -486,18 +486,21 @@ impl CharacterStudioState {
             }
         }
 
-        for (socket_id, part_id) in &def.socket_parts {
+        for (socket_id, part_ids) in &def.socket_parts {
             let Some(sock) = skel.sockets.iter().find(|s| s.id == *socket_id) else {
                 continue;
             };
-            let Some(part) = self.find_part_def(part_id) else {
-                continue;
-            };
-            let Some(mesh) = self.part_meshes.get(&part.path) else {
-                continue;
-            };
-            let world = *model * pose.socket_world_matrix(rig, sock) * Self::part_local_matrix(part);
-            renderer.draw_character_shadow(mesh, &world, None);
+            let sock_world = *model * pose.socket_world_matrix(rig, sock);
+            for part_id in part_ids {
+                let Some(part) = self.find_part_def(part_id) else {
+                    continue;
+                };
+                let Some(mesh) = self.part_meshes.get(&part.path) else {
+                    continue;
+                };
+                let world = sock_world * Self::part_local_matrix(part);
+                renderer.draw_character_shadow(mesh, &world, None);
+            }
         }
     }
 
@@ -553,25 +556,28 @@ impl CharacterStudioState {
             }
         }
 
-        for (socket_id, part_id) in &def.socket_parts {
+        for (socket_id, part_ids) in &def.socket_parts {
             let Some(sock) = skel.sockets.iter().find(|s| s.id == *socket_id) else {
                 continue;
             };
-            let Some(part) = self.find_part_def(part_id) else {
-                continue;
-            };
-            let Some(mesh) = self.part_meshes.get(&part.path) else {
-                continue;
-            };
-            let world = *model * pose.socket_world_matrix(rig, sock) * Self::part_local_matrix(part);
-            renderer.draw_character_mesh(
-                camera,
-                mesh,
-                &world,
-                None,
-                Some(char_palette),
-                tint,
-            );
+            let sock_world = *model * pose.socket_world_matrix(rig, sock);
+            for part_id in part_ids {
+                let Some(part) = self.find_part_def(part_id) else {
+                    continue;
+                };
+                let Some(mesh) = self.part_meshes.get(&part.path) else {
+                    continue;
+                };
+                let world = sock_world * Self::part_local_matrix(part);
+                renderer.draw_character_mesh(
+                    camera,
+                    mesh,
+                    &world,
+                    None,
+                    Some(char_palette),
+                    tint,
+                );
+            }
         }
     }
 

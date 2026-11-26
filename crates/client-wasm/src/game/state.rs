@@ -4,6 +4,7 @@ use glam::Vec3;
 use serde::Serialize;
 use shared::character::{CharacterCatalog, CompactCharacterAppearance};
 use shared::entity::{EntityCapabilities, EntityId, TriggerConfig};
+use shared::item::EquipSlot;
 use shared::world::{
     AreaKind, AssetCatalog, AssetEntry, InsideKind, InsideVisData, ROAD_MAT_DIRT, TileVisData,
 };
@@ -46,7 +47,7 @@ pub struct ClientPopupMessage {
     pub tone: &'static str,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientLootItemView {
     pub item_id: String,
@@ -55,15 +56,44 @@ pub struct ClientLootItemView {
     pub category: String,
     pub count: u32,
     pub equipped: bool,
+    pub weight: f32,
+    pub preview_glb: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientLootWindow {
     pub entity_id: u64,
     pub title: String,
     pub description: String,
     pub items: Vec<ClientLootItemView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientInventoryItemView {
+    pub item_id: String,
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    pub count: u32,
+    pub max_stack: u32,
+    pub weight: f32,
+    pub equip_slot: Option<EquipSlot>,
+    pub two_handed: bool,
+    pub bonus_bag_slots: u16,
+    pub equipped: bool,
+    pub bag_slot: Option<u16>,
+    pub preview_glb: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientPlayerInventory {
+    pub items: Vec<ClientInventoryItemView>,
+    pub bag_capacity: u16,
+    pub total_weight: f32,
+    pub max_weight: f32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,6 +108,7 @@ pub struct GameStatusSnapshot {
     pub wake_ready: bool,
     pub popup: Option<ClientPopupMessage>,
     pub loot: Option<ClientLootWindow>,
+    pub inventory: Option<ClientPlayerInventory>,
     pub error: Option<String>,
 }
 
@@ -158,6 +189,7 @@ pub struct GameClientState {
     pub active_popup: Option<ClientPopupMessage>,
     pub active_loot: Option<ClientLootWindow>,
     pub loot_action_pending: bool,
+    pub player_inventory: Option<ClientPlayerInventory>,
     pub next_popup_id: u64,
 
     pub pending_tile_fetches: Vec<(String, i32, i32)>,
@@ -203,6 +235,7 @@ impl GameClientState {
             active_popup: None,
             active_loot: None,
             loot_action_pending: false,
+            player_inventory: None,
             next_popup_id: 0,
             pending_tile_fetches: Vec::new(),
             pending_inside_fetch: None,
@@ -281,6 +314,7 @@ impl GameClientState {
         self.active_popup = None;
         self.active_loot = None;
         self.loot_action_pending = false;
+        self.player_inventory = None;
         self.pending_tile_fetches.clear();
         self.pending_inside_fetch = None;
         self.pending_asset_fetches.clear();
@@ -307,6 +341,7 @@ impl GameClientState {
             wake_ready: self.wake_ready,
             popup: self.active_popup.clone(),
             loot: self.active_loot.clone(),
+            inventory: self.player_inventory.clone(),
             error,
         }
     }

@@ -69,6 +69,26 @@ export function hexToRgb(hex: string): [number, number, number] | null {
   ];
 }
 
+function cloneSocketParts(
+  parts: Record<string, readonly string[]> | null | undefined,
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!parts) return out;
+  for (const [socketId, list] of Object.entries(parts)) {
+    if (!Array.isArray(list)) continue;
+    const deduped: string[] = [];
+    for (const partId of list) {
+      if (partId && !deduped.includes(partId)) {
+        deduped.push(partId);
+      }
+    }
+    if (deduped.length > 0) {
+      out[socketId] = deduped;
+    }
+  }
+  return out;
+}
+
 function makeDefaultCharacter(skeletonId = 'humanoid'): CharacterDefinition {
   return {
     id: 'custom_character',
@@ -118,12 +138,14 @@ export class CharacterEditorStateService {
     return skel.sockets.find((s) => s.id === id) ?? skel.sockets[0];
   });
 
-  readonly equippedPartOnSelectedSocket = computed<CharacterPartDef | null>(() => {
+  readonly equippedPartsOnSelectedSocket = computed<readonly CharacterPartDef[]>(() => {
     const sock = this.selectedSocket();
-    if (!sock) return null;
-    const partId = this.activeCharacter().socket_parts[sock.id];
-    if (!partId) return null;
-    return this.catalog().parts.find((p) => p.id === partId) ?? null;
+    if (!sock) return [];
+    const partIds = this.activeCharacter().socket_parts[sock.id] ?? [];
+    const byId = new Map(this.catalog().parts.map((p) => [p.id, p]));
+    return partIds
+      .map((id) => byId.get(id))
+      .filter((p): p is CharacterPartDef => Boolean(p));
   });
 
   async initData(): Promise<void> {
@@ -176,7 +198,7 @@ export class CharacterEditorStateService {
     const clone: CharacterDefinition = {
       ...def,
       skinned_parts: { ...(def.skinned_parts ?? {}) },
-      socket_parts: { ...(def.socket_parts ?? {}) },
+      socket_parts: cloneSocketParts(def.socket_parts),
       palette: { ...(def.palette ?? {}) },
     };
     this.activeCharacter.set(clone);
@@ -213,8 +235,17 @@ export class CharacterEditorStateService {
     return this.activeCharacter().skinned_parts[slotId] ?? '';
   }
 
-  equippedSocketPart(socketId: string): string {
-    return this.activeCharacter().socket_parts[socketId] ?? '';
+  equippedSocketParts(socketId: string): readonly string[] {
+    return this.activeCharacter().socket_parts[socketId] ?? [];
+  }
+
+  availablePartsForSocket(socketId: string): CharacterPartDef[] {
+    const attached = new Set(this.equippedSocketParts(socketId));
+    return this.partsForSocket(socketId).filter((p) => !attached.has(p.id));
+  }
+
+  partNameById(partId: string): string {
+    return this.catalog().parts.find((p) => p.id === partId)?.name ?? prettifySlug(partId);
   }
 
   selectPreset(presetId: string): void {
@@ -259,7 +290,7 @@ export class CharacterEditorStateService {
       id,
       name: `${cur.name} Copy`,
       skinned_parts: { ...cur.skinned_parts },
-      socket_parts: { ...cur.socket_parts },
+      socket_parts: cloneSocketParts(cur.socket_parts),
       palette: { ...cur.palette },
     };
     this.presets.update((list) => [...list, dup]);
@@ -309,9 +340,10 @@ export class CharacterEditorStateService {
     for (const [k, v] of Object.entries(current.skinned_parts)) {
       if (validParts.has(v)) skinned_parts[k] = v;
     }
-    const socket_parts: Record<string, string> = {};
-    for (const [k, v] of Object.entries(current.socket_parts)) {
-      if (validParts.has(v)) socket_parts[k] = v;
+    const socket_parts: Record<string, string[]> = {};
+    for (const [k, list] of Object.entries(current.socket_parts)) {
+      const kept = list.filter((v) => validParts.has(v));
+      if (kept.length > 0) socket_parts[k] = kept;
     }
     this.applyActiveCharacter(
       { ...current, skeleton_id: skeletonId, skinned_parts, socket_parts },
@@ -341,19 +373,41 @@ export class CharacterEditorStateService {
     this.engine.setActiveCharacter(this.activeCharacter());
   }
 
-  setSocketPart(socketId: string, partId: string): void {
+  setSocketParts(socketId: string, partIds: readonly string[]): void {
     this.activeCharacter.update((c) => {
-      const next = { ...c.socket_parts };
-      if (!partId) {
+      const next = cloneSocketParts(c.socket_parts);
+      const deduped: string[] = [];
+      for (const id of partIds) {
+        if (id && !deduped.includes(id)) {
+          deduped.push(id);
+        }
+      }
+      if (deduped.length === 0) {
         delete next[socketId];
       } else {
-        next[socketId] = partId;
+        next[socketId] = deduped;
       }
       return { ...c, socket_parts: next };
     });
     this.presetDirty.set(true);
     this.refreshSaveBadge();
     this.engine.setActiveCharacter(this.activeCharacter());
+  }
+
+  addSocketPart(socketId: string, partId: string): void {
+    if (!partId) return;
+    const current = this.equippedSocketParts(socketId);
+    if (current.includes(partId)) return;
+    this.setSocketParts(socketId, [...current, partId]);
+  }
+
+  removeSocketPart(socketId: string, partId: string): void {
+    const current = this.equippedSocketParts(socketId);
+    if (!current.includes(partId)) return;
+    this.setSocketParts(
+      socketId,
+      current.filter((id) => id !== partId),
+    );
   }
 
   setPaletteColor(key: keyof CharacterPalette, hex: string): void {
@@ -510,7 +564,9 @@ export class CharacterEditorStateService {
             skinned_slots: [
               { id: 'head', name: 'Head' },
               { id: 'torso', name: 'Torso' },
+              { id: 'hands', name: 'Hands' },
               { id: 'legs', name: 'Legs' },
+              { id: 'feet', name: 'Feet' },
             ],
             sockets: [],
             animation_paths: [],
@@ -558,7 +614,7 @@ export class CharacterEditorStateService {
           const filtered = cat.parts.filter((p) => p.id !== newPart.id);
           this.updateCatalogState({ ...cat, parts: [...filtered, newPart] });
           this.engine.loadCharacterGlbBytes(uploaded.path, bytes);
-          this.setSocketPart(target.socketId, newPart.id);
+          this.addSocketPart(target.socketId, newPart.id);
         }
         count += 1;
       }

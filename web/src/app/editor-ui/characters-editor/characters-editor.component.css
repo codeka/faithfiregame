@@ -191,3 +191,49 @@
   padding: 3px 6px;
   font-size: 11px;
 }
+
+.socket-stack-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.socket-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 78px;
+}
+
+.socket-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(99, 179, 237, 0.14);
+  border: 1px solid rgba(99, 179, 237, 0.32);
+  color: #e2e8f0;
+  font-size: 11px;
+}
+
+.socket-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.socket-chip-remove {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.socket-chip-remove:hover {
+  color: #fca5a5;
+}

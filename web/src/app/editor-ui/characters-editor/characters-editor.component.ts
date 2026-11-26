@@ -132,8 +132,16 @@ export class CharactersEditorComponent {
     this.charState.updateSocket(sock.id, { scale: Math.max(0.05, val) });
   }
 
-  updatePartOffset(axis: 0 | 1 | 2, val: number): void {
-    const part = this.charState.equippedPartOnSelectedSocket();
+  onAddSocketPart(socketId: string, ev: Event): void {
+    const sel = ev.target as HTMLSelectElement;
+    const partId = sel.value;
+    if (!partId) return;
+    this.charState.addSocketPart(socketId, partId);
+    sel.value = '';
+  }
+
+  updatePartOffset(partId: string, axis: 0 | 1 | 2, val: number): void {
+    const part = this.charState.equippedPartsOnSelectedSocket().find((p) => p.id === partId);
     if (!part || part.attachment.kind !== 'socket' || !Number.isFinite(val)) return;
     const next: [number, number, number] = [...part.attachment.offset];
     next[axis] = val;

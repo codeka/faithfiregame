@@ -16,6 +16,16 @@ export interface GamePopup {
   tone: 'cyan' | 'mint' | 'amber' | 'crimson';
 }
 
+export type EquipSlot =
+  | 'head'
+  | 'body'
+  | 'legs'
+  | 'feet'
+  | 'hands'
+  | 'back'
+  | 'main_hand'
+  | 'off_hand';
+
 export interface LootItemView {
   itemId: string;
   name: string;
@@ -23,6 +33,8 @@ export interface LootItemView {
   category: string;
   count: number;
   equipped: boolean;
+  weight: number;
+  previewGlb: string | null;
 }
 
 export interface GameLootWindow {
@@ -30,6 +42,29 @@ export interface GameLootWindow {
   title: string;
   description: string;
   items: LootItemView[];
+}
+
+export interface PlayerInventoryItemView {
+  itemId: string;
+  name: string;
+  description: string;
+  category: string;
+  count: number;
+  maxStack: number;
+  weight: number;
+  equipSlot: EquipSlot | null;
+  twoHanded: boolean;
+  bonusBagSlots: number;
+  equipped: boolean;
+  bagSlot: number | null;
+  previewGlb: string | null;
+}
+
+export interface GamePlayerInventory {
+  items: PlayerInventoryItemView[];
+  bagCapacity: number;
+  totalWeight: number;
+  maxWeight: number;
 }
 
 export interface GameStatus {
@@ -42,6 +77,7 @@ export interface GameStatus {
   wakeReady: boolean;
   popup?: GamePopup | null;
   loot?: GameLootWindow | null;
+  inventory?: GamePlayerInventory | null;
   error: string | null;
 }
 
@@ -53,11 +89,13 @@ export class EngineService implements OnDestroy {
   private initializing = false;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pendingAction: PendingEngineAction | null = null;
+  private thumbCanvas: HTMLCanvasElement | null = null;
 
   readonly ready = signal(false);
   readonly initError = signal<string | null>(null);
   readonly editorBuild = signal(false);
   readonly gameStatus = signal<GameStatus | null>(null);
+  readonly itemThumbnails = signal<Record<string, string>>({});
 
   get rawHandle(): EngineHandle | null {
     return this.handle;
@@ -137,6 +175,30 @@ export class EngineService implements OnDestroy {
     this.refreshGameStatus();
   }
 
+  equipInventoryItem(bagSlot: number, targetSlot?: EquipSlot | null): void {
+    this.handle?.equip_inventory_item(bagSlot, targetSlot ?? '');
+    this.refreshGameStatus();
+  }
+
+  unequipInventorySlot(slot: EquipSlot, targetBagSlot?: number | null): void {
+    this.handle?.unequip_inventory_slot(slot, targetBagSlot ?? -1);
+    this.refreshGameStatus();
+  }
+
+  moveInventoryItem(fromSlot: number, toSlot: number): void {
+    this.handle?.move_inventory_item(fromSlot, toSlot);
+    this.refreshGameStatus();
+  }
+
+  splitInventoryStack(fromSlot: number, toSlot: number, count: number): void {
+    this.handle?.split_inventory_stack(fromSlot, toSlot, count);
+    this.refreshGameStatus();
+  }
+
+  renderCharacterPreview(width: number, height: number, yawRad: number): Uint8Array | null {
+    return this.handle?.render_character_preview_rgba(width, height, yawRad) ?? null;
+  }
+
   stopGamePolling(): void {
     if (this.pollTimer !== null) {
       clearInterval(this.pollTimer);
@@ -158,8 +220,52 @@ export class EngineService implements OnDestroy {
     try {
       const parsed = JSON.parse(this.handle.get_game_status_json()) as GameStatus;
       this.gameStatus.set(parsed);
+      this.ensureItemThumbnails(parsed);
     } catch {
       // Ignore transient parse errors.
+    }
+  }
+
+  private ensureItemThumbnails(status: GameStatus): void {
+    if (!this.handle) {
+      return;
+    }
+    const paths = new Set<string>();
+    for (const item of status.inventory?.items ?? []) {
+      if (item.previewGlb) paths.add(item.previewGlb);
+    }
+    for (const item of status.loot?.items ?? []) {
+      if (item.previewGlb) paths.add(item.previewGlb);
+    }
+    if (paths.size === 0) {
+      return;
+    }
+    const current = this.itemThumbnails();
+    let added: Record<string, string> | null = null;
+    for (const path of paths) {
+      if (current[path]) {
+        continue;
+      }
+      const rgba = this.handle.render_item_thumbnail_rgba(path, 96);
+      if (!rgba || rgba.length !== 96 * 96 * 4) {
+        continue;
+      }
+      if (!this.thumbCanvas) {
+        this.thumbCanvas = document.createElement('canvas');
+        this.thumbCanvas.width = 96;
+        this.thumbCanvas.height = 96;
+      }
+      const ctx = this.thumbCanvas.getContext('2d');
+      if (!ctx) {
+        continue;
+      }
+      const imgData = new ImageData(new Uint8ClampedArray(rgba), 96, 96);
+      ctx.putImageData(imgData, 0, 0);
+      added ??= {};
+      added[path] = this.thumbCanvas.toDataURL('image/png');
+    }
+    if (added) {
+      this.itemThumbnails.update((prev) => ({ ...prev, ...added }));
     }
   }
 

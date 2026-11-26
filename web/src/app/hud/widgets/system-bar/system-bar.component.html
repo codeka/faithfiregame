@@ -1,6 +1,18 @@
-<nav class="system-bar" aria-label="System Controls">
-  @if (showEditor()) {
-    <a routerLink="/editor" appHudButton tone="cyan">Editor</a>
-  }
-  <button type="button" appHudButton tone="cyan" (click)="leave.emit()">Leave</button>
+<nav class="system-bar-stack" aria-label="System Controls">
+  <div class="system-bar-row">
+    @if (showEditor()) {
+      <a routerLink="/editor" appHudButton tone="cyan">Editor</a>
+    }
+    <button type="button" appHudButton tone="cyan" (click)="leave.emit()">Leave</button>
+  </div>
+  <button
+    type="button"
+    appHudButton
+    class="system-inv-btn"
+    [tone]="inventoryOpen() ? 'mint' : 'cyan'"
+    [attr.aria-pressed]="inventoryOpen()"
+    (click)="toggleInventory.emit()"
+  >
+    Inventory <span class="hotkey-pill">I</span>
+  </button>
 </nav>

@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entity::{EntityCapabilities, EntityId, EntityVisual, TriggerConfig};
+use crate::item::EquipSlot;
 use crate::world::AreaKind;
 
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -14,7 +15,7 @@ pub enum PopupTone {
     Danger,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LootItemEntry {
     pub item_id: String,
     pub name: String,
@@ -22,6 +23,27 @@ pub struct LootItemEntry {
     pub category: String,
     pub count: u32,
     pub equipped: bool,
+    #[serde(default)]
+    pub weight: f32,
+    #[serde(default)]
+    pub preview_glb: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlayerInventoryItem {
+    pub item_id: String,
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    pub count: u32,
+    pub max_stack: u32,
+    pub weight: f32,
+    pub equip_slot: Option<EquipSlot>,
+    pub two_handed: bool,
+    pub bonus_bag_slots: u16,
+    pub equipped: bool,
+    pub bag_slot: Option<u16>,
+    pub preview_glb: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -44,6 +66,23 @@ pub enum ClientMessage {
     },
     LootTakeAll {
         entity_id: EntityId,
+    },
+    EquipItem {
+        bag_slot: u16,
+        target_slot: Option<EquipSlot>,
+    },
+    UnequipSlot {
+        slot: EquipSlot,
+        target_bag_slot: Option<u16>,
+    },
+    MoveInventoryItem {
+        from_slot: u16,
+        to_slot: u16,
+    },
+    SplitInventoryStack {
+        from_slot: u16,
+        to_slot: u16,
+        count: u32,
     },
 }
 
@@ -101,6 +140,12 @@ pub enum ServerMessage {
         title: String,
         description: String,
         items: Vec<LootItemEntry>,
+    },
+    PlayerInventory {
+        items: Vec<PlayerInventoryItem>,
+        bag_capacity: u16,
+        total_weight: f32,
+        max_weight: f32,
     },
 }
 
@@ -259,9 +304,57 @@ mod tests {
                 category: "Weapon".to_owned(),
                 count: 1,
                 equipped: true,
+                weight: 3.6,
+                preview_glb: Some("/world/assets/characters/weapon_guard_rifle.glb".to_owned()),
             }],
         };
         let lw_bytes = encode_server_msg(&loot_win).unwrap();
         assert_eq!(decode_server_msg(&lw_bytes).unwrap(), loot_win);
+
+        for cmsg in [
+            ClientMessage::EquipItem {
+                bag_slot: 2,
+                target_slot: Some(EquipSlot::MainHand),
+            },
+            ClientMessage::UnequipSlot {
+                slot: EquipSlot::OffHand,
+                target_bag_slot: Some(4),
+            },
+            ClientMessage::MoveInventoryItem {
+                from_slot: 0,
+                to_slot: 7,
+            },
+            ClientMessage::SplitInventoryStack {
+                from_slot: 1,
+                to_slot: 5,
+                count: 3,
+            },
+        ] {
+            let bytes = encode_client_msg(&cmsg).unwrap();
+            assert_eq!(decode_client_msg(&bytes).unwrap(), cmsg);
+        }
+
+        let player_inv = ServerMessage::PlayerInventory {
+            items: vec![PlayerInventoryItem {
+                item_id: "guard_rifle".to_owned(),
+                name: "Guard Carbine".to_owned(),
+                description: "Compact security carbine.".to_owned(),
+                category: "Weapon".to_owned(),
+                count: 1,
+                max_stack: 1,
+                weight: 3.6,
+                equip_slot: Some(EquipSlot::MainHand),
+                two_handed: true,
+                bonus_bag_slots: 0,
+                equipped: true,
+                bag_slot: None,
+                preview_glb: Some("/world/assets/characters/weapon_guard_rifle.glb".to_owned()),
+            }],
+            bag_capacity: 20,
+            total_weight: 3.6,
+            max_weight: 30.0,
+        };
+        let pi_bytes = encode_server_msg(&player_inv).unwrap();
+        assert_eq!(decode_server_msg(&pi_bytes).unwrap(), player_inv);
     }
 }

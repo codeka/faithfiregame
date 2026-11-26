@@ -90,6 +90,8 @@ pub struct InventoryEntry {
     pub count: u32,
     #[serde(default)]
     pub equipped: bool,
+    #[serde(default)]
+    pub bag_slot: Option<u16>,
 }
 
 fn default_one_u32() -> u32 {

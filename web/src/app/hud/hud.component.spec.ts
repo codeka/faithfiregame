@@ -2,7 +2,12 @@ import { signal, WritableSignal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { AuthService, SESSION_COOKIE } from '../auth/auth.service';
-import { EngineService, GameStatus } from '../engine.service';
+import {
+  EngineService,
+  EquipSlot,
+  GamePlayerInventory,
+  GameStatus,
+} from '../engine.service';
 import { LoginComponent } from '../login/login.component';
 import { HudComponent } from './hud.component';
 
@@ -13,6 +18,7 @@ function clearSessionCookie(): void {
 describe('HudComponent & LoginComponent entry flow', () => {
   let gameStatusSig: WritableSignal<GameStatus | null>;
   let editorBuildSig: WritableSignal<boolean>;
+  let itemThumbnailsSig: WritableSignal<Record<string, string>>;
   let connectCalls: string[];
   let landingCalls: number;
   let stopPollingCalls: number;
@@ -20,6 +26,10 @@ describe('HudComponent & LoginComponent entry flow', () => {
   let lootTakeCalls: { entityId: number; itemId: string }[];
   let lootTakeAllCalls: number[];
   let dismissLootCalls: number;
+  let equipCalls: { bagSlot: number; targetSlot: EquipSlot | null }[];
+  let unequipCalls: { slot: EquipSlot; targetBagSlot: number | null }[];
+  let moveCalls: { fromSlot: number; toSlot: number }[];
+  let splitCalls: { fromSlot: number; toSlot: number; count: number }[];
   let origFetch: typeof globalThis.fetch;
 
   function configureTestBed(): void {
@@ -28,6 +38,7 @@ describe('HudComponent & LoginComponent entry flow', () => {
       initError: signal<string | null>(null),
       editorBuild: editorBuildSig,
       gameStatus: gameStatusSig,
+      itemThumbnails: itemThumbnailsSig,
       enterLandingMode: () => {
         landingCalls++;
         gameStatusSig.set(null);
@@ -53,6 +64,19 @@ describe('HudComponent & LoginComponent entry flow', () => {
         dismissLootCalls++;
         gameStatusSig.update((s) => (s ? { ...s, loot: null } : s));
       },
+      equipInventoryItem: (bagSlot: number, targetSlot: EquipSlot | null = null) => {
+        equipCalls.push({ bagSlot, targetSlot });
+      },
+      unequipInventorySlot: (slot: EquipSlot, targetBagSlot: number | null = null) => {
+        unequipCalls.push({ slot, targetBagSlot });
+      },
+      moveInventoryItem: (fromSlot: number, toSlot: number) => {
+        moveCalls.push({ fromSlot, toSlot });
+      },
+      splitInventoryStack: (fromSlot: number, toSlot: number, count: number) => {
+        splitCalls.push({ fromSlot, toSlot, count });
+      },
+      renderCharacterPreview: () => null,
       stopGamePolling: () => {
         stopPollingCalls++;
       },
@@ -76,6 +100,7 @@ describe('HudComponent & LoginComponent entry flow', () => {
     origFetch = globalThis.fetch;
     gameStatusSig = signal<GameStatus | null>(null);
     editorBuildSig = signal(false);
+    itemThumbnailsSig = signal<Record<string, string>>({});
     connectCalls = [];
     landingCalls = 0;
     stopPollingCalls = 0;
@@ -83,6 +108,10 @@ describe('HudComponent & LoginComponent entry flow', () => {
     lootTakeCalls = [];
     lootTakeAllCalls = [];
     dismissLootCalls = 0;
+    equipCalls = [];
+    unequipCalls = [];
+    moveCalls = [];
+    splitCalls = [];
   });
 
   afterEach(() => {
@@ -428,9 +457,12 @@ describe('HudComponent & LoginComponent entry flow', () => {
             category: 'Weapon',
             count: 1,
             equipped: true,
+            weight: 3.6,
+            previewGlb: '/world/assets/characters/weapon_guard_rifle.glb',
           },
         ],
       },
+      inventory: null,
       error: null,
     });
     fixture.detectChanges();
@@ -484,4 +516,258 @@ describe('HudComponent & LoginComponent entry flow', () => {
     expect(dismissLootCalls).toBe(1);
     expect(host.querySelector('.hud-loot-frame')).toBeNull();
   });
+
+  function sampleInventory(): GamePlayerInventory {
+    return {
+      bagCapacity: 25,
+      totalWeight: 5.8,
+      maxWeight: 30,
+      items: [
+        {
+          itemId: 'salvage_rig_pack',
+          name: 'Salvage Rig Pack',
+          description: 'Adds 5 extra backpack slots.',
+          category: 'Back',
+          count: 1,
+          maxStack: 1,
+          weight: 1.5,
+          equipSlot: 'back',
+          twoHanded: false,
+          bonusBagSlots: 5,
+          equipped: true,
+          bagSlot: null,
+          previewGlb: '/world/assets/characters/back_rig.glb',
+        },
+        {
+          itemId: 'guard_rifle',
+          name: 'Guard Carbine',
+          description: 'Two-handed security carbine.',
+          category: 'Weapon',
+          count: 1,
+          maxStack: 1,
+          weight: 3.6,
+          equipSlot: 'main_hand',
+          twoHanded: true,
+          bonusBagSlots: 0,
+          equipped: true,
+          bagSlot: null,
+          previewGlb: '/world/assets/characters/weapon_guard_rifle.glb',
+        },
+        {
+          itemId: 'ration_pack',
+          name: 'Ration Pack',
+          description: 'Nutrient paste bricks.',
+          category: 'Consumable',
+          count: 4,
+          maxStack: 10,
+          weight: 0.175,
+          equipSlot: null,
+          twoHanded: false,
+          bonusBagSlots: 0,
+          equipped: false,
+          bagSlot: 0,
+          previewGlb: '/world/assets/items/ration_pack.glb',
+        },
+        {
+          itemId: 'security_helmet',
+          name: 'Security Helmet',
+          description: 'Visor helm.',
+          category: 'Head',
+          count: 1,
+          maxStack: 1,
+          weight: 0.8,
+          equipSlot: 'head',
+          twoHanded: false,
+          bonusBagSlots: 0,
+          equipped: false,
+          bagSlot: 2,
+          previewGlb: '/world/assets/characters/helmet_guard.glb',
+        },
+      ],
+    };
+  }
+
+  it('toggles inventory via button and hotkey I, closes on Escape, and ignores editable inputs', () => {
+    document.cookie = `${SESSION_COOKIE}=inv-tok-1; Path=/`;
+    configureTestBed();
+    gameStatusSig.set({
+      phase: 'playing',
+      playerId: 42,
+      areaId: 'cryo_prison',
+      areaName: 'Cryo Holding Block',
+      playerPos: [1, 0, 1],
+      freshCryoWake: false,
+      wakeReady: true,
+      inventory: sampleInventory(),
+      error: null,
+    });
+
+    const fixture: ComponentFixture<HudComponent> = TestBed.createComponent(HudComponent);
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelector('app-hud-inventory-panel')).toBeNull();
+
+    const invBtn = host.querySelector<HTMLButtonElement>('.system-inv-btn');
+    expect(invBtn).not.toBeNull();
+    invBtn!.click();
+    fixture.detectChanges();
+    expect(host.querySelector('app-hud-inventory-panel')).not.toBeNull();
+
+    // Close via close button inside panel.
+    host.querySelector<HTMLButtonElement>('.inv-close-btn')!.click();
+    fixture.detectChanges();
+    expect(host.querySelector('app-hud-inventory-panel')).toBeNull();
+
+    // Hotkey 'i' opens, Escape closes.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', bubbles: true }));
+    fixture.detectChanges();
+    expect(host.querySelector('app-hud-inventory-panel')).not.toBeNull();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    expect(host.querySelector('app-hud-inventory-panel')).toBeNull();
+
+    // Typing 'i' inside an editable input must NOT toggle the inventory panel.
+    const input = document.createElement('input');
+    host.appendChild(input);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', bubbles: true }));
+    fixture.detectChanges();
+    expect(host.querySelector('app-hud-inventory-panel')).toBeNull();
+
+    fixture.destroy();
+  });
+
+  it('renders 8 equip slots, 2H dimmed off-hand ghost, preview canvas, thumbnails, and weight/slot counters', () => {
+    document.cookie = `${SESSION_COOKIE}=inv-tok-2; Path=/`;
+    configureTestBed();
+    itemThumbnailsSig.set({
+      '/world/assets/characters/weapon_guard_rifle.glb': 'data:image/png;base64,RIFLE',
+      '/world/assets/items/ration_pack.glb': 'data:image/png;base64,RATION',
+    });
+    gameStatusSig.set({
+      phase: 'playing',
+      playerId: 42,
+      areaId: 'cryo_prison',
+      areaName: 'Cryo Holding Block',
+      playerPos: [1, 0, 1],
+      freshCryoWake: false,
+      wakeReady: true,
+      inventory: sampleInventory(),
+      error: null,
+    });
+
+    const fixture: ComponentFixture<HudComponent> = TestBed.createComponent(HudComponent);
+    fixture.detectChanges();
+    hostOpenInventory(fixture);
+    const host = fixture.nativeElement as HTMLElement;
+
+    const slots: EquipSlot[] = [
+      'head',
+      'body',
+      'legs',
+      'feet',
+      'hands',
+      'back',
+      'main_hand',
+      'off_hand',
+    ];
+    for (const slot of slots) {
+      expect(host.querySelector(`.equip-cell[data-slot="${slot}"]`)).not.toBeNull();
+    }
+
+    expect(host.querySelector('canvas.preview-canvas')).not.toBeNull();
+    expect(host.querySelectorAll('.bag-cell').length).toBe(25);
+
+    const offHand = host.querySelector('.equip-cell[data-slot="off_hand"]')!;
+    expect(offHand.classList.contains('is-two-handed-ghost')).toBe(true);
+    expect(offHand.querySelector('.slot-badge')?.textContent?.trim()).toBe('2H');
+
+    const bagRationImg = host.querySelector<HTMLImageElement>(
+      '.bag-cell[data-bag-slot="0"] img.item-thumb',
+    );
+    expect(bagRationImg?.getAttribute('src')).toBe('data:image/png;base64,RATION');
+    expect(
+      host.querySelector('.bag-cell[data-bag-slot="0"] .count-badge')?.textContent?.trim(),
+    ).toBe('×4');
+
+    const statText = Array.from(host.querySelectorAll('.inv-stat-pill'))
+      .map((el) => el.textContent?.trim())
+      .join(' | ');
+    expect(statText).toContain('2/25');
+    expect(statText).toContain('5.8/30 kg');
+
+    fixture.destroy();
+  });
+
+  it('supports double-click, drag-and-drop reordering/equipping/unequipping, and right-click stack splitting', () => {
+    document.cookie = `${SESSION_COOKIE}=inv-tok-3; Path=/`;
+    configureTestBed();
+    gameStatusSig.set({
+      phase: 'playing',
+      playerId: 42,
+      areaId: 'cryo_prison',
+      areaName: 'Cryo Holding Block',
+      playerPos: [1, 0, 1],
+      freshCryoWake: false,
+      wakeReady: true,
+      inventory: sampleInventory(),
+      error: null,
+    });
+
+    const fixture: ComponentFixture<HudComponent> = TestBed.createComponent(HudComponent);
+    fixture.detectChanges();
+    hostOpenInventory(fixture);
+    const host = fixture.nativeElement as HTMLElement;
+
+    // Double-click equips bag slot 2 (Security Helmet) and unequips back slot.
+    host.querySelector('.bag-cell[data-bag-slot="2"]')!.dispatchEvent(new MouseEvent('dblclick'));
+    expect(equipCalls).toEqual([{ bagSlot: 2, targetSlot: null }]);
+
+    host.querySelector('.equip-cell[data-slot="back"]')!.dispatchEvent(new MouseEvent('dblclick'));
+    expect(unequipCalls).toEqual([{ slot: 'back', targetBagSlot: null }]);
+
+    // Drag bag slot 0 (Ration Pack) -> bag slot 5 -> moveInventoryItem(0, 5).
+    const bag0 = host.querySelector('.bag-cell[data-bag-slot="0"]')!;
+    const bag5 = host.querySelector('.bag-cell[data-bag-slot="5"]')!;
+    bag0.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    bag5.dispatchEvent(new Event('drop', { bubbles: true }));
+    expect(moveCalls).toEqual([{ fromSlot: 0, toSlot: 5 }]);
+
+    // Drag bag slot 2 (helmet) -> equip head -> equipInventoryItem(2, 'head').
+    const bag2 = host.querySelector('.bag-cell[data-bag-slot="2"]')!;
+    const headCell = host.querySelector('.equip-cell[data-slot="head"]')!;
+    bag2.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    headCell.dispatchEvent(new Event('drop', { bubbles: true }));
+    expect(equipCalls[1]).toEqual({ bagSlot: 2, targetSlot: 'head' });
+
+    // Drag equip main_hand -> bag slot 6 -> unequipInventorySlot('main_hand', 6).
+    const mainHand = host.querySelector('.equip-cell[data-slot="main_hand"]')!;
+    const bag6 = host.querySelector('.bag-cell[data-bag-slot="6"]')!;
+    mainHand.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    bag6.dispatchEvent(new Event('drop', { bubbles: true }));
+    expect(unequipCalls[1]).toEqual({ slot: 'main_hand', targetBagSlot: 6 });
+
+    // Right-click stackable ration pack (bag 0, count 4) -> split popover -> first free slot 1, default amount 2 -> confirm.
+    bag0.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    const popover = host.querySelector('.split-popover');
+    expect(popover).not.toBeNull();
+    const splitInput = host.querySelector<HTMLInputElement>('input[name="splitAmount"]')!;
+    splitInput.value = '3';
+    splitInput.dispatchEvent(new Event('input', { bubbles: true }));
+    fixture.detectChanges();
+    host.querySelector<HTMLButtonElement>('.split-ok-btn')!.click();
+    fixture.detectChanges();
+    expect(splitCalls).toEqual([{ fromSlot: 0, toSlot: 1, count: 3 }]);
+    expect(host.querySelector('.split-popover')).toBeNull();
+
+    fixture.destroy();
+  });
+
+  function hostOpenInventory(fixture: ComponentFixture<HudComponent>): void {
+    const host = fixture.nativeElement as HTMLElement;
+    host.querySelector<HTMLButtonElement>('.system-inv-btn')!.click();
+    fixture.detectChanges();
+  }
 });

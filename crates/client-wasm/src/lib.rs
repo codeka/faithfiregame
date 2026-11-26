@@ -247,8 +247,93 @@ impl EngineHandle {
         }
     }
 
+    pub fn equip_inventory_item(&self, bag_slot: u16, target_slot: &str) {
+        let parsed_target = if target_slot.trim().is_empty() {
+            None
+        } else {
+            let Some(slot) = parse_equip_slot(target_slot) else {
+                return;
+            };
+            Some(slot)
+        };
+        let st = self.inner.borrow();
+        if let Some(net) = &st.net {
+            net.send(&shared::protocol::ClientMessage::EquipItem {
+                bag_slot,
+                target_slot: parsed_target,
+            });
+        }
+    }
+
+    pub fn unequip_inventory_slot(&self, slot: &str, target_bag_slot: i32) {
+        let Some(parsed_slot) = parse_equip_slot(slot) else {
+            return;
+        };
+        let target_bag_slot = u16::try_from(target_bag_slot).ok();
+        let st = self.inner.borrow();
+        if let Some(net) = &st.net {
+            net.send(&shared::protocol::ClientMessage::UnequipSlot {
+                slot: parsed_slot,
+                target_bag_slot,
+            });
+        }
+    }
+
+    pub fn move_inventory_item(&self, from_slot: u16, to_slot: u16) {
+        let st = self.inner.borrow();
+        if let Some(net) = &st.net {
+            net.send(&shared::protocol::ClientMessage::MoveInventoryItem { from_slot, to_slot });
+        }
+    }
+
+    pub fn split_inventory_stack(&self, from_slot: u16, to_slot: u16, count: u32) {
+        if count == 0 {
+            return;
+        }
+        let st = self.inner.borrow();
+        if let Some(net) = &st.net {
+            net.send(&shared::protocol::ClientMessage::SplitInventoryStack {
+                from_slot,
+                to_slot,
+                count,
+            });
+        }
+    }
+
+    pub fn render_character_preview_rgba(
+        &self,
+        width: u32,
+        height: u32,
+        yaw_rad: f32,
+    ) -> Option<Vec<u8>> {
+        let mut st = self.inner.borrow_mut();
+        let EngineInner { renderer, game, .. } = &mut *st;
+        game.render_character_preview(renderer, width, height, yaw_rad)
+    }
+
+    pub fn render_item_thumbnail_rgba(&self, glb_path: &str, size: u32) -> Option<Vec<u8>> {
+        let mut st = self.inner.borrow_mut();
+        let EngineInner { renderer, game, .. } = &mut *st;
+        game.render_item_thumbnail(renderer, glb_path, size)
+    }
+
     pub fn get_game_status_json(&self) -> String {
         let st = self.inner.borrow();
         serde_json::to_string(&st.game.status_snapshot()).unwrap_or_else(|_| "{}".to_owned())
+    }
+}
+
+fn parse_equip_slot(raw: &str) -> Option<shared::item::EquipSlot> {
+    use shared::item::EquipSlot;
+    match raw.trim() {
+        "head" => Some(EquipSlot::Head),
+        "body" => Some(EquipSlot::Body),
+        "legs" => Some(EquipSlot::Legs),
+        "feet" => Some(EquipSlot::Feet),
+        "hands" => Some(EquipSlot::Hands),
+        "back" => Some(EquipSlot::Back),
+        "main_hand" => Some(EquipSlot::MainHand),
+        "off_hand" => Some(EquipSlot::OffHand),
+        _ => None,
     }
 }
